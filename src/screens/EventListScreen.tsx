@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { format, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { loadEvents } from '../utils/storage';
@@ -104,8 +105,8 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
   const isDark = useMemo(() => theme === 'dark', [theme]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }}>
-      <View style={{ paddingHorizontal: 16, paddingTop: 50, paddingBottom: 16, backgroundColor: isDark ? '#030712' : '#ffffff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }} edges={['top', 'left', 'right']}>
+      <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16, backgroundColor: isDark ? '#030712' : '#ffffff' }}>
         <Text style={{ fontSize: 24, fontWeight: 'bold', color: isDark ? '#ffffff' : '#111827' }}>
           전체 이벤트
         </Text>
@@ -127,6 +128,6 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
           showsVerticalScrollIndicator={false}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }

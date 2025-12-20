@@ -57,9 +57,22 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const [dimensions, setDimensions] = React.useState(() => {
     const { width, height } = Dimensions.get('window');
     const cellWidth = width / 7;
-    // 화면 높이에 따라 동적으로 셀 높이 계산 (헤더, 하단 패널 등 제외)
-    const availableHeight = height - 350; // 헤더(~200px) + 하단 패널(~150px) 제외
-    const cellHeight = Math.max(Math.min(availableHeight / 6, cellWidth * 1.2), 70); // 최소 70, 최대 cellWidth * 1.2
+    // 화면 크기에 비례하여 셀 높이 동적 계산
+    const isSmallScreen = height < 700;
+    const isMediumScreen = height >= 700 && height < 850;
+    
+    let cellHeight;
+    if (isSmallScreen) {
+      // 작은 화면 (예: iPhone SE)
+      cellHeight = Math.max(height * 0.09, 65);
+    } else if (isMediumScreen) {
+      // 중간 화면 (예: iPhone 12, 13)
+      cellHeight = Math.max(height * 0.1, 75);
+    } else {
+      // 큰 화면 (예: iPhone 14 Pro Max, 태블릿)
+      cellHeight = Math.max(height * 0.11, 85);
+    }
+    
     return { cellWidth, cellHeight };
   });
 
@@ -67,8 +80,19 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       const { width, height } = window;
       const cellWidth = width / 7;
-      const availableHeight = height - 350;
-      const cellHeight = Math.max(Math.min(availableHeight / 6, cellWidth * 1.2), 70);
+      
+      const isSmallScreen = height < 700;
+      const isMediumScreen = height >= 700 && height < 850;
+      
+      let cellHeight;
+      if (isSmallScreen) {
+        cellHeight = Math.max(height * 0.09, 65);
+      } else if (isMediumScreen) {
+        cellHeight = Math.max(height * 0.1, 75);
+      } else {
+        cellHeight = Math.max(height * 0.11, 85);
+      }
+      
       setDimensions({ cellWidth, cellHeight });
     });
 

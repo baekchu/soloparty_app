@@ -22,6 +22,8 @@ export type RootStackParamList = {
   AdminLogin: undefined;
   Settings: undefined;
   LocationPicker: undefined;
+  Reward: undefined; // 적립금 & 광고 화면
+  Invite: undefined; // 친구 초대 화면
 };
 
 export type MainTabParamList = {

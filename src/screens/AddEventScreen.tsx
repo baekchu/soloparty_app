@@ -7,6 +7,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Calendar, DateData } from 'react-native-calendars';
 import { format } from 'date-fns';
 import { loadEvents, saveEvents } from '../utils/storage';
@@ -68,10 +69,10 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
   const isDark = theme === 'dark';
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }} edges={['top', 'left', 'right']}>
       {/* 헤더 */}
       <View style={{ 
-        paddingTop: 48, 
+        paddingTop: 12, 
         paddingBottom: 12, 
         paddingHorizontal: 24, 
         flexDirection: 'row', 
@@ -274,6 +275,6 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
         </View>
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }

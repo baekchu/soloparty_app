@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -324,14 +325,14 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right']}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20, 
-        paddingTop: 20,
+        paddingTop: 10,
         paddingBottom: 20, 
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
         borderBottomWidth: 1,
@@ -511,6 +512,6 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           </Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }

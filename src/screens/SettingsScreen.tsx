@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -13,14 +14,14 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   const isDark = useMemo(() => theme === 'dark', [theme]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right']}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20, 
-        paddingTop: 20,
+        paddingTop: 10,
         paddingBottom: 20, 
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
         borderBottomWidth: 1,
@@ -142,6 +143,6 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           </Text>
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
