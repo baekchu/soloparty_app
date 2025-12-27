@@ -25,7 +25,7 @@ interface PointsModalProps {
   visible: boolean;
   onClose: () => void;
   points: number;
-  onSpendPoints: (amount: number, reason: string) => void;
+  onSpendPoints: (amount: number, reason: string) => Promise<boolean>;
   isDark: boolean;
 }
 
@@ -39,9 +39,11 @@ const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark }: P
         [
           {
             text: '확인',
-            onPress: () => {
-              onSpendPoints(50000, '솔로파티 무료 참여');
-              onClose();
+            onPress: async () => {
+              const success = await onSpendPoints(50000, '솔로파티 무료 참여');
+              if (success) {
+                onClose();
+              }
             }
           }
         ]

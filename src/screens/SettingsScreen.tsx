@@ -139,7 +139,9 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
             lineHeight: 20,
           }}>
             Solo Party v1.0.0{'\n'}
-            특별한 만남을 위한 일정 관리
+            특별한 만남을 위한 일정 관리{'\n\n'}
+            © 2025 Solo Party. All rights reserved.{'\n'}
+            본 앱의 모든 콘텐츠는 저작권법의 보호를 받습니다.
           </Text>
         </View>
       </ScrollView>

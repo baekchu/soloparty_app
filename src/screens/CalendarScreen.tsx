@@ -5,10 +5,6 @@ import { loadEvents, saveEvents, clearCache } from '../utils/storage';
 import { EventsByDate } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
-// ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
-// import { useReward } from '../contexts/RewardContext';
-// import { useRewardedAd, useInterstitialAd, useAppStartAd } from '../services/AdService';
-// ========================================================================
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { useFocusEffect } from '@react-navigation/native';
@@ -17,6 +13,7 @@ import { MainTabParamList } from '../types';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import MonthCalendar from '../components/MonthCalendar';
 import PointsModal from '../components/PointsModal';
+import { usePoints } from '../hooks/usePoints';
 
 type CalendarScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, 'Calendar'>,
@@ -38,6 +35,43 @@ const deduplicateMonths = (months: Array<{ year: number; month: number }>) => {
   });
 };
 
+// 인스타그램 링크 처리 함수
+const openInstagramLink = async (link?: string) => {
+  if (!link) return;
+  
+  try {
+    let url = link;
+    
+    // Instagram URL 정규화
+    if (!link.startsWith('http')) {
+      url = `https://${link}`;
+    }
+    
+    // Instagram 앱 링크로 변환 시도
+    if (link.includes('instagram.com')) {
+      const username = link.match(/instagram\.com\/([^\/\?]+)/);
+      if (username && username[1]) {
+        const appUrl = `instagram://user?username=${username[1]}`;
+        const canOpenApp = await Linking.canOpenURL(appUrl);
+        if (canOpenApp) {
+          await Linking.openURL(appUrl);
+          return;
+        }
+      }
+    }
+    
+    // 일반 브라우저로 열기
+    const canOpen = await Linking.canOpenURL(url);
+    if (canOpen) {
+      await Linking.openURL(url);
+    } else {
+      Alert.alert('오류', '링크를 열 수 없습니다.');
+    }
+  } catch (error) {
+    Alert.alert('오류', '링크를 열 수 없습니다.');
+  }
+};
+
 export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [events, setEvents] = useState<EventsByDate>({});
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
@@ -48,9 +82,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } = useRegion();
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
   
-  // 포인트 모달 상태
+  // 포인트 시스템
+  const { balance: points, history: pointHistory, addPoints, spendPoints } = usePoints();
   const [showPointsModal, setShowPointsModal] = useState(false);
-  const [points, setPoints] = useState(2500); // 테스트용 초기 포인트
   
   // ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
   // const { balance, addReward } = useReward();
@@ -186,7 +220,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   };
 
   const monthNames = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
-  const monthNamesShort = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
   
   // 월 변경 시 자동 스크롤
   React.useEffect(() => {
@@ -230,80 +263,48 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     return months;
   };
   
-  const getUpcomingEvents = () => {
-    // 필터링 함수 - location과 region으로 필터링
-    const filterEvents = (eventsToFilter: Array<{ date: string; event: any }>) => {
-      let filtered = eventsToFilter;
-      
-      // 지역 필터 (예: 서울, 부산)
-      if (selectedRegion) {
-        filtered = filtered.filter(item => 
-          item.event.region === selectedRegion
-        );
-      }
-      
-      // 장소 필터 (예: 강남역, 홍대입구)
-      if (selectedLocation) {
-        filtered = filtered.filter(item => 
-          item.event.location === selectedLocation
-        );
-      }
-      
-      return filtered;
-    };
+  const getUpcomingEvents = useCallback(() => {
+    // 필터링 함수
+    const filterByRegion = (item: { event: any }) => 
+      !selectedRegion || item.event.region === selectedRegion;
     
-    // 선택된 날짜가 있으면 해당 날짜의 일정만 반환 (시간 순 정렬)
+    const filterByLocation = (item: { event: any }) => 
+      !selectedLocation || item.event.location === selectedLocation;
+    
+    const sortByTime = (a: { event: any }, b: { event: any }) => 
+      (a.event.time || 'ZZ:ZZ').localeCompare(b.event.time || 'ZZ:ZZ');
+    
+    // 선택된 날짜가 있으면 해당 날짜만
     if (selectedDate && events[selectedDate]) {
-      const dateEvents = events[selectedDate]
+      return events[selectedDate]
         .map(event => ({ date: selectedDate, event }))
-        .sort((a, b) => {
-          // 시간이 있으면 시간 기준 정렬
-          const timeA = a.event.time || 'ZZ:ZZ'; // 시간 없으면 마지막으로
-          const timeB = b.event.time || 'ZZ:ZZ';
-          return timeA.localeCompare(timeB);
-        });
-      return filterEvents(dateEvents);
+        .filter(filterByRegion)
+        .filter(filterByLocation)
+        .sort(sortByTime);
     }
     
-    // 선택된 날짜가 없으면 현재와 미래의 모든 일정 반환 (과거 일정 제외)
+    // 오늘 이후의 모든 일정
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // 오늘 00:00:00으로 설정
-    const allEvents: Array<{ date: string; event: any }> = [];
+    today.setHours(0, 0, 0, 0);
     
-    Object.keys(events).forEach(date => {
-      const eventDate = new Date(date);
-      eventDate.setHours(0, 0, 0, 0);
-      // 오늘 이후의 일정만 포함 (오늘 포함)
-      if (eventDate >= today) {
-        events[date].forEach(event => {
-          allEvents.push({ date, event });
-        });
-      }
-    });
-    
-    const filteredEvents = filterEvents(allEvents);
-    // 날짜 빠른 순, 같은 날짜는 시간 빠른 순으로 정렬
-    return filteredEvents.sort((a, b) => {
-      // 먼저 날짜로 비교
-      const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
-      if (dateCompare !== 0) return dateCompare;
-      
-      // 날짜가 같으면 시간으로 비교
-      const timeA = a.event.time || 'ZZ:ZZ'; // 시간 없으면 마지막으로
-      const timeB = b.event.time || 'ZZ:ZZ';
-      return timeA.localeCompare(timeB);
-    });
-  };
+    return Object.entries(events)
+      .flatMap(([date, eventList]) => {
+        const eventDate = new Date(date);
+        eventDate.setHours(0, 0, 0, 0);
+        return eventDate >= today 
+          ? eventList.map(event => ({ date, event }))
+          : [];
+      })
+      .filter(filterByRegion)
+      .filter(filterByLocation)
+      .sort((a, b) => {
+        const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
+        return dateCompare !== 0 ? dateCompare : sortByTime(a, b);
+      });
+  }, [events, selectedDate, selectedRegion, selectedLocation]);
 
   // 성능 최적화: upcomingEvents를 메모이제이션
-  const upcomingEvents = useMemo(() => getUpcomingEvents(), [
-    events,
-    selectedDate,
-    selectedRegion,
-    selectedLocation,
-    currentMonth,
-    currentYear
-  ]);
+  const upcomingEvents = useMemo(() => getUpcomingEvents(), [getUpcomingEvents]);
 
   // visibleMonths 중복 제거 (정기 클린업)
   React.useEffect(() => {
@@ -317,7 +318,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     useCallback(() => {
       loadEventsData();
       
-      // 10초마다 Gist에서 데이터 자동 갱신 (실시간 업데이트)
+      // 30초마다 Gist에서 데이터 자동 갱신 (배터리 최적화)
       pollIntervalRef.current = setInterval(async () => {
         try {
           const latestEvents = await loadEvents(true);
@@ -325,32 +326,22 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         } catch (error) {
           // 갱신 실패는 무시
         }
-      }, 10000); // 10초마다 갱신
+      }, 30000);
 
-      // 컴포넌트 언마운트 시 정리
       return () => {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-        }
-        if (scrollTimeoutRef.current) {
-          clearTimeout(scrollTimeoutRef.current);
-        }
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
       };
     }, [])
   );
 
   const loadEventsData = async () => {
     try {
-      // 캐시 초기화 (Gist 최신 데이터 보장)
       await clearCache();
-      
-      // Gist에서 최신 데이터 가져오기
       const loadedEvents = await loadEvents(true);
-      
-      // Gist 데이터 설정 (비어있어도 그대로 사용)
       setEvents(loadedEvents);
       
-      // 지역 목록 추출 및 이벤트 개수 기준 정렬
+      // 지역 목록 추출 (이벤트 개수 많은 순)
       const regionCount = new Map<string, number>();
       Object.values(loadedEvents).forEach(eventList => {
         eventList.forEach(event => {
@@ -359,13 +350,12 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           }
         });
       });
-      // 이벤트 개수가 많은 순으로 정렬
+      
       const sortedRegions = Array.from(regionCount.entries())
         .sort((a, b) => b[1] - a[1])
-        .map(entry => entry[0]);
+        .map(([region]) => region);
       setAvailableRegions(sortedRegions);
     } catch (error) {
-      // 오류 시에도 빈 상태로 유지 (샘플 데이터 사용 안함)
       setEvents({});
     }
   };
@@ -553,7 +543,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                   color: isActive ? (isDark ? '#a78bfa' : '#ec4899') : isDark ? '#64748b' : '#94a3b8',
                   letterSpacing: 0.5,
                 }}>
-                  {monthNamesShort[monthNum - 1]}
+                  {monthNames[monthNum - 1]}
                 </Text>
                 {isActive && (
                   <View style={{ 
@@ -1014,19 +1004,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                           </Text>
                           {item.event.link && (
                             <TouchableOpacity
-                              onPress={async () => {
-                                try {
-                                  const url = item.event.link.startsWith('http') ? item.event.link : `https://${item.event.link}`;
-                                  const canOpen = await Linking.canOpenURL(url);
-                                  if (canOpen) {
-                                    await Linking.openURL(url);
-                                  } else {
-                                    Alert.alert('오류', '링크를 열 수 없습니다.');
-                                  }
-                                } catch (error) {
-                                  Alert.alert('오류', '링크를 열 수 없습니다.');
-                                }
-                              }}
+                              onPress={() => openInstagramLink(item.event.link)}
                               style={{
                                 marginTop: 10,
                                 paddingVertical: 6,
@@ -1036,7 +1014,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                                 alignSelf: 'flex-start',
                               }}
                             >
-                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>🔗 자세히 보기</Text>
+                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>� 인스타 보기</Text>
                             </TouchableOpacity>
                           )}
                         </View>
@@ -1073,19 +1051,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                   
                   {event.link ? (
                     <TouchableOpacity
-                      onPress={async () => {
-                        try {
-                          const url = event.link.startsWith('http') ? event.link : `https://${event.link}`;
-                          const canOpen = await Linking.canOpenURL(url);
-                          if (canOpen) {
-                            await Linking.openURL(url);
-                          } else {
-                            Alert.alert('오류', '링크를 열 수 없습니다.');
-                          }
-                        } catch (error) {
-                          Alert.alert('오류', '링크를 열 수 없습니다.');
-                        }
-                      }}
+                      onPress={() => openInstagramLink(event.link)}
                       style={{
                         paddingVertical: 8,
                         paddingHorizontal: 14,
@@ -1124,9 +1090,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         visible={showPointsModal}
         onClose={() => setShowPointsModal(false)}
         points={points}
-        onSpendPoints={(amount, reason) => {
-          setPoints(prev => prev - amount);
-        }}
+        onSpendPoints={spendPoints}
         isDark={isDark}
       />
     </SafeAreaView>

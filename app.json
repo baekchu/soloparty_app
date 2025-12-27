@@ -12,12 +12,17 @@
       "resizeMode": "contain",
       "backgroundColor": "#fce7f3"
     },
+    "description": "솔로들을 위한 파티 매칭 서비스",
+    "primaryColor": "#ec4899",
+    "privacy": "public",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.soloparty.dating",
-      "buildNumber": "1.0.0",
+      "buildNumber": "1",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSUserTrackingUsageDescription": "앱 성능 개선을 위해 사용됩니다",
+        "NSPhotoLibraryUsageDescription": "프로필 사진 업로드를 위해 필요합니다"
       }
     },
     "android": {
@@ -28,7 +33,11 @@
       "edgeToEdgeEnabled": true,
       "package": "com.soloparty.dating",
       "versionCode": 1,
-      "permissions": []
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png",
