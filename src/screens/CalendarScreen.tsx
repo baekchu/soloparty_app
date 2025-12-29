@@ -14,6 +14,7 @@ import { CompositeNavigationProp } from '@react-navigation/native';
 import MonthCalendar from '../components/MonthCalendar';
 import PointsModal from '../components/PointsModal';
 import { usePoints } from '../hooks/usePoints';
+import { sendNewEventNotification } from '../services/NotificationService';
 
 type CalendarScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, 'Calendar'>,
@@ -105,6 +106,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null); // 폴링 타이머
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 스크롤 디바운스용
   const isUserScrollingRef = useRef(false); // 사용자 스크롤 중인지 추적
+  const previousEventsRef = useRef<EventsByDate>({}); // 이전 일정 추적 (알림용)
 
   React.useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
@@ -322,7 +324,12 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       pollIntervalRef.current = setInterval(async () => {
         try {
           const latestEvents = await loadEvents(true);
+          
+          // 새 일정 감지 및 알림
+          checkForNewEvents(previousEventsRef.current, latestEvents);
+          
           setEvents(latestEvents);
+          previousEventsRef.current = latestEvents;
         } catch (error) {
           // 갱신 실패는 무시
         }
@@ -335,10 +342,50 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }, [])
   );
 
+  // 새 일정 감지 함수
+  const checkForNewEvents = (oldEvents: EventsByDate, newEvents: EventsByDate) => {
+    // 초기 로드 시에는 알림 보내지 않음
+    if (Object.keys(oldEvents).length === 0) return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    Object.keys(newEvents).forEach(date => {
+      const eventDate = new Date(date);
+      eventDate.setHours(0, 0, 0, 0);
+
+      // 오늘 이후의 일정만 확인
+      if (eventDate < today) return;
+
+      const oldEventIds = new Set(
+        (oldEvents[date] || []).map(e => `${e.id}-${e.title}`)
+      );
+      
+      newEvents[date].forEach(event => {
+        const eventKey = `${event.id}-${event.title}`;
+        
+        // 새로 추가된 일정이면 알림 전송
+        if (!oldEventIds.has(eventKey)) {
+          const formattedDate = new Date(date).toLocaleDateString('ko-KR', {
+            month: 'long',
+            day: 'numeric',
+          });
+          sendNewEventNotification(event.title, formattedDate);
+        }
+      });
+    });
+  };
+
   const loadEventsData = async () => {
     try {
       await clearCache();
       const loadedEvents = await loadEvents(true);
+      
+      // 초기 로드 시 이전 데이터 저장
+      if (Object.keys(events).length === 0) {
+        previousEventsRef.current = loadedEvents;
+      }
+      
       setEvents(loadedEvents);
       
       // 지역 목록 추출 (이벤트 개수 많은 순)

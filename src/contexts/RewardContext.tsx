@@ -47,6 +47,7 @@ interface RewardHistory {
 
 interface DailyAdLimit {
   date: string; // YYYY-MM-DD
+  timestamp: number; // 마지막 리셋 시간 (Unix timestamp)
   count: number;
   userId: string;
 }
@@ -57,8 +58,11 @@ export const RewardProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [balance, setBalance] = useState(0);
   const [rewardHistory, setRewardHistory] = useState<RewardHistory[]>([]);
   const [dailyAdCount, setDailyAdCount] = useState(0);
-  const maxDailyAds = 10; // 하루 최대 10번
+  const maxDailyAds = 10;
   const { userId, isLoading: userLoading, getUserData } = useUser();
+
+  // canWatchAd를 useMemo로 최적화
+  const canWatchAd = useMemo(() => dailyAdCount < maxDailyAds, [dailyAdCount]);
 
   // 사용자별 데이터 로드
   useEffect(() => {
@@ -67,12 +71,16 @@ export const RewardProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   }, [userId, userLoading]);
 
-  const loadRewardData = async () => {
+  // 사용자별 데이터 로드
+  const loadRewardData = useCallback(async () => {
     if (!userId) return;
 
     try {
-      const savedBalance = await AsyncStorage.getItem(`reward_balance_${userId}`);
-      const savedHistory = await AsyncStorage.getItem(`reward_history_${userId}`);
+      // AsyncStorage 병렬 처리로 성능 향상
+      const [savedBalance, savedHistory] = await Promise.all([
+        AsyncStorage.getItem(`reward_balance_${userId}`),
+        AsyncStorage.getItem(`reward_history_${userId}`)
+      ]);
       
       if (savedBalance) {
         setBalance(parseInt(savedBalance));
@@ -81,57 +89,61 @@ export const RewardProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         setRewardHistory(JSON.parse(savedHistory));
       }
 
-      // 일일 광고 시청 횟수 로드
+      // 광고 시청 횟수 로드
       await loadDailyAdCount();
-      
-      console.log(`✅ 적립금 로드 (User: ${userId.slice(0, 8)}...): ${savedBalance || 0}원`);
     } catch (error) {
       console.error('적립금 로드 실패:', error);
     }
-  };
+  }, [userId]);
 
-  // 일일 광고 시청 횟수 로드
-  const loadDailyAdCount = async () => {
+  // 6시간마다 광고 시청 횟수 로드
+  const loadDailyAdCount = useCallback(async () => {
     if (!userId) return;
 
     try {
-      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const now = Date.now();
+      const sixHoursInMs = 6 * 60 * 60 * 1000;
       const savedLimitStr = await AsyncStorage.getItem(`daily_ad_limit_${userId}`);
       
       if (savedLimitStr) {
         const savedLimit: DailyAdLimit = JSON.parse(savedLimitStr);
+        const timeSinceReset = now - (savedLimit.timestamp || 0);
         
-        if (savedLimit.date === today) {
+        if (timeSinceReset < sixHoursInMs) {
           setDailyAdCount(savedLimit.count);
-          console.log(`📊 오늘 광고 시청: ${savedLimit.count}/${maxDailyAds}`);
         } else {
-          // 날짜가 바뀌면 카운트 리셋
-          await resetDailyAdCount();
+          await resetDailyAdCount(true);
         }
       } else {
         setDailyAdCount(0);
       }
     } catch (error) {
-      console.error('일일 광고 카운트 로드 실패:', error);
+      console.error('광고 카운트 로드 실패:', error);
     }
-  };
+  }, [userId]);
 
-  // 일일 광고 카운트 리셋
-  const resetDailyAdCount = useCallback(async () => {
+  // 6시간마다 광고 카운트 리셋
+  const resetDailyAdCount = useCallback(async (sendNotification: boolean = false) => {
     if (!userId) return;
 
     try {
+      const now = Date.now();
       const today = new Date().toISOString().split('T')[0];
       const newLimit: DailyAdLimit = {
         date: today,
+        timestamp: now,
         count: 0,
         userId,
       };
       await AsyncStorage.setItem(`daily_ad_limit_${userId}`, JSON.stringify(newLimit));
       setDailyAdCount(0);
-      console.log('🔄 일일 광고 카운트 리셋');
+
+      if (sendNotification) {
+        const { sendAdLimitResetNotification } = require('../services/NotificationService');
+        await sendAdLimitResetNotification();
+      }
     } catch (error) {
-      console.error('일일 광고 카운트 리셋 실패:', error);
+      console.error('광고 카운트 리셋 실패:', error);
     }
   }, [userId]);
 
@@ -144,24 +156,34 @@ export const RewardProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     if (reason.includes('광고')) {
       if (dailyAdCount >= maxDailyAds) {
         Alert.alert(
-          '🚫 일일 광고 시청 한도 초과',
-          `하루에 최대 ${maxDailyAds}개의 광고만 시청할 수 있습니다.\n내일 다시 시도해주세요!`,
+          '🚫 광고 시청 한도 초과',
+          `6시간 동안 최대 ${maxDailyAds}개의 광고만 시청할 수 있습니다.\n6시간 후 다시 시도해주세요!`,
           [{ text: '확인' }]
         );
         return;
       }
 
       // 광고 시청 횟수 증가
+      const now = Date.now();
       const today = new Date().toISOString().split('T')[0];
       const newCount = dailyAdCount + 1;
+      
+      // 기존 timestamp 유지 (새로 시작하는 경우에만 새 timestamp)
+      const savedLimitStr = await AsyncStorage.getItem(`daily_ad_limit_${userId}`);
+      let timestamp = now;
+      if (savedLimitStr) {
+        const savedLimit: DailyAdLimit = JSON.parse(savedLimitStr);
+        timestamp = savedLimit.timestamp || now;
+      }
+      
       const newLimit: DailyAdLimit = {
         date: today,
+        timestamp,
         count: newCount,
         userId,
       };
       await AsyncStorage.setItem(`daily_ad_limit_${userId}`, JSON.stringify(newLimit));
       setDailyAdCount(newCount);
-      console.log(`📊 광고 시청 횟수: ${newCount}/${maxDailyAds}`);
     }
     try {
       const newBalance = balance + amount;
@@ -181,22 +203,21 @@ export const RewardProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       };
 
       setBalance(newBalance);
-      const updatedHistory = [newHistory, ...rewardHistory].slice(0, 100); // 최근 100개
+      const updatedHistory = [newHistory, ...rewardHistory].slice(0, 100);
       setRewardHistory(updatedHistory);
 
-      await AsyncStorage.setItem(`reward_balance_${userId}`, newBalance.toString());
-      await AsyncStorage.setItem(`reward_history_${userId}`, JSON.stringify(updatedHistory));
-
-      // 전체 내역에도 기록 (관리용)
-      await saveToGlobalHistory(newHistory);
+      // AsyncStorage 병렬 저장으로 성능 향상
+      await Promise.all([
+        AsyncStorage.setItem(`reward_balance_${userId}`, newBalance.toString()),
+        AsyncStorage.setItem(`reward_history_${userId}`, JSON.stringify(updatedHistory)),
+        saveToGlobalHistory(newHistory)
+      ]);
 
       Alert.alert(
         '💰 적립 완료!',
         `${amount}원이 적립되었습니다!\n현재 잔액: ${newBalance.toLocaleString()}원`,
         [{ text: '확인' }]
       );
-      
-      console.log(`✅ 적립: ${amount}원 (User: ${userId.slice(0, 8)}..., Balance: ${newBalance}원)`);
     } catch (error) {
       console.error('적립금 추가 실패:', error);
       Alert.alert('오류', '적립금 추가에 실패했습니다.');
@@ -239,22 +260,20 @@ export const RewardProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const updatedHistory = [newHistory, ...rewardHistory].slice(0, 100);
       setRewardHistory(updatedHistory);
 
-      await AsyncStorage.setItem(`reward_balance_${userId}`, newBalance.toString());
-      await AsyncStorage.setItem(`reward_history_${userId}`, JSON.stringify(updatedHistory));
+      // AsyncStorage 병렬 저장 및 티켓 사용 내역 저장
+      await Promise.all([
+        AsyncStorage.setItem(`reward_balance_${userId}`, newBalance.toString()),
+        AsyncStorage.setItem(`reward_history_${userId}`, JSON.stringify(updatedHistory)),
+        saveToGlobalHistory(newHistory),
+        saveTicketUsage({
+          ticketName: purpose,
+          amount,
+          userId,
+          deviceInfo: userData?.deviceInfo,
+          usedAt: new Date().toISOString(),
+        })
+      ]);
 
-      // 전체 내역에도 기록
-      await saveToGlobalHistory(newHistory);
-
-      // 티켓 사용 내역 저장
-      await saveTicketUsage({
-        ticketName: purpose,
-        amount,
-        userId,
-        deviceInfo: userData?.deviceInfo,
-        usedAt: new Date().toISOString(),
-      });
-
-      console.log(`✅ 사용: ${amount}원 (User: ${userId.slice(0, 8)}..., Balance: ${newBalance}원, Ticket: ${purpose})`);
       return true;
     } catch (error) {
       console.error('적립금 사용 실패:', error);
@@ -283,18 +302,14 @@ export const RewardProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const ticketUsage: any[] = ticketUsageStr ? JSON.parse(ticketUsageStr) : [];
       ticketUsage.unshift(ticketData);
       await AsyncStorage.setItem('ticket_usage_history', JSON.stringify(ticketUsage.slice(0, 500)));
-      console.log('✅ 티켓 사용 내역 저장:', ticketData.ticketName);
     } catch (error) {
       console.error('티켓 사용 내역 저장 실패:', error);
     }
   };
 
-  const refreshBalance = async () => {
+  const refreshBalance = useCallback(async () => {
     await loadRewardData();
-  };
-
-  // 광고 시청 가능 여부
-  const canWatchAd = useMemo(() => dailyAdCount < maxDailyAds, [dailyAdCount, maxDailyAds]);
+  }, [loadRewardData]);
 
   // Context value를 useMemo로 최적화
   const contextValue = useMemo(

@@ -23,7 +23,7 @@
     "production": {
       "autoIncrement": true,
       "android": {
-        "buildType": "aab"
+        "buildType": "app-bundle"
       },
       "ios": {
         "autoIncrement": "buildNumber"
@@ -37,9 +37,9 @@
         "track": "internal"
       },
       "ios": {
-        "appleId": "your-apple-id@example.com",
-        "ascAppId": "1234567890",
-        "appleTeamId": "YOUR_TEAM_ID"
+        "appleId": "tmd848@naver.com",
+        "ascAppId": "6757147307",
+        "appleTeamId": "8RT24R3UBM"
       }
     }
   }

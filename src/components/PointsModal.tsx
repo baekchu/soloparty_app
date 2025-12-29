@@ -10,7 +10,7 @@
  * ========================================================================
  */
 
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -27,9 +27,14 @@ interface PointsModalProps {
   points: number;
   onSpendPoints: (amount: number, reason: string) => Promise<boolean>;
   isDark: boolean;
+  dailyAdCount?: number;
+  maxDailyAds?: number;
 }
 
-const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark }: PointsModalProps) => {
+const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark, dailyAdCount = 0, maxDailyAds = 10 }: PointsModalProps) => {
+  
+  const remainingAds = useMemo(() => maxDailyAds - dailyAdCount, [maxDailyAds, dailyAdCount]);
+  const canWatchAd = useMemo(() => remainingAds > 0, [remainingAds]);
   
   const handleFreeParty = useCallback(() => {
     if (points >= 50000) {
@@ -67,12 +72,21 @@ const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark }: P
   }, [onClose]);
 
   const handleWatchAd = useCallback(() => {
+    if (!canWatchAd) {
+      Alert.alert(
+        '🚫 광고 시청 한도 초과',
+        `6시간 동안 ${maxDailyAds}개의 광고를 모두 시청했습니다.\n6시간 후 다시 시도해주세요!`,
+        [{ text: '확인' }]
+      );
+      return;
+    }
+    
     Alert.alert(
       '광고 시청',
-      '광고 시스템은 네이티브 빌드 후 사용 가능합니다.\n\nnpx expo prebuild --clean\nnpx expo run:android',
+      `남은 광고 시청: ${remainingAds}/${maxDailyAds}회\n(6시간마다 리셋)\n\n광고 시스템은 네이티브 빌드 후 사용 가능합니다.`,
       [{ text: '확인' }]
     );
-  }, []);
+  }, [canWatchAd, remainingAds, maxDailyAds]);
 
   return (
     <Modal
@@ -184,21 +198,32 @@ const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark }: P
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={handleWatchAd}
+                disabled={!canWatchAd}
                 style={[
                   styles.secondaryButton,
                   { 
                     backgroundColor: isDark ? '#1e293b' : '#f8f9fa',
                     borderColor: isDark ? '#334155' : '#e5e7eb',
-                    opacity: 0.6,
+                    opacity: canWatchAd ? 1 : 0.4,
                   }
                 ]}
               >
-                <Text style={[styles.secondaryButtonText, { color: isDark ? '#64748b' : '#94a3b8' }]}>
-                  📺 광고 보고 포인트 받기
-                </Text>
-                <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#475569' : '#cbd5e1' }]}>
-                  네이티브 빌드 후 사용 가능
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.secondaryButtonText, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                      📺 광고 보고 포인트 받기
+                    </Text>
+                    <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#475569' : '#cbd5e1' }]}>
+                      {canWatchAd 
+                        ? `남은 횟수: ${remainingAds}/${maxDailyAds}회 (6시간마다 리셋)` 
+                        : `6시간 후 다시 시청 가능 (${dailyAdCount}/${maxDailyAds})`
+                      }
+                    </Text>
+                  </View>
+                  {!canWatchAd && (
+                    <Text style={{ fontSize: 20 }}>🚫</Text>
+                  )}
+                </View>
               </TouchableOpacity>
             </View>
 

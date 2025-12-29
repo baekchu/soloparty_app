@@ -21,8 +21,8 @@
       "buildNumber": "1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSUserTrackingUsageDescription": "앱 성능 개선을 위해 사용됩니다",
-        "NSPhotoLibraryUsageDescription": "프로필 사진 업로드를 위해 필요합니다"
+        "NSPhotoLibraryUsageDescription": "프로필 사진 업로드를 위해 필요합니다",
+        "NSUserNotificationsUsageDescription": "새로운 파티 등록 알림과 광고 시청 가능 알림을 받으실 수 있습니다"
       }
     },
     "android": {
@@ -35,9 +35,9 @@
       "versionCode": 1,
       "permissions": [
         "INTERNET",
-        "ACCESS_NETWORK_STATE"
-      ],
-      "googleServicesFile": "./google-services.json"
+        "ACCESS_NETWORK_STATE",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",

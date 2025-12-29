@@ -19,6 +19,7 @@
     "expo-clipboard": "^8.0.8",
     "expo-crypto": "^15.0.8",
     "expo-device": "^8.0.10",
+    "expo-notifications": "~0.28.19",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-dom": "19.1.0",
