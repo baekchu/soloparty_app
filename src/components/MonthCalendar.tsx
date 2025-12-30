@@ -103,8 +103,9 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const daysInMonth = useMemo(() => getDaysInMonth(year, month), [year, month]);
   const firstDay = useMemo(() => getFirstDayOfMonth(year, month), [year, month]);
   
-  // 오늘 날짜 계산 메모이제이션
-  const todayString = useMemo(() => new Date().toISOString().split('T')[0], []);
+  // 오늘 날짜 계산 - 매번 계산하여 날짜 변경 반영
+  const today = new Date();
+  const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
   const renderDay = useCallback((day: number | null, weekIndex: number, dayIndex: number, isOtherMonth: boolean = false) => {
     if (!day || isOtherMonth) {

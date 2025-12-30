@@ -169,6 +169,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }
   }, []);
 
+  const panelStartHeight = useRef(100);
+  
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -176,8 +178,13 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         // 수직 제스처만 인식 (dy가 dx보다 클 때)
         return Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
       },
+      onPanResponderGrant: () => {
+        // 드래그 시작 시 현재 높이 저장
+        panelStartHeight.current = (panelHeight as any)._value || 100;
+      },
       onPanResponderMove: (_, gestureState) => {
-        const newValue = 100 - gestureState.dy;
+        // 드래그 시작점에서 이동한 거리만큼 패널 높이 조정
+        const newValue = panelStartHeight.current - gestureState.dy;
         if (newValue >= 100 && newValue <= screenHeight - 100) {
           panelHeight.setValue(newValue);
         }
@@ -344,7 +351,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   );
 
   // 새 일정 감지 함수
-  const checkForNewEvents = (oldEvents: EventsByDate, newEvents: EventsByDate) => {
+  const checkForNewEvents = useCallback((oldEvents: EventsByDate, newEvents: EventsByDate) => {
     // 초기 로드 시에는 알림 보내지 않음
     if (Object.keys(oldEvents).length === 0) return;
 
@@ -375,7 +382,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         }
       });
     });
-  };
+  }, []);
 
   const loadEventsData = async () => {
     try {
@@ -1016,11 +1023,22 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                           flex: 1,
                           marginTop: 8,
                           marginBottom: 8,
-                          borderLeftWidth: 2,
-                          borderLeftColor: 'rgba(255, 255, 255, 0.3)',
-                          borderStyle: 'dashed',
                           minHeight: 40,
-                        }} />
+                          alignItems: 'center',
+                          justifyContent: 'space-evenly',
+                        }}>
+                          {Array.from({ length: 8 }).map((_, i) => (
+                            <View
+                              key={i}
+                              style={{
+                                width: 3,
+                                height: 3,
+                                borderRadius: 1.5,
+                                backgroundColor: 'rgba(255, 255, 255, 0.4)',
+                              }}
+                            />
+                          ))}
+                        </View>
                       )}
                     </View>
                     

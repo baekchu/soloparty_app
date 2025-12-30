@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface FilterContextType {
@@ -20,21 +20,29 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
 
   // 앱 시작 시 저장된 필터 불러오기
   React.useEffect(() => {
+    let mounted = true;
+    
+    const loadSavedFilters = async () => {
+      try {
+        const [savedLocation, savedRegion] = await Promise.all([
+          AsyncStorage.getItem(SELECTED_LOCATION_KEY),
+          AsyncStorage.getItem(SELECTED_REGION_KEY)
+        ]);
+        
+        if (mounted) {
+          if (savedLocation) setSelectedLocationState(savedLocation);
+          if (savedRegion) setSelectedRegionState(savedRegion);
+        }
+      } catch (error) {
+        console.error('저장된 필터 로드 실패:', error);
+      }
+    };
+    
     loadSavedFilters();
+    return () => { mounted = false; };
   }, []);
 
-  const loadSavedFilters = async () => {
-    try {
-      const savedLocation = await AsyncStorage.getItem(SELECTED_LOCATION_KEY);
-      const savedRegion = await AsyncStorage.getItem(SELECTED_REGION_KEY);
-      if (savedLocation) setSelectedLocationState(savedLocation);
-      if (savedRegion) setSelectedRegionState(savedRegion);
-    } catch (error) {
-      console.error('저장된 필터 로드 실패:', error);
-    }
-  };
-
-  const setSelectedLocation = async (location: string | null) => {
+  const setSelectedLocation = useCallback(async (location: string | null) => {
     setSelectedLocationState(location);
     try {
       if (location) {
@@ -43,11 +51,11 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
         await AsyncStorage.removeItem(SELECTED_LOCATION_KEY);
       }
     } catch (error) {
-      // 필터 로드 실패는 무시
+      console.error('장소 저장 실패:', error);
     }
-  };
+  }, []);
 
-  const setSelectedRegion = async (region: string | null) => {
+  const setSelectedRegion = useCallback(async (region: string | null) => {
     setSelectedRegionState(region);
     try {
       if (region) {
@@ -58,27 +66,34 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       console.error('지역 저장 실패:', error);
     }
-  };
+  }, []);
 
-  const clearFilters = async () => {
+  const clearFilters = useCallback(async () => {
     setSelectedLocationState(null);
     setSelectedRegionState(null);
     try {
-      await AsyncStorage.removeItem(SELECTED_LOCATION_KEY);
-      await AsyncStorage.removeItem(SELECTED_REGION_KEY);
+      await Promise.all([
+        AsyncStorage.removeItem(SELECTED_LOCATION_KEY),
+        AsyncStorage.removeItem(SELECTED_REGION_KEY)
+      ]);
     } catch (error) {
       console.error('필터 초기화 실패:', error);
     }
-  };
+  }, []);
+
+  const contextValue = useMemo(
+    () => ({
+      selectedLocation,
+      selectedRegion,
+      setSelectedLocation,
+      setSelectedRegion,
+      clearFilters
+    }),
+    [selectedLocation, selectedRegion, setSelectedLocation, setSelectedRegion, clearFilters]
+  );
 
   return (
-    <RegionContext.Provider value={{ 
-      selectedLocation, 
-      selectedRegion, 
-      setSelectedLocation, 
-      setSelectedRegion, 
-      clearFilters 
-    }}>
+    <RegionContext.Provider value={contextValue}>
       {children}
     </RegionContext.Provider>
   );

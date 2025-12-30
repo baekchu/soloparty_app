@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
 import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -24,36 +24,49 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     : themeMode;
 
   useEffect(() => {
+    let mounted = true;
+    
+    const loadThemeMode = async () => {
+      try {
+        const savedMode = await AsyncStorage.getItem(THEME_KEY);
+        if (savedMode && (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') && mounted) {
+          setThemeModeState(savedMode as ThemeMode);
+        }
+      } catch (error) {
+        // 테마 로드 실패는 무시
+      }
+    };
+    
     loadThemeMode();
+    return () => { mounted = false; };
   }, []);
 
-  const loadThemeMode = async () => {
-    try {
-      const savedMode = await AsyncStorage.getItem(THEME_KEY);
-      if (savedMode && (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system')) {
-        setThemeModeState(savedMode as ThemeMode);
-      }
-    } catch (error) {
-      // 테마 로드 실패는 무시
-    }
-  };
-
-  const setThemeMode = async (mode: ThemeMode) => {
+  const setThemeMode = useCallback(async (mode: ThemeMode) => {
     try {
       await AsyncStorage.setItem(THEME_KEY, mode);
       setThemeModeState(mode);
     } catch (error) {
       console.error('Error saving theme mode:', error);
     }
-  };
+  }, []);
 
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     const newMode = theme === 'dark' ? 'light' : 'dark';
     setThemeMode(newMode);
-  };
+  }, [theme, setThemeMode]);
+
+  const contextValue = useMemo(
+    () => ({
+      theme,
+      themeMode,
+      setThemeMode,
+      toggleTheme
+    }),
+    [theme, themeMode, setThemeMode, toggleTheme]
+  );
 
   return (
-    <ThemeContext.Provider value={{ theme, themeMode, setThemeMode, toggleTheme }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   );

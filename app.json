@@ -32,7 +32,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.soloparty.dating",
-      "versionCode": 1,
+      "versionCode": 3,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",

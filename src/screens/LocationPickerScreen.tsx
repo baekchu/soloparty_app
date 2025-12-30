@@ -101,7 +101,18 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string | null>(null);
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
 
-  const { width, height } = Dimensions.get('window');
+  const [dimensions, setDimensions] = useState(() => {
+    const { width, height } = Dimensions.get('window');
+    return { width, height };
+  });
+
+  // 화면 크기 변경 감지
+  React.useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setDimensions({ width: window.width, height: window.height });
+    });
+    return () => subscription?.remove();
+  }, []);
 
   // 장소 데이터 및 통계 불러오기
   React.useEffect(() => {

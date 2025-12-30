@@ -8,10 +8,9 @@
 
 import { Dimensions, Platform } from 'react-native';
 
-const { width, height } = Dimensions.get('window');
-
 // 디바이스 타입 감지
 export const isTablet = () => {
+  const { width, height } = Dimensions.get('window');
   const aspectRatio = height / width;
   // 태블릿은 일반적으로 화면이 더 크고 비율이 다름
   return (
@@ -22,6 +21,7 @@ export const isTablet = () => {
 
 // 반응형 너비 계산
 export const getResponsiveWidth = (maxWidth: number = 600): number => {
+  const { width } = Dimensions.get('window');
   if (isTablet()) {
     return Math.min(width * 0.7, maxWidth);
   }
