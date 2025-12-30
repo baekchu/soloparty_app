@@ -32,13 +32,17 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.soloparty.dating",
-      "versionCode": 3,
+      "versionCode": 6,
+      "minSdkVersion": 23,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "POST_NOTIFICATIONS"
-      ]
+      ],
+      "enableProguardInReleaseBuilds": true,
+      "enableShrinkResourcesInReleaseBuilds": true
     },
+    "jsEngine": "hermes",
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"

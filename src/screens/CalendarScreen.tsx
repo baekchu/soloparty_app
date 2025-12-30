@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Dimensions, Animated, PanResponder, Linking, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { loadEvents, saveEvents, clearCache } from '../utils/storage';
+import { loadEvents, saveEvents } from '../utils/storage';
 import { EventsByDate } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
@@ -326,20 +326,29 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   useFocusEffect(
     useCallback(() => {
-      loadEventsData();
+      // 초기 데이터 로드 (안전하게)
+      loadEventsData().catch(err => {
+        console.log('초기 데이터 로드 실패 (무시):', err);
+      });
       
       // 30초마다 Gist에서 데이터 자동 갱신 (배터리 최적화)
       pollIntervalRef.current = setInterval(async () => {
         try {
-          const latestEvents = await loadEvents(true);
+          const latestEvents = await loadEvents(true).catch(() => ({} as EventsByDate));
           
-          // 새 일정 감지 및 알림
-          checkForNewEvents(previousEventsRef.current, latestEvents);
-          
-          setEvents(latestEvents);
-          previousEventsRef.current = latestEvents;
+          if (latestEvents && typeof latestEvents === 'object') {
+            // 새 일정 감지 및 알림
+            try {
+              checkForNewEvents(previousEventsRef.current, latestEvents);
+            } catch (checkError) {
+              console.log('일정 감지 실패 (무시):', checkError);
+            }
+            
+            setEvents(latestEvents);
+            previousEventsRef.current = latestEvents;
+          }
         } catch (error) {
-          // 갱신 실패는 무시
+          console.log('자동 갱신 실패 (무시):', error);
         }
       }, 30000);
 
@@ -386,32 +395,47 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const loadEventsData = async () => {
     try {
-      await clearCache();
-      const loadedEvents = await loadEvents(true);
+      // 캐시를 사용하여 이벤트 로드 (네트워크 오류 시 캐시 사용)
+      const loadedEvents = await loadEvents(false).catch(() => ({} as EventsByDate));
       
-      // 초기 로드 시 이전 데이터 저장
-      if (Object.keys(events).length === 0) {
-        previousEventsRef.current = loadedEvents;
+      // 안전하게 이벤트 설정
+      if (loadedEvents && typeof loadedEvents === 'object') {
+        // 초기 로드 시 이전 데이터 저장
+        if (Object.keys(events).length === 0) {
+          previousEventsRef.current = loadedEvents;
+        }
+        
+        setEvents(loadedEvents);
+        
+        // 지역 목록 추출 (이벤트 개수 많은 순)
+        try {
+          const regionCount = new Map<string, number>();
+          Object.values(loadedEvents).forEach(eventList => {
+            if (Array.isArray(eventList)) {
+              eventList.forEach(event => {
+                if (event?.region) {
+                  regionCount.set(event.region, (regionCount.get(event.region) || 0) + 1);
+                }
+              });
+            }
+          });
+          
+          const sortedRegions = Array.from(regionCount.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([region]) => region);
+          setAvailableRegions(sortedRegions);
+        } catch (regionError) {
+          console.log('지역 목록 추출 실패 (무시):', regionError);
+          setAvailableRegions([]);
+        }
+      } else {
+        setEvents({});
+        setAvailableRegions([]);
       }
-      
-      setEvents(loadedEvents);
-      
-      // 지역 목록 추출 (이벤트 개수 많은 순)
-      const regionCount = new Map<string, number>();
-      Object.values(loadedEvents).forEach(eventList => {
-        eventList.forEach(event => {
-          if (event.region) {
-            regionCount.set(event.region, (regionCount.get(event.region) || 0) + 1);
-          }
-        });
-      });
-      
-      const sortedRegions = Array.from(regionCount.entries())
-        .sort((a, b) => b[1] - a[1])
-        .map(([region]) => region);
-      setAvailableRegions(sortedRegions);
     } catch (error) {
+      console.log('이벤트 로드 실패 (무시):', error);
       setEvents({});
+      setAvailableRegions([]);
     }
   };
 
