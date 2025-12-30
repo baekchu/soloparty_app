@@ -15,6 +15,7 @@ import '../utils/calendarLocale';
 import { useTheme } from '../contexts/ThemeContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
+import { getContainerStyle, getResponsivePadding, getResponsiveFontSize } from '../utils/responsive';
 
 type AddEventScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddEvent'>;
 
@@ -74,7 +75,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
       <View style={{ 
         paddingTop: 12, 
         paddingBottom: 12, 
-        paddingHorizontal: 24, 
+        paddingHorizontal: getResponsivePadding(), 
         flexDirection: 'row', 
         justifyContent: 'space-between', 
         alignItems: 'center',
@@ -84,19 +85,20 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
         <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingRight: 16 }}>
           <Text style={{ fontSize: 24, color: isDark ? '#ffffff' : '#111827' }}>✕</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: 20, fontWeight: 'bold', color: isDark ? '#ffffff' : '#111827' }}>
+        <Text style={{ fontSize: getResponsiveFontSize(20), fontWeight: 'bold', color: isDark ? '#ffffff' : '#111827' }}>
           새 이벤트
         </Text>
         <TouchableOpacity onPress={handleSave} style={{ paddingLeft: 16 }}>
-          <Text style={{ color: '#10b981', fontSize: 16, fontWeight: 'bold' }}>저장</Text>
+          <Text style={{ color: '#10b981', fontSize: getResponsiveFontSize(16), fontWeight: 'bold' }}>저장</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView 
         style={{ flex: 1 }}
+        contentContainerStyle={getContainerStyle(800)}
         showsVerticalScrollIndicator={false}
       >
-        <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 }}>
+        <View style={{ paddingHorizontal: getResponsivePadding(), paddingTop: 16, paddingBottom: 24 }}>
         <View style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 16, backgroundColor: isDark ? '#111827' : '#f9fafb' }}>
           <View style={{ padding: 16 }}>
             <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 12, color: isDark ? '#d1d5db' : '#374151' }}>

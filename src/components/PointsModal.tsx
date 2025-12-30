@@ -19,7 +19,9 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
+  Dimensions,
 } from 'react-native';
+import { isTablet } from '../utils/responsive';
 
 interface PointsModalProps {
   visible: boolean;
@@ -270,10 +272,10 @@ const styles = StyleSheet.create({
   },
   container: {
     width: '100%',
-    maxWidth: 420,
-    maxHeight: '85%',
+    maxWidth: isTablet() ? 600 : 420,
+    maxHeight: isTablet() ? '80%' : '85%',
     borderRadius: 24,
-    padding: 24,
+    padding: isTablet() ? 32 : 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,

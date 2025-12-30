@@ -5,6 +5,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../hooks/useNotifications';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
+import { getContainerStyle, getResponsivePadding, getResponsiveFontSize } from '../utils/responsive';
 
 interface SettingsScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Settings'>;
@@ -54,7 +55,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 20, 
+        paddingHorizontal: getResponsivePadding(), 
         paddingTop: 10,
         paddingBottom: 20, 
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
@@ -67,17 +68,17 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         >
           <Text style={{ fontSize: 24, color: isDark ? '#f8fafc' : '#0f172a' }}>‹</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: 20, fontWeight: '700', color: isDark ? '#f8fafc' : '#0f172a' }}>
+        <Text style={{ fontSize: getResponsiveFontSize(20), fontWeight: '700', color: isDark ? '#f8fafc' : '#0f172a' }}>
           설정
         </Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView style={{ flex: 1 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={getContainerStyle(800)}>
         {/* 다크모드 설정 */}
         <View style={{
-          margin: 20,
-          padding: 20,
+          margin: getResponsivePadding(),
+          padding: getResponsivePadding(),
           backgroundColor: isDark ? '#1e293b' : '#f9fafb',
           borderRadius: 12,
         }}>
@@ -113,9 +114,9 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
         {/* 알림 설정 */}
         <View style={{
-          marginHorizontal: 20,
-          marginBottom: 20,
-          padding: 20,
+          marginHorizontal: getResponsivePadding(),
+          marginBottom: getResponsivePadding(),
+          padding: getResponsivePadding(),
           backgroundColor: isDark ? '#1e293b' : '#f9fafb',
           borderRadius: 12,
         }}>
@@ -237,9 +238,9 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
         {/* 위치 설정 */}
         <View style={{
-          marginHorizontal: 20,
-          marginBottom: 20,
-          padding: 20,
+          marginHorizontal: getResponsivePadding(),
+          marginBottom: getResponsivePadding(),
+          padding: getResponsivePadding(),
           backgroundColor: isDark ? '#1e293b' : '#f9fafb',
           borderRadius: 12,
         }}>
@@ -277,9 +278,9 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
         {/* 앱 정보 */}
         <View style={{
-          marginHorizontal: 20,
-          marginBottom: 20,
-          padding: 20,
+          marginHorizontal: getResponsivePadding(),
+          marginBottom: getResponsivePadding(),
+          padding: getResponsivePadding(),
           backgroundColor: isDark ? '#1e293b' : '#f9fafb',
           borderRadius: 12,
         }}>

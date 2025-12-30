@@ -5,6 +5,7 @@ import { loadEvents, saveEvents, clearCache } from '../utils/storage';
 import { EventsByDate } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
+import { getContainerStyle, getResponsivePadding, isTablet } from '../utils/responsive';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { useFocusEffect } from '@react-navigation/native';
