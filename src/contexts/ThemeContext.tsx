@@ -28,25 +28,29 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     const loadThemeMode = async () => {
       try {
-        const savedMode = await AsyncStorage.getItem(THEME_KEY);
+        const savedMode = await AsyncStorage.getItem(THEME_KEY).catch(() => null);
         if (savedMode && (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') && mounted) {
           setThemeModeState(savedMode as ThemeMode);
         }
       } catch (error) {
-        // 테마 로드 실패는 무시
+        // 테마 로드 실패는 무시 (기본값 사용)
       }
     };
     
-    loadThemeMode();
+    loadThemeMode().catch(() => {
+      // 비동기 함수 실패도 무시
+    });
     return () => { mounted = false; };
   }, []);
 
   const setThemeMode = useCallback(async (mode: ThemeMode) => {
     try {
-      await AsyncStorage.setItem(THEME_KEY, mode);
       setThemeModeState(mode);
+      await AsyncStorage.setItem(THEME_KEY, mode).catch(() => {
+        // 저장 실패해도 상태는 업데이트됨
+      });
     } catch (error) {
-      console.error('Error saving theme mode:', error);
+      console.log('테마 저장 실패 (무시):', error);
     }
   }, []);
 
@@ -75,7 +79,14 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 export const useTheme = (): ThemeContextType => {
   const context = useContext(ThemeContext);
   if (context === undefined) {
-    throw new Error('useTheme must be used within a ThemeProvider');
+    // 에러를 throw하는 대신 기본값 반환 (크래시 방지)
+    console.log('useTheme: ThemeProvider 누락, 기본값 사용');
+    return {
+      theme: 'light',
+      themeMode: 'system',
+      setThemeMode: () => {},
+      toggleTheme: () => {},
+    };
   }
   return context;
 };

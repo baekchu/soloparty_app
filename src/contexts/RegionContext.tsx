@@ -25,8 +25,8 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     const loadSavedFilters = async () => {
       try {
         const [savedLocation, savedRegion] = await Promise.all([
-          AsyncStorage.getItem(SELECTED_LOCATION_KEY),
-          AsyncStorage.getItem(SELECTED_REGION_KEY)
+          AsyncStorage.getItem(SELECTED_LOCATION_KEY).catch(() => null),
+          AsyncStorage.getItem(SELECTED_REGION_KEY).catch(() => null)
         ]);
         
         if (mounted) {
@@ -34,11 +34,13 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
           if (savedRegion) setSelectedRegionState(savedRegion);
         }
       } catch (error) {
-        console.error('저장된 필터 로드 실패:', error);
+        // 필터 로드 실패는 무시 (기본값 사용)
       }
     };
     
-    loadSavedFilters();
+    loadSavedFilters().catch(() => {
+      // 비동기 함수 실패도 무시
+    });
     return () => { mounted = false; };
   }, []);
 
@@ -46,12 +48,12 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     setSelectedLocationState(location);
     try {
       if (location) {
-        await AsyncStorage.setItem(SELECTED_LOCATION_KEY, location);
+        await AsyncStorage.setItem(SELECTED_LOCATION_KEY, location).catch(() => {});
       } else {
-        await AsyncStorage.removeItem(SELECTED_LOCATION_KEY);
+        await AsyncStorage.removeItem(SELECTED_LOCATION_KEY).catch(() => {});
       }
     } catch (error) {
-      console.error('장소 저장 실패:', error);
+      // 저장 실패해도 상태는 업데이트됨
     }
   }, []);
 
@@ -59,12 +61,12 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     setSelectedRegionState(region);
     try {
       if (region) {
-        await AsyncStorage.setItem(SELECTED_REGION_KEY, region);
+        await AsyncStorage.setItem(SELECTED_REGION_KEY, region).catch(() => {});
       } else {
-        await AsyncStorage.removeItem(SELECTED_REGION_KEY);
+        await AsyncStorage.removeItem(SELECTED_REGION_KEY).catch(() => {});
       }
     } catch (error) {
-      console.error('지역 저장 실패:', error);
+      // 저장 실패해도 상태는 업데이트됨
     }
   }, []);
 
@@ -73,11 +75,11 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     setSelectedRegionState(null);
     try {
       await Promise.all([
-        AsyncStorage.removeItem(SELECTED_LOCATION_KEY),
-        AsyncStorage.removeItem(SELECTED_REGION_KEY)
+        AsyncStorage.removeItem(SELECTED_LOCATION_KEY).catch(() => {}),
+        AsyncStorage.removeItem(SELECTED_REGION_KEY).catch(() => {})
       ]);
     } catch (error) {
-      console.error('필터 초기화 실패:', error);
+      // 삭제 실패해도 상태는 초기화됨
     }
   }, []);
 
@@ -102,7 +104,15 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
 export const useRegion = () => {
   const context = useContext(RegionContext);
   if (!context) {
-    throw new Error('useRegion must be used within a RegionProvider');
+    // 에러를 throw하는 대신 기본값 반환 (크래시 방지)
+    console.log('useRegion: RegionProvider 누락, 기본값 사용');
+    return {
+      selectedLocation: null,
+      selectedRegion: null,
+      setSelectedLocation: () => {},
+      setSelectedRegion: () => {},
+      clearFilters: () => {},
+    };
   }
   return context;
 };

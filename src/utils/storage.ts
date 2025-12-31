@@ -6,8 +6,8 @@ const GIST_RAW_URL = 'https://gist.githubusercontent.com/baekchu/f805cac22604ff7
 
 const CACHE_KEY = '@events_cache';
 const CACHE_TIMESTAMP_KEY = '@events_cache_timestamp';
-const CACHE_DURATION = 30000; // 30초 캐시 (네트워크 부하 감소)
-const FETCH_TIMEOUT = 10000; // 10초 타임아웃 (더 빠른 응답)
+const CACHE_DURATION = 300000; // 5분 캐시 (안정성과 성능 균형)
+const FETCH_TIMEOUT = 15000; // 15초 타임아웃 (네트워크 안정성)
 
 // JSON 복구: 잘못된 이스케이프 시퀀스 및 제어 문자 처리
 const repairJSON = (text: string): string => {
@@ -198,16 +198,22 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
     }
     
     const [cachedEvents, timestamp] = await Promise.all([
-      AsyncStorage.getItem(CACHE_KEY),
-      AsyncStorage.getItem(CACHE_TIMESTAMP_KEY),
+      AsyncStorage.getItem(CACHE_KEY).catch(() => null),
+      AsyncStorage.getItem(CACHE_TIMESTAMP_KEY).catch(() => null),
     ]);
     
     if (!cachedEvents || !timestamp) {
       return null;
     }
     
-    const age = Date.now() - parseInt(timestamp, 10);
-    if (age >= CACHE_DURATION) {
+    // 타임스탬프 유효성 검사
+    const parsedTimestamp = parseInt(timestamp, 10);
+    if (isNaN(parsedTimestamp) || parsedTimestamp <= 0) {
+      return null;
+    }
+    
+    const age = Date.now() - parsedTimestamp;
+    if (age < 0 || age >= CACHE_DURATION) {
       return null;
     }
     
@@ -224,17 +230,26 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
 // 캐시에 저장 (최적화)
 const saveToCache = async (events: EventsByDate): Promise<void> => {
   try {
-    // 캐시 비활성화 상태에서도 응급 폴백용으로는 저장
+    // 데이터 검증
+    if (!events || typeof events !== 'object') {
+      return;
+    }
+    
     const jsonString = JSON.stringify(events);
     
     // 메모리 효율성: 너무 큰 캐시는 저장하지 않음 (1MB 초과)
-    if (jsonString.length > 1024 * 1024) {
+    if (jsonString.length > 1024 * 1024 || jsonString.length < 2) {
+      return;
+    }
+    
+    const timestamp = Date.now();
+    if (isNaN(timestamp) || timestamp <= 0) {
       return;
     }
     
     await Promise.all([
-      AsyncStorage.setItem(CACHE_KEY, jsonString),
-      AsyncStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString()),
+      AsyncStorage.setItem(CACHE_KEY, jsonString).catch(() => {}),
+      AsyncStorage.setItem(CACHE_TIMESTAMP_KEY, timestamp.toString()).catch(() => {}),
     ]);
   } catch (error) {
     // 캐시 저장 실패는 무시
@@ -263,6 +278,19 @@ export const saveEvents = async (events: EventsByDate): Promise<void> => {
 export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsByDate> => {
   const now = Date.now();
   
+  // forceRefresh가 아니면 먼저 캐시 확인
+  if (!forceRefresh) {
+    try {
+      const cached = await loadFromCache();
+      if (cached && Object.keys(cached).length > 0) {
+        console.log('✅ 캐시 데이터 사용');
+        return cached;
+      }
+    } catch (cacheError) {
+      // 캐시 로드 실패는 무시하고 계속
+    }
+  }
+  
   try {
     console.log('🔄 GitHub Gist에서 데이터 로드 중...');
     const url = `${GIST_RAW_URL}?_=${now}`;
@@ -270,7 +298,7 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     const rawData = await simpleFetch(url);
     
     if (!validateEvents(rawData)) {
-      console.warn('⚠️ 데이터 형식 검증 실패');
+      console.log('⚠️ 데이터 형식 검증 실패');
       throw new Error('Invalid data format');
     }
     
@@ -303,30 +331,32 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     return processedEvents;
     
   } catch (error) {
+    console.log('⚠️ 네트워크 오류, 캐시 복구 시도');
     
     // 실패 시 캐시에서 복구 시도
     try {
       const cached = await loadFromCache();
-      if (cached) {
-        console.log('⚠️ 캐시 데이터로 대체');
+      if (cached && Object.keys(cached).length > 0) {
+        console.log('✅ 캐시 데이터로 대체');
         return cached;
       }
     } catch (cacheError) {
-      console.error('⚠️ 캐시 복구 실패:', cacheError);
+      // 캐시 복구 실패
     }
     
-    console.warn('⚠️ 빈 데이터 반환 (네트워크 오류)');
+    console.log('⚠️ 빈 데이터 반환 (네트워크 오류)');
     return {};
   }
 };
-export const clearCache = async (): Promise<void> => {
+// 내부 사용 전용: 캐시 삭제 (외부에서 호출하지 마세요)
+const clearCacheInternal = async (): Promise<void> => {
   try {
     await Promise.all([
-      AsyncStorage.removeItem(CACHE_KEY),
-      AsyncStorage.removeItem(CACHE_TIMESTAMP_KEY),
+      AsyncStorage.removeItem(CACHE_KEY).catch(() => {}),
+      AsyncStorage.removeItem(CACHE_TIMESTAMP_KEY).catch(() => {}),
     ]);
     console.log('🗑️ 캐시 삭제 완료');
   } catch (error) {
-    console.error('❌ 캐시 삭제 실패:', error);
+    // 캐시 삭제 실패는 무시
   }
 };

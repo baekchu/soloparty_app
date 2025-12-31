@@ -33,7 +33,7 @@ export const NotificationPrompt: React.FC<NotificationPromptProps> = ({ isDark }
           }, 1000);
         }
       } catch (error) {
-        console.error('첫 실행 확인 실패:', error);
+        console.log('첫 실행 확인 실패:', error);
       }
     };
     

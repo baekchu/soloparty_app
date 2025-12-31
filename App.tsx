@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { ThemeProvider, useTheme } from "./src/contexts/ThemeContext";
 import { RegionProvider } from "./src/contexts/RegionContext";
 import { NotificationPrompt } from "./src/components/NotificationPrompt";
+import { ErrorBoundary } from "./src/components/ErrorBoundary";
 import { RootStackParamList } from "./src/types";
 
 import CalendarScreen from "./src/screens/CalendarScreen";
@@ -63,20 +64,22 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <RegionProvider>
-        {/* ==================== 사용자 식별 + 광고 시스템 (네이티브 빌드 후 활성화) ==================== */}
-        {/* 네이티브 빌드 후 활성화:
+    <ErrorBoundary>
+      <ThemeProvider>
+        <RegionProvider>
+          {/* ==================== 사용자 식별 + 광고 시스템 (네이티브 빌드 후 활성화) ==================== */}
+          {/* 네이티브 빌드 후 활성화:
         <UserProvider>
           <RewardProvider>
             <AppContent />
           </RewardProvider>
         </UserProvider>
         */}
-        <AppContent />
-        {/* ======================================================================== */}
-      </RegionProvider>
-    </ThemeProvider>
+          <AppContent />
+          {/* ======================================================================== */}
+        </RegionProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 <AppContent />

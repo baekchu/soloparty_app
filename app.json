@@ -21,7 +21,6 @@
       "buildNumber": "1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSPhotoLibraryUsageDescription": "프로필 사진 업로드를 위해 필요합니다",
         "NSUserNotificationsUsageDescription": "새로운 파티 등록 알림과 광고 시청 가능 알림을 받으실 수 있습니다"
       }
     },
@@ -32,7 +31,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.soloparty.dating",
-      "versionCode": 6,
+      "versionCode": 14,
       "minSdkVersion": 23,
       "permissions": [
         "INTERNET",
