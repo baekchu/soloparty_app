@@ -276,6 +276,95 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           </TouchableOpacity>
         </View>
 
+        {/* 약관 및 정책 */}
+        <View style={{
+          marginHorizontal: getResponsivePadding(),
+          marginBottom: getResponsivePadding(),
+          padding: getResponsivePadding(),
+          backgroundColor: isDark ? '#1e293b' : '#f9fafb',
+          borderRadius: 12,
+        }}>
+          <Text style={{
+            fontSize: 18,
+            fontWeight: '700',
+            color: isDark ? '#f8fafc' : '#0f172a',
+            marginBottom: 16,
+          }}>
+            약관 및 정책
+          </Text>
+
+          {/* 이용약관 */}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Legal', { type: 'terms' })}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 12,
+            }}
+          >
+            <Text style={{
+              fontSize: 16,
+              color: isDark ? '#f8fafc' : '#0f172a',
+            }}>
+              이용약관
+            </Text>
+            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          </TouchableOpacity>
+
+          {/* 구분선 */}
+          <View style={{
+            height: 1,
+            backgroundColor: isDark ? '#334155' : '#e5e7eb',
+            marginVertical: 4,
+          }} />
+
+          {/* 개인정보처리방침 */}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Legal', { type: 'privacy' })}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 12,
+            }}
+          >
+            <Text style={{
+              fontSize: 16,
+              color: isDark ? '#f8fafc' : '#0f172a',
+            }}>
+              개인정보처리방침
+            </Text>
+            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          </TouchableOpacity>
+
+          {/* 구분선 */}
+          <View style={{
+            height: 1,
+            backgroundColor: isDark ? '#334155' : '#e5e7eb',
+            marginVertical: 4,
+          }} />
+
+          {/* 저작권 정보 */}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Legal', { type: 'copyright' })}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 12,
+            }}
+          >
+            <Text style={{
+              fontSize: 16,
+              color: isDark ? '#f8fafc' : '#0f172a',
+            }}>
+              저작권 정보
+            </Text>
+            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* 앱 정보 */}
         <View style={{
           marginHorizontal: getResponsivePadding(),
@@ -299,8 +388,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           }}>
             Solo Party v1.0.0{'\n'}
             특별한 만남을 위한 일정 관리{'\n\n'}
-            © 2025 Solo Party. All rights reserved.{'\n'}
-            본 앱의 모든 콘텐츠는 저작권법의 보호를 받습니다.
+            © 2025 Solo Party. All rights reserved.
           </Text>
         </View>
       </ScrollView>

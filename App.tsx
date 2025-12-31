@@ -13,6 +13,7 @@ import AddEventScreen from "./src/screens/AddEventScreen";
 import SplashScreen from "./src/screens/SplashScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
 import LocationPickerScreen from "./src/screens/LocationPickerScreen";
+import LegalScreen from "./src/screens/LegalScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -52,6 +53,13 @@ function AppContent() {
         <Stack.Screen
           name="LocationPicker"
           component={LocationPickerScreen}
+          options={{
+            presentation: "modal",
+          }}
+        />
+        <Stack.Screen
+          name="Legal"
+          component={LegalScreen}
           options={{
             presentation: "modal",
           }}
