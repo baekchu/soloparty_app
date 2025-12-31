@@ -12,17 +12,25 @@
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 const NOTIFICATION_SETTINGS_KEY = '@solo_party_notification_settings';
 
-// 알림 핸들러 설정 (앱이 포그라운드에 있을 때 알림 표시 방식)
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+// Expo Go 환경 감지
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// 알림 핸들러 설정 (Expo Go가 아닐 때만)
+if (!isExpoGo) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 export interface NotificationSettings {
   enabled: boolean;
@@ -41,6 +49,12 @@ const DEFAULT_SETTINGS: NotificationSettings = {
  */
 export const requestNotificationPermission = async (): Promise<boolean> => {
   try {
+    // Expo Go에서는 알림 기능 비활성화
+    if (isExpoGo) {
+      console.log('⚠️ Expo Go에서는 알림이 지원되지 않습니다');
+      return false;
+    }
+
     // Android 알림 채널 먼저 설정 (Android만)
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
@@ -63,7 +77,6 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
           allowAlert: true,
           allowBadge: true,
           allowSound: true,
-          allowAnnouncements: true,
         },
       });
       finalStatus = status;
@@ -258,6 +271,7 @@ export const scheduleEventReminder = async (
         sound: true,
       },
       trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: reminderDate,
       },
     });

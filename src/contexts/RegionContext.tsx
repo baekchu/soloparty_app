@@ -24,6 +24,9 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     
     const loadSavedFilters = async () => {
       try {
+        // 네이티브 빌드를 위한 약간의 지연
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
         const [savedLocation, savedRegion] = await Promise.all([
           AsyncStorage.getItem(SELECTED_LOCATION_KEY).catch(() => null),
           AsyncStorage.getItem(SELECTED_REGION_KEY).catch(() => null)
@@ -35,6 +38,7 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
         }
       } catch (error) {
         // 필터 로드 실패는 무시 (기본값 사용)
+        console.log('필터 로드 실패 (무시)');
       }
     };
     

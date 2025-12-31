@@ -23,35 +23,21 @@ const getFirstDayOfMonth = (year: number, month: number) => {
 };
 
 export default React.memo(function MonthCalendar({ year, month, events, isDark, onDatePress, selectedLocation, selectedRegion }: MonthCalendarProps) {
-  // EventColorManager 초기화
-  useEffect(() => {
-    EventColorManager.initialize();
-  }, []);
   
-  // location과 region으로 필터링된 이벤트
+  // location과 region으로 필터링된 이벤트 (최적화)
   const filteredEvents = useMemo(() => {
     if (!selectedLocation && !selectedRegion) return events;
     
-    const filtered: EventsByDate = {};
-    
-    Object.keys(events).forEach(date => {
-      let dateEvents = events[date];
+    return Object.entries(events).reduce((acc, [date, dateEvents]) => {
+      const filtered = dateEvents.filter(event => {
+        if (selectedRegion && event.region !== selectedRegion) return false;
+        if (selectedLocation && event.location !== selectedLocation) return false;
+        return true;
+      });
       
-      // 지역 필터
-      if (selectedRegion) {
-        dateEvents = dateEvents.filter(event => event.region === selectedRegion);
-      }
-      
-      // 장소 필터
-      if (selectedLocation) {
-        dateEvents = dateEvents.filter(event => event.location === selectedLocation);
-      }
-      
-      if (dateEvents.length > 0) {
-        filtered[date] = dateEvents;
-      }
-    });
-    return filtered;
+      if (filtered.length > 0) acc[date] = filtered;
+      return acc;
+    }, {} as EventsByDate);
   }, [events, selectedLocation, selectedRegion]);
   
   const [dimensions, setDimensions] = React.useState(() => {

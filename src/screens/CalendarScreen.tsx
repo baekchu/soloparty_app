@@ -80,6 +80,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [visibleMonths, setVisibleMonths] = useState<Array<{ year: number; month: number }>>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
   const { theme } = useTheme();
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } = useRegion();
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
@@ -120,52 +121,64 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   React.useEffect(() => {
     // 초기 마운트 시에만 현재 월 기준으로 이전 3개월, 현재 월, 다음 3개월 생성
     if (visibleMonths.length === 0) {
-      const now = new Date();
-      const initialMonth = now.getMonth() + 1;
-      const initialYear = now.getFullYear();
-      
-      const months: Array<{ year: number; month: number }> = [];
-      const addedKeys = new Set<string>(); // 중복 방지
-      
-      for (let i = -3; i <= 3; i++) {
-        let month = initialMonth + i;
-        let year = initialYear;
+      try {
+        const now = new Date();
+        const initialMonth = now.getMonth() + 1;
+        const initialYear = now.getFullYear();
         
-        if (month < 1) {
-          month += 12;
-          year--;
-        } else if (month > 12) {
-          month -= 12;
-          year++;
-        }
+        const months: Array<{ year: number; month: number }> = [];
+        const addedKeys = new Set<string>(); // 중복 방지
         
-        const key = `${year}-${month}`;
-        if (!addedKeys.has(key)) {
-          months.push({ year, month });
-          addedKeys.add(key);
+        for (let i = -3; i <= 3; i++) {
+          let month = initialMonth + i;
+          let year = initialYear;
+          
+          if (month < 1) {
+            month += 12;
+            year--;
+          } else if (month > 12) {
+            month -= 12;
+            year++;
+          }
+          
+          const key = `${year}-${month}`;
+          if (!addedKeys.has(key)) {
+            months.push({ year, month });
+            addedKeys.add(key);
+          }
         }
+        setVisibleMonths(months);
+        
+        // 현재 월로 명시적 설정
+        setCurrentMonth(initialMonth);
+        setCurrentYear(initialYear);
+        
+        // 초기화 완료 표시
+        setIsInitialized(true);
+        
+        setTimeout(() => {
+          try {
+            // 실제 높이 기반 스크롤
+            let totalHeight = 0;
+            for (let i = 0; i < 3; i++) {
+              const key = `${months[i].year}-${months[i].month}`;
+              const height = monthHeightsRef.current[key] || (screenHeight * 0.7);
+              totalHeight += height;
+            }
+            
+            // 월 헤더 높이를 빼서 월 헤더가 요일 헤더 바로 아래에 오도록 조정
+            const monthHeaderHeight = -56; // paddingVertical(16*2) + fontSize(20) + borderBottom(1) + 여유
+            const adjustedHeight = Math.max(0, totalHeight - monthHeaderHeight);
+            
+            scrollViewRef.current?.scrollTo({ y: adjustedHeight, animated: false });
+          } catch (scrollError) {
+            console.log('초기 스크롤 실패 (무시):', scrollError);
+          }
+        }, 200);
+      } catch (initError) {
+        console.error('초기화 실패:', initError);
+        setIsInitialized(true); // 에러가 나도 계속 진행
       }
-      setVisibleMonths(months);
-      
-      // 현재 월로 명시적 설정
-      setCurrentMonth(initialMonth);
-      setCurrentYear(initialYear);
-      
-      setTimeout(() => {
-        // 실제 높이 기반 스크롤
-        let totalHeight = 0;
-        for (let i = 0; i < 3; i++) {
-          const key = `${months[i].year}-${months[i].month}`;
-          const height = monthHeightsRef.current[key] || (screenHeight * 0.7);
-          totalHeight += height;
-        }
-        
-        // 월 헤더 높이를 빼서 월 헤더가 요일 헤더 바로 아래에 오도록 조정
-        const monthHeaderHeight = -56; // paddingVertical(16*2) + fontSize(20) + borderBottom(1) + 여유
-        const adjustedHeight = Math.max(0, totalHeight - monthHeaderHeight);
-        
-        scrollViewRef.current?.scrollTo({ y: adjustedHeight, animated: false });
-      }, 200);
     }
   }, []);
 
@@ -393,51 +406,45 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     });
   }, []);
 
-  const loadEventsData = async () => {
+  // 이벤트 데이터 로드 (최적화)
+  const loadEventsData = useCallback(async () => {
     try {
-      // 캐시를 사용하여 이벤트 로드 (네트워크 오류 시 캐시 사용)
-      const loadedEvents = await loadEvents(false).catch(() => ({} as EventsByDate));
+      const loadedEvents = await loadEvents(false);
       
-      // 안전하게 이벤트 설정
-      if (loadedEvents && typeof loadedEvents === 'object') {
-        // 초기 로드 시 이전 데이터 저장
-        if (Object.keys(events).length === 0) {
-          previousEventsRef.current = loadedEvents;
-        }
-        
-        setEvents(loadedEvents);
-        
-        // 지역 목록 추출 (이벤트 개수 많은 순)
-        try {
-          const regionCount = new Map<string, number>();
-          Object.values(loadedEvents).forEach(eventList => {
-            if (Array.isArray(eventList)) {
-              eventList.forEach(event => {
-                if (event?.region) {
-                  regionCount.set(event.region, (regionCount.get(event.region) || 0) + 1);
-                }
-              });
-            }
-          });
-          
-          const sortedRegions = Array.from(regionCount.entries())
-            .sort((a, b) => b[1] - a[1])
-            .map(([region]) => region);
-          setAvailableRegions(sortedRegions);
-        } catch (regionError) {
-          console.log('지역 목록 추출 실패 (무시):', regionError);
-          setAvailableRegions([]);
-        }
-      } else {
+      if (!loadedEvents || typeof loadedEvents !== 'object') {
         setEvents({});
         setAvailableRegions([]);
+        return;
       }
+      
+      // 초기 로드 시 이전 데이터 저장
+      if (Object.keys(events).length === 0) {
+        previousEventsRef.current = loadedEvents;
+      }
+      
+      setEvents(loadedEvents);
+      
+      // 지역 목록 추출 (최적화)
+      const regionCount = new Map<string, number>();
+      for (const eventList of Object.values(loadedEvents)) {
+        for (const event of eventList) {
+          if (event?.region) {
+            regionCount.set(event.region, (regionCount.get(event.region) || 0) + 1);
+          }
+        }
+      }
+      
+      const sortedRegions = Array.from(regionCount.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([region]) => region);
+      setAvailableRegions(sortedRegions);
+      
     } catch (error) {
-      console.log('이벤트 로드 실패 (무시):', error);
+      console.warn('데이터 로드 실패:', error);
       setEvents({});
       setAvailableRegions([]);
     }
-  };
+  }, [events]);
 
   const goToPreviousMonth = useCallback(() => {
     isUserScrollingRef.current = false;
@@ -1104,7 +1111,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                                 alignSelf: 'flex-start',
                               }}
                             >
-                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>� 인스타 보기</Text>
+                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>자세히 보기</Text>
                             </TouchableOpacity>
                           )}
                         </View>

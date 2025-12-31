@@ -21,7 +21,9 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: any) {
-    console.log('앱 에러 감지:', error, errorInfo);
+    console.error('❌ 앱 크래시 감지:', error);
+    console.error('상세 정보:', errorInfo);
+    console.error('스택:', error.stack);
   }
 
   handleReset = () => {

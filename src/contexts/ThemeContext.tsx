@@ -28,12 +28,16 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     const loadThemeMode = async () => {
       try {
+        // 네이티브 빌드를 위한 약간의 지연
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         const savedMode = await AsyncStorage.getItem(THEME_KEY).catch(() => null);
         if (savedMode && (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') && mounted) {
           setThemeModeState(savedMode as ThemeMode);
         }
       } catch (error) {
         // 테마 로드 실패는 무시 (기본값 사용)
+        console.log('테마 로드 실패 (무시)');
       }
     };
     

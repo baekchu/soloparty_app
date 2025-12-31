@@ -11,10 +11,10 @@ export default function SplashScreen({ onLoadComplete }: SplashScreenProps) {
   const isDark = useMemo(() => theme === 'dark', [theme]);
 
   useEffect(() => {
-    // 2초 후 로딩 완료
+    // 네이티브 빌드에서는 3초로 증가 (초기화 시간 확보)
     const timer = setTimeout(() => {
       onLoadComplete();
-    }, 2000);
+    }, 3000);
 
     return () => clearTimeout(timer);
   }, [onLoadComplete]);
