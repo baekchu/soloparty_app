@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -31,15 +31,15 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.soloparty.dating",
-      "versionCode": 14,
+      "versionCode": 15,
       "minSdkVersion": 23,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "POST_NOTIFICATIONS"
       ],
-      "enableProguardInReleaseBuilds": true,
-      "enableShrinkResourcesInReleaseBuilds": true
+      "enableProguardInReleaseBuilds": false,
+      "enableShrinkResourcesInReleaseBuilds": false
     },
     "jsEngine": "hermes",
     "web": {
