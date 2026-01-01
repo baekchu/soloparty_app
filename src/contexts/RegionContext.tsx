@@ -9,7 +9,15 @@ interface FilterContextType {
   clearFilters: () => void;
 }
 
-const RegionContext = createContext<FilterContextType | undefined>(undefined);
+const defaultFilterContext: FilterContextType = {
+  selectedLocation: null,
+  selectedRegion: null,
+  setSelectedLocation: () => {},
+  setSelectedRegion: () => {},
+  clearFilters: () => {},
+};
+
+const RegionContext = createContext<FilterContextType>(defaultFilterContext);
 
 const SELECTED_LOCATION_KEY = '@selected_location';
 const SELECTED_REGION_KEY = '@selected_region';
@@ -101,16 +109,5 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
 
 export const useRegion = () => {
   const context = useContext(RegionContext);
-  if (!context) {
-    // 에러를 throw하는 대신 기본값 반환 (크래시 방지)
-    console.log('useRegion: RegionProvider 누락, 기본값 사용');
-    return {
-      selectedLocation: null,
-      selectedRegion: null,
-      setSelectedLocation: () => {},
-      setSelectedRegion: () => {},
-      clearFilters: () => {},
-    };
-  }
   return context;
 };

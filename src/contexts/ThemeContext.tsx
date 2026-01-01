@@ -11,7 +11,14 @@ interface ThemeContextType {
   toggleTheme: () => void;
 }
 
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+const defaultThemeContext: ThemeContextType = {
+  theme: 'light',
+  themeMode: 'system',
+  setThemeMode: () => {},
+  toggleTheme: () => {},
+};
+
+const ThemeContext = createContext<ThemeContextType>(defaultThemeContext);
 
 const THEME_KEY = '@theme_mode';
 
@@ -77,15 +84,5 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
 export const useTheme = (): ThemeContextType => {
   const context = useContext(ThemeContext);
-  if (context === undefined) {
-    // 에러를 throw하는 대신 기본값 반환 (크래시 방지)
-    console.log('useTheme: ThemeProvider 누락, 기본값 사용');
-    return {
-      theme: 'light',
-      themeMode: 'system',
-      setThemeMode: () => {},
-      toggleTheme: () => {},
-    };
-  }
   return context;
 };

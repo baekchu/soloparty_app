@@ -86,17 +86,16 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
   
   // 포인트 시스템
-  const { balance: points, history: pointHistory, addPoints, spendPoints } = usePoints();
+  const { balance, history: pointHistory, addPoints, spendPoints } = usePoints();
   const [showPointsModal, setShowPointsModal] = useState(false);
   
   // ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
-  // const { balance, addReward } = useReward();
+  // const { balance: adBalance, addReward } = useReward();
   // const { showAd: showRewardedAd, loaded: rewardedAdLoaded } = useRewardedAd((amount) => {
   //   addReward(amount, '광고 시청 보상');
   // });
   // const { showAdOnNavigation } = useInterstitialAd();
   // useAppStartAd();
-  const balance = 0; // 임시값 (광고 시스템 비활성화 중)
   // ========================================================================
 
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
@@ -394,13 +393,18 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       newEvents[date].forEach(event => {
         const eventKey = `${event.id}-${event.title}`;
         
-        // 새로 추가된 일정이면 알림 전송
+        // 새로 추가된 일정이면 알림 전송 (안전하게)
         if (!oldEventIds.has(eventKey)) {
-          const formattedDate = new Date(date).toLocaleDateString('ko-KR', {
-            month: 'long',
-            day: 'numeric',
-          });
-          sendNewEventNotification(event.title, formattedDate);
+          try {
+            const formattedDate = new Date(date).toLocaleDateString('ko-KR', {
+              month: 'long',
+              day: 'numeric',
+            });
+            sendNewEventNotification(event.title, formattedDate);
+          } catch (notifError) {
+            // Expo Go에서는 알림이 작동하지 않을 수 있음 (무시)
+            console.log('알림 전송 실패 (Expo Go에서는 정상):', notifError);
+          }
         }
       });
     });
@@ -1184,7 +1188,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       <PointsModal
         visible={showPointsModal}
         onClose={() => setShowPointsModal(false)}
-        points={points}
+        points={balance}
         onSpendPoints={spendPoints}
         isDark={isDark}
       />

@@ -32,14 +32,19 @@ export const useNotifications = () => {
       try {
         const loadedSettings = await getNotificationSettings();
         
-        // 권한 상태와 설정 동기화
-        const { status } = await Notifications.getPermissionsAsync();
-        if (status === 'granted' && !loadedSettings.enabled) {
-          loadedSettings.enabled = true;
-          await saveNotificationSettings(loadedSettings);
-        } else if (status !== 'granted' && loadedSettings.enabled) {
-          loadedSettings.enabled = false;
-          await saveNotificationSettings(loadedSettings);
+        // 권한 상태와 설정 동기화 (안전하게)
+        try {
+          const { status } = await Notifications.getPermissionsAsync();
+          if (status === 'granted' && !loadedSettings.enabled) {
+            loadedSettings.enabled = true;
+            await saveNotificationSettings(loadedSettings);
+          } else if (status !== 'granted' && loadedSettings.enabled) {
+            loadedSettings.enabled = false;
+            await saveNotificationSettings(loadedSettings);
+          }
+        } catch (permError) {
+          // Expo Go에서는 권한 확인 실패할 수 있음 (무시)
+          console.log('알림 권한 확인 실패 (Expo Go에서는 정상):', permError);
         }
         
         if (mounted) {

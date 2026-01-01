@@ -14,9 +14,15 @@ import LocationPickerScreen from "./src/screens/LocationPickerScreen";
 import LegalScreen from "./src/screens/LegalScreen";
 import SplashScreen from "./src/screens/SplashScreen";
 
+// Components
+import { ErrorBoundary } from "./src/components/ErrorBoundary";
+
 // Contexts
 import { ThemeProvider, useTheme } from "./src/contexts/ThemeContext";
 import { RegionProvider } from "./src/contexts/RegionContext";
+
+// Utils
+import { initAsyncStorage } from "./src/utils/asyncStorageManager";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -53,12 +59,33 @@ function AppContent() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // 2초 후 앱 시작 (초기화 대기)
-    const timer = setTimeout(() => {
-      setIsReady(true);
-    }, 2000);
+    let mounted = true;
+    
+    // AsyncStorage 초기화 후 앱 시작
+    const initApp = async () => {
+      try {
+        await initAsyncStorage();
+        
+        // 1초 추가 대기 (스플래시 화면 표시)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        if (mounted) {
+          setIsReady(true);
+        }
+      } catch (err) {
+        console.error('앱 초기화 실패:', err);
+        if (mounted) {
+          // 초기화 실패해도 앱 계속 진행
+          setIsReady(true);
+        }
+      }
+    };
+    
+    initApp();
 
-    return () => clearTimeout(timer);
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   if (error) {
@@ -78,12 +105,14 @@ function AppContent() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <ThemeProvider>
-        <RegionProvider>
-          <AppContent />
-        </RegionProvider>
-      </ThemeProvider>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <RegionProvider>
+            <AppContent />
+          </RegionProvider>
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
