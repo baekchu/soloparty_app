@@ -1,23 +1,14 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, Image } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface SplashScreenProps {
-  onLoadComplete: () => void;
+  onLoadComplete?: () => void;
 }
 
 export default function SplashScreen({ onLoadComplete }: SplashScreenProps) {
   const { theme } = useTheme();
   const isDark = useMemo(() => theme === 'dark', [theme]);
-
-  useEffect(() => {
-    // 네이티브 빌드에서는 3초로 증가 (초기화 시간 확보)
-    const timer = setTimeout(() => {
-      onLoadComplete();
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, [onLoadComplete]);
 
   return (
     <View style={[

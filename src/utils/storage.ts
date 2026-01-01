@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventsByDate, Event } from '../types';
+import { safeGetItem, safeSetItem, safeRemoveItem, safeMultiGet, safeMultiSet } from './asyncStorageManager';
 
 // GitHub Gist Raw URL
 const GIST_RAW_URL = 'https://gist.githubusercontent.com/baekchu/f805cac22604ff764916280710db490e/raw/gistfile1.txt';
@@ -101,33 +102,15 @@ const sanitizeEvent = (event: Event): Event => {
 
 // ==================== 캐시 관리 (최적화) ====================
 
-let isAsyncStorageReady = false;
-
-// AsyncStorage 초기화 확인
-const ensureAsyncStorageReady = async (): Promise<void> => {
-  if (isAsyncStorageReady) return;
-  
-  try {
-    // 간단한 테스트로 AsyncStorage 준비 확인
-    await AsyncStorage.getItem('@test_key');
-    isAsyncStorageReady = true;
-  } catch (error) {
-    // AsyncStorage가 준비되지 않았으면 약간 대기
-    await new Promise(resolve => setTimeout(resolve, 500));
-    isAsyncStorageReady = true; // 강제로 진행
-  }
-};
+// AsyncStorage 초기화는 asyncStorageManager에서 처리
 
 const loadFromCache = async (): Promise<EventsByDate | null> => {
   if (CACHE_DURATION <= 0) return null;
   
   try {
-    await ensureAsyncStorageReady();
-    
-    const [cached, timestamp] = await Promise.all([
-      AsyncStorage.getItem(CACHE_KEY),
-      AsyncStorage.getItem(CACHE_TIMESTAMP_KEY)
-    ]);
+    const results = await safeMultiGet([CACHE_KEY, CACHE_TIMESTAMP_KEY]);
+    const cached = results[0][1];
+    const timestamp = results[1][1];
     
     if (!cached || !timestamp) return null;
     
@@ -143,16 +126,14 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
 
 const saveToCache = async (events: EventsByDate): Promise<void> => {
   try {
-    await ensureAsyncStorageReady();
-    
     if (!events || typeof events !== 'object') return;
     
     const jsonString = JSON.stringify(events);
     if (jsonString.length > 1024 * 1024) return; // 1MB 초과 방지
     
-    await Promise.all([
-      AsyncStorage.setItem(CACHE_KEY, jsonString),
-      AsyncStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString())
+    await safeMultiSet([
+      [CACHE_KEY, jsonString],
+      [CACHE_TIMESTAMP_KEY, Date.now().toString()]
     ]);
   } catch {
     // 캐시 저장 실패는 무시
@@ -230,12 +211,8 @@ export const saveEvents = async (events: EventsByDate): Promise<void> => {
 // 캐시 삭제 (디버깅용)
 export const clearCache = async (): Promise<void> => {
   try {
-    await ensureAsyncStorageReady();
-    
-    await Promise.all([
-      AsyncStorage.removeItem(CACHE_KEY),
-      AsyncStorage.removeItem(CACHE_TIMESTAMP_KEY)
-    ]);
+    await safeRemoveItem(CACHE_KEY);
+    await safeRemoveItem(CACHE_TIMESTAMP_KEY);
     console.log('🗑️ 캐시 삭제 완료');
   } catch {
     // 무시

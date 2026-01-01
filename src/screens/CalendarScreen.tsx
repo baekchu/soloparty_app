@@ -418,9 +418,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       }
       
       // 초기 로드 시 이전 데이터 저장
-      if (Object.keys(events).length === 0) {
-        previousEventsRef.current = loadedEvents;
-      }
+      previousEventsRef.current = loadedEvents;
       
       setEvents(loadedEvents);
       
@@ -444,7 +442,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       setEvents({});
       setAvailableRegions([]);
     }
-  }, [events]);
+  }, []); // 무한 루프 방지: events dependency 제거
 
   const goToPreviousMonth = useCallback(() => {
     isUserScrollingRef.current = false;

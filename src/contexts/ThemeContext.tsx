@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
 import { useColorScheme } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -28,10 +28,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     const loadThemeMode = async () => {
       try {
-        // 네이티브 빌드를 위한 약간의 지연
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        const savedMode = await AsyncStorage.getItem(THEME_KEY).catch(() => null);
+        const savedMode = await safeGetItem(THEME_KEY);
         if (savedMode && (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') && mounted) {
           setThemeModeState(savedMode as ThemeMode);
         }
@@ -50,9 +47,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const setThemeMode = useCallback(async (mode: ThemeMode) => {
     try {
       setThemeModeState(mode);
-      await AsyncStorage.setItem(THEME_KEY, mode).catch(() => {
-        // 저장 실패해도 상태는 업데이트됨
-      });
+      await safeSetItem(THEME_KEY, mode);
     } catch (error) {
       console.log('테마 저장 실패 (무시):', error);
     }

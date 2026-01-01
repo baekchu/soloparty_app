@@ -8,6 +8,7 @@ import { RegionProvider } from "./src/contexts/RegionContext";
 import { NotificationPrompt } from "./src/components/NotificationPrompt";
 import { ErrorBoundary } from "./src/components/ErrorBoundary";
 import { RootStackParamList } from "./src/types";
+import { initAsyncStorage } from "./src/utils/asyncStorageManager";
 
 import CalendarScreen from "./src/screens/CalendarScreen";
 import AddEventScreen from "./src/screens/AddEventScreen";
@@ -24,19 +25,34 @@ function AppContent() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let mounted = true;
+    
     const initializeApp = async () => {
       try {
-        console.log('앱 초기화 시작');
-        // 네이티브 빌드에서는 더 긴 초기화 시간 필요
+        console.log('🚀 앱 초기화 시작');
+        
+        // AsyncStorage 먼저 초기화 (가장 중요!)
+        await initAsyncStorage();
+        
+        // 추가 대기 (네이티브 빌드 안정화)
         await new Promise(resolve => setTimeout(resolve, 500));
-        console.log('앱 초기화 완료');
+        
+        console.log('✅ 앱 초기화 완료');
       } catch (err) {
-        console.error('앱 초기화 오류:', err);
-        setError(String(err));
+        console.error('❌ 앱 초기화 오류:', err);
+        if (mounted) {
+          setError(String(err));
+        }
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     };
     
     initializeApp();
+    
+    return () => { mounted = false; };
   }, []);
 
   if (error) {
@@ -53,7 +69,7 @@ function AppContent() {
   }
 
   if (isLoading) {
-    return <SplashScreen onLoadComplete={() => setIsLoading(false)} />;
+    return <SplashScreen />;
   }
 
   return (

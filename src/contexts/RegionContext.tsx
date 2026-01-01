@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeGetItem, safeSetItem, safeRemoveItem, safeMultiGet } from '../utils/asyncStorageManager';
 
 interface FilterContextType {
   selectedLocation: string | null;  // 세부 장소 (예: 강남역, 홍대입구)
@@ -24,13 +24,9 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     
     const loadSavedFilters = async () => {
       try {
-        // 네이티브 빌드를 위한 약간의 지연
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        const [savedLocation, savedRegion] = await Promise.all([
-          AsyncStorage.getItem(SELECTED_LOCATION_KEY).catch(() => null),
-          AsyncStorage.getItem(SELECTED_REGION_KEY).catch(() => null)
-        ]);
+        const results = await safeMultiGet([SELECTED_LOCATION_KEY, SELECTED_REGION_KEY]);
+        const savedLocation = results[0][1];
+        const savedRegion = results[1][1];
         
         if (mounted) {
           if (savedLocation) setSelectedLocationState(savedLocation);
@@ -52,9 +48,9 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     setSelectedLocationState(location);
     try {
       if (location) {
-        await AsyncStorage.setItem(SELECTED_LOCATION_KEY, location).catch(() => {});
+        await safeSetItem(SELECTED_LOCATION_KEY, location);
       } else {
-        await AsyncStorage.removeItem(SELECTED_LOCATION_KEY).catch(() => {});
+        await safeRemoveItem(SELECTED_LOCATION_KEY);
       }
     } catch (error) {
       // 저장 실패해도 상태는 업데이트됨
@@ -65,9 +61,9 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     setSelectedRegionState(region);
     try {
       if (region) {
-        await AsyncStorage.setItem(SELECTED_REGION_KEY, region).catch(() => {});
+        await safeSetItem(SELECTED_REGION_KEY, region);
       } else {
-        await AsyncStorage.removeItem(SELECTED_REGION_KEY).catch(() => {});
+        await safeRemoveItem(SELECTED_REGION_KEY);
       }
     } catch (error) {
       // 저장 실패해도 상태는 업데이트됨
@@ -78,10 +74,8 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     setSelectedLocationState(null);
     setSelectedRegionState(null);
     try {
-      await Promise.all([
-        AsyncStorage.removeItem(SELECTED_LOCATION_KEY).catch(() => {}),
-        AsyncStorage.removeItem(SELECTED_REGION_KEY).catch(() => {})
-      ]);
+      await safeRemoveItem(SELECTED_LOCATION_KEY);
+      await safeRemoveItem(SELECTED_REGION_KEY);
     } catch (error) {
       // 삭제 실패해도 상태는 초기화됨
     }

@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 
 interface PointHistory {
   id: string;
@@ -23,20 +23,9 @@ interface PointsData {
 const STORAGE_KEY = '@points_data';
 const INITIAL_POINTS = 2500;
 
-// AsyncStorage 준비 대기
-const waitForStorage = async () => {
-  try {
-    await AsyncStorage.getItem('@init_test');
-  } catch {
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-};
-
 const loadPoints = async (): Promise<PointsData> => {
   try {
-    await waitForStorage();
-    
-    const data = await AsyncStorage.getItem(STORAGE_KEY);
+    const data = await safeGetItem(STORAGE_KEY);
     if (data) {
       const parsed = JSON.parse(data);
       if (typeof parsed.balance === 'number' && Array.isArray(parsed.history)) {
@@ -61,8 +50,7 @@ const loadPoints = async (): Promise<PointsData> => {
 
 const savePoints = async (data: PointsData): Promise<void> => {
   try {
-    await waitForStorage();
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    await safeSetItem(STORAGE_KEY, JSON.stringify(data));
   } catch {
     // 저장 실패는 무시
   }

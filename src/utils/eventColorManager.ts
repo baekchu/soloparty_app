@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeGetItem, safeSetItem } from './asyncStorageManager';
 
 const COLOR_MAP_KEY = '@event_color_map';
 
@@ -34,7 +34,7 @@ class EventColorManager {
     if (this.isInitialized) return;
     
     try {
-      const saved = await AsyncStorage.getItem(COLOR_MAP_KEY);
+      const saved = await safeGetItem(COLOR_MAP_KEY);
       if (saved) {
         this.colorMap = JSON.parse(saved);
       }
@@ -48,7 +48,7 @@ class EventColorManager {
 
   static async saveColorMap() {
     try {
-      await AsyncStorage.setItem(COLOR_MAP_KEY, JSON.stringify(this.colorMap));
+      await safeSetItem(COLOR_MAP_KEY, JSON.stringify(this.colorMap));
     } catch (error) {
       // 색상 맵 저장 실패는 무시
     }
