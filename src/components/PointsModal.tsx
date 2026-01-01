@@ -35,7 +35,7 @@ interface PointsModalProps {
 
 const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark, dailyAdCount = 0, maxDailyAds = 10 }: PointsModalProps) => {
   
-  const remainingAds = useMemo(() => maxDailyAds - dailyAdCount, [maxDailyAds, dailyAdCount]);
+  const remainingAds = useMemo(() => (maxDailyAds || 10) - (dailyAdCount || 0), [maxDailyAds, dailyAdCount]);
   const canWatchAd = useMemo(() => remainingAds > 0, [remainingAds]);
   
   const handleFreeParty = useCallback(() => {

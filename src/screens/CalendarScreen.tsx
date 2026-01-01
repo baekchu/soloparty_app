@@ -86,7 +86,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
   
   // 포인트 시스템
-  const { balance, history: pointHistory, addPoints, spendPoints } = usePoints();
+  const { balance, history: pointHistory, addPoints, spendPoints, isLoading: pointsLoading } = usePoints();
   const [showPointsModal, setShowPointsModal] = useState(false);
   
   // ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
@@ -119,7 +119,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   React.useEffect(() => {
     // 초기 마운트 시에만 현재 월 기준으로 이전 3개월, 현재 월, 다음 3개월 생성
-    if (visibleMonths.length === 0) {
+    if (visibleMonths.length === 0 && screenHeight > 0) {
       try {
         const now = new Date();
         const initialMonth = now.getMonth() + 1;
@@ -159,14 +159,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           try {
             // 실제 높이 기반 스크롤
             let totalHeight = 0;
-            for (let i = 0; i < 3; i++) {
+            for (let i = 0; i < 3 && i < months.length; i++) {
               const key = `${months[i].year}-${months[i].month}`;
               const height = monthHeightsRef.current[key] || (screenHeight * 0.7);
               totalHeight += height;
             }
             
             // 월 헤더 높이를 빼서 월 헤더가 요일 헤더 바로 아래에 오도록 조정
-            const monthHeaderHeight = -56; // paddingVertical(16*2) + fontSize(20) + borderBottom(1) + 여유
+            const monthHeaderHeight = -56;
             const adjustedHeight = Math.max(0, totalHeight - monthHeaderHeight);
             
             scrollViewRef.current?.scrollTo({ y: adjustedHeight, animated: false });
@@ -176,10 +176,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         }, 200);
       } catch (initError) {
         console.error('초기화 실패:', initError);
-        setIsInitialized(true); // 에러가 나도 계속 진행
+        // 에러가 나도 최소한 현재 월은 생성
+        try {
+          const now = new Date();
+          const initialMonth = now.getMonth() + 1;
+          const initialYear = now.getFullYear();
+          setVisibleMonths([{ year: initialYear, month: initialMonth }]);
+          setCurrentMonth(initialMonth);
+          setCurrentYear(initialYear);
+        } catch {}
+        setIsInitialized(true);
       }
     }
-  }, []);
+  }, [screenHeight]);
 
   const panelStartHeight = useRef(100);
   
@@ -252,14 +261,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       
       if (targetIndex !== -1) {
         let totalHeight = 0;
-        for (let i = 0; i < targetIndex; i++) {
+        for (let i = 0; i < targetIndex && i < visibleMonths.length; i++) {
           const key = `${visibleMonths[i].year}-${visibleMonths[i].month}`;
           const height = monthHeightsRef.current[key] || (screenHeight * 0.7);
           totalHeight += height;
         }
         
         // 월 헤더 높이를 빼서 월 헤더가 요일 헤더 바로 아래에 오도록 조정
-        const monthHeaderHeight = -56; // paddingVertical(16*2) + fontSize(20) + borderBottom(1) + 여유
+        const monthHeaderHeight = -56;
         const adjustedHeight = Math.max(0, totalHeight - monthHeaderHeight);
         
         scrollViewRef.current?.scrollTo({ 
@@ -471,6 +480,15 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }, []);
 
   const isDark = theme === 'dark';
+
+  // 초기화 중이거나 화면 크기가 0이면 로딩 화면 표시
+  if (!isInitialized || screenHeight === 0 || screenWidth === 0) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: isDark ? '#f8fafc' : '#0f172a', fontSize: 16 }}>로딩 중...</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right']}>
@@ -814,6 +832,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             let targetMonthIndex = 0;
             
             for (let i = 0; i < visibleMonths.length; i++) {
+              if (!visibleMonths[i]) continue;
               const key = `${visibleMonths[i].year}-${visibleMonths[i].month}`;
               const height = monthHeightsRef.current[key] || (screenHeight * 0.7);
               
@@ -837,7 +856,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           
           // 무한 스크롤 (중복 방지 강화)
           if (scrollY + layoutHeight >= contentHeight - 500) {
-            const lastMonth = visibleMonths[visibleMonths.length - 1];
+            const lastMonth = visibleMonths.length > 0 ? visibleMonths[visibleMonths.length - 1] : null;
             if (lastMonth) {
               let nextMonth = lastMonth.month + 1;
               let nextYear = lastMonth.year;
@@ -856,7 +875,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           }
           
           if (scrollY <= 500) {
-            const firstMonth = visibleMonths[0];
+            const firstMonth = visibleMonths.length > 0 ? visibleMonths[0] : null;
             if (firstMonth) {
               let prevMonth = firstMonth.month - 1;
               let prevYear = firstMonth.year;
@@ -1188,9 +1207,11 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       <PointsModal
         visible={showPointsModal}
         onClose={() => setShowPointsModal(false)}
-        points={balance}
+        points={balance || 0}
         onSpendPoints={spendPoints}
         isDark={isDark}
+        dailyAdCount={0}
+        maxDailyAds={10}
       />
     </SafeAreaView>
   );
