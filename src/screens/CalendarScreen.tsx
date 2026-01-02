@@ -84,6 +84,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const { theme } = useTheme();
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } = useRegion();
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
+  const eventListHeightsRef = useRef<Record<string, number>>({});
+  const [heightUpdateTrigger, setHeightUpdateTrigger] = useState(0);
   
   // 포인트 시스템
   const { balance, history: pointHistory, addPoints, spendPoints, isLoading: pointsLoading } = usePoints();
@@ -306,12 +308,17 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       (a.event.time || 'ZZ:ZZ').localeCompare(b.event.time || 'ZZ:ZZ');
     
     // 선택된 날짜가 있으면 해당 날짜만
-    if (selectedDate && events[selectedDate]) {
-      return events[selectedDate]
-        .map(event => ({ date: selectedDate, event }))
-        .filter(filterByRegion)
-        .filter(filterByLocation)
-        .sort(sortByTime);
+    if (selectedDate) {
+      // 해당 날짜에 일정이 있으면 그것만 반환
+      if (events[selectedDate]) {
+        return events[selectedDate]
+          .map(event => ({ date: selectedDate, event }))
+          .filter(filterByRegion)
+          .filter(filterByLocation)
+          .sort(sortByTime);
+      }
+      // 해당 날짜에 일정이 없으면 빈 배열 반환 (전체 일정을 보여주지 않음)
+      return [];
     }
     
     // 오늘 이후의 모든 일정
@@ -941,7 +948,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         borderTopRightRadius: 24,
         paddingHorizontal: 20,
         paddingTop: 12,
-        paddingBottom: 10,
+        paddingBottom: 30,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: -4 },
         shadowOpacity: 0.15,
@@ -1028,9 +1035,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           contentContainerStyle={{ paddingBottom: 20 }}
         >
         {upcomingEvents.length === 0 ? (
-          <Text style={{ color: '#e0e7ff', fontSize: 14, fontStyle: 'italic' }}>
-            예정된 일정이 없습니다
-          </Text>
+  <Text style={{ color: '#e0e7ff', fontSize: 14, fontStyle: 'italic' }}>
+    예정된 일정이 없습니다
+  </Text>
         ) : (
           (() => {
             // 전체 일정 보기: 날짜별로 그룹화
@@ -1052,50 +1059,72 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 const monthName = monthNames[eventDate.getMonth()];
                 const isLastDate = dateIndex === dates.length - 1;
 
-                return (
-                  <View key={date} style={{ flexDirection: 'row', marginBottom: isLastDate ? 0 : 24 }}>
-                    {/* 왼쪽 타임라인 */}
-                    <View style={{ alignItems: 'center', marginRight: 16 }}>
-                      {/* 날짜 원형 */}
-                      <View style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 22,
-                        backgroundColor: '#ffffff',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                      }}>
-                        <Text style={{ fontSize: 16, fontWeight: '800', color: isDark ? '#a78bfa' : '#ec4899' }}>{day}</Text>
-                        <Text style={{ fontSize: 9, fontWeight: '600', color: isDark ? '#a78bfa' : '#ec4899', marginTop: -2 }}>{monthName}</Text>
-                      </View>
-                      {/* 점선 연결 (마지막 날짜가 아닐 때만) */}
-                      {!isLastDate && (
-                        <View style={{
-                          width: 2,
-                          flex: 1,
-                          marginTop: 8,
-                          marginBottom: 8,
-                          minHeight: 40,
-                          alignItems: 'center',
-                          justifyContent: 'space-evenly',
-                        }}>
-                          {Array.from({ length: 8 }).map((_, i) => (
-                            <View
-                              key={i}
-                              style={{
-                                width: 3,
-                                height: 3,
-                                borderRadius: 1.5,
-                                backgroundColor: 'rgba(255, 255, 255, 0.4)',
-                              }}
-                            />
-                          ))}
-                        </View>
-                      )}
-                    </View>
-                    
-                    {/* 오른쪽 일정 카드들 */}
-                    <View style={{ flex: 1 }}>
+                const bubbleSize = 44;
+                const bubbleToLineGap = 8;
+                const betweenDatesGap = 24;
+                const measuredListHeight = eventListHeightsRef.current[date] || 0;
+                const baseLineHeight = Math.max(0, measuredListHeight - bubbleSize - bubbleToLineGap);
+                const dashedLineHeight = baseLineHeight + (isLastDate ? 0 : betweenDatesGap);
+                const dashLength = 6;
+                const dashGap = 6;
+                const dashCount = dashedLineHeight > 0 ? Math.floor((dashedLineHeight + dashGap) / (dashLength + dashGap)) : 0;
+
+               return (
+        <View key={date} style={{ flexDirection: 'row', marginBottom: isLastDate ? 0 : 24 }}>
+          
+          {/* [왼쪽] 날짜 버블 + 점선 트랙 */}
+          <View style={{ alignItems: 'center', marginRight: 16 }}>
+            <View style={{ 
+              width: 44, 
+              height: 44, 
+              borderRadius: 22, 
+              backgroundColor: '#fff', 
+              justifyContent: 'center', 
+              alignItems: 'center',
+              zIndex: 1 
+            }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: isDark ? '#a78bfa' : '#ec4899' }}>{day}</Text>
+              <Text style={{ fontSize: 9, fontWeight: '600', color: isDark ? '#a78bfa' : '#ec4899', marginTop: -2 }}>{monthName}</Text>
+            </View>
+            
+            {dashCount > 0 && (
+              <View
+                style={{
+                  width: 2,
+                  marginTop: bubbleToLineGap,
+                  height: dashedLineHeight,
+                  marginBottom: isLastDate ? 0 : -betweenDatesGap,
+                  alignItems: 'center',
+                }}
+              >
+                {Array.from({ length: dashCount }).map((_, i) => (
+                  <View
+                    key={i}
+                    style={{
+                      width: 2,
+                      height: dashLength,
+                      backgroundColor: 'rgba(255,255,255,0.4)',
+                      borderRadius: 1,
+                      marginBottom: i === dashCount - 1 ? 0 : dashGap,
+                    }}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* [오른쪽] 이벤트 리스트 */}
+          <View
+            style={{ flex: 1 }}
+            onLayout={(e) => {
+              const nextHeight = e.nativeEvent.layout.height;
+              const prevHeight = eventListHeightsRef.current[date];
+              if (!prevHeight || Math.abs(prevHeight - nextHeight) > 2) {
+                eventListHeightsRef.current[date] = nextHeight;
+                setHeightUpdateTrigger(prev => prev + 1);
+              }
+            }}
+          >
                       {eventsForDate.map((item, eventIndex) => (
                         <View 
                           key={`${date}-${item.event.id}-${eventIndex}`}
@@ -1201,6 +1230,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           })()
         )}
         </ScrollView>
+        
+        {/* 하단 SafeArea 여백 (홈버튼 가림 방지) */}
+        <View style={{ height: 20, backgroundColor: 'transparent' }} />
       </Animated.View>
 
       {/* 포인트 모달 */}

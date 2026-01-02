@@ -142,9 +142,9 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
             </Text>
           </View>
           
-          {/* 일정 목록 */}
+          {/* 일정 목록 - 최대 3개만 표시 */}
           <View style={{ flex: 1, gap: 1 }}>
-            {dayEvents.slice(0, 5).map((event, idx) => {
+            {dayEvents.slice(0, 3).map((event, idx) => {
               const colorBg = EventColorManager.getColorForEvent(
                 event.id || `${dateString}-${idx}`,
                 event.title,
@@ -153,7 +153,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 dayEvents,
                 idx
               );
-              const eventHeight = Math.max(Math.min(dimensions.cellHeight / 6, 16), 12); // cellHeight에 비례, 최소 12, 최대 16
+              const eventHeight = Math.max(Math.min(dimensions.cellHeight / 6, 14), 11); // 셀 높이에 비례, 최소 11, 최대 14
               return (
                 <View
                   key={event.id}
@@ -168,7 +168,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                   <Text 
                     style={{ 
                       color: isDark ? '#1f2937' : '#374151',
-                      fontSize: dimensions.cellWidth < 50 ? 7 : Math.min(8.5, eventHeight * 0.6),
+                      fontSize: dimensions.cellWidth < 50 ? 7 : Math.min(8, eventHeight * 0.6),
                       fontWeight: '700',
                       letterSpacing: -0.2,
                     }}
@@ -179,16 +179,17 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 </View>
               );
             })}
-            {dayEvents.length > 5 && (
+            {dayEvents.length > 3 && (
               <View style={{
                 backgroundColor: isDark ? '#374151' : '#f3f4f6',
                 borderRadius: 3,
-                paddingHorizontal: 2,
+                paddingHorizontal: 3,
                 paddingVertical: 1,
                 alignSelf: 'flex-start',
+                marginTop: 1,
               }}>
-                <Text style={{ fontSize: dimensions.cellWidth < 50 ? 6 : 7, fontWeight: '700', color: isDark ? '#d1d5db' : '#4b5563' }}>
-                  +{dayEvents.length - 5}
+                <Text style={{ fontSize: dimensions.cellWidth < 50 ? 7 : 8, fontWeight: '800', color: isDark ? '#d1d5db' : '#4b5563' }}>
+                  +{dayEvents.length - 3}
                 </Text>
               </View>
             )}
