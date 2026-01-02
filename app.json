@@ -17,10 +17,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.soloparty.dating",
-      "buildNumber": "1.0.14",
+      "buildNumber": "1.0.15",
+      "icon": "./assets/adaptive-icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSUserTrackingUsageDescription": "맞춤형 광고 및 서비스 개선을 위해 사용자 활동 추적이 필요합니다.",
+        "NSPhotoLibraryUsageDescription": "외부 라이브러리 호환성을 위해 권한 설명이 필요합니다. 현재 사진 접근 기능은 사용되지 않습니다.",
         "NSUserNotificationsUsageDescription": "새로운 파티 등록 알림과 광고 시청 가능 알림을 받으실 수 있습니다"
       }
     },
