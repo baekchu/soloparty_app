@@ -29,10 +29,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#fce7f3"
       },
-      "edgeToEdgeEnabled": true,
       "package": "com.soloparty.dating",
-      "versionCode": 15,
+      "versionCode": 16,
       "minSdkVersion": 23,
+      "softwareKeyboardLayoutMode": "pan",
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
