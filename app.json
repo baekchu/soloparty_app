@@ -33,7 +33,7 @@
         "backgroundColor": "#fce7f3"
       },
       "package": "com.soloparty.dating",
-      "versionCode": 16,
+      "versionCode": 17,
       "minSdkVersion": 23,
       "softwareKeyboardLayoutMode": "pan",
       "permissions": [

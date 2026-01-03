@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Dimensions, Animated, PanResponder, Linking, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { loadEvents, saveEvents } from '../utils/storage';
 import { EventsByDate } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
@@ -83,6 +83,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [isInitialized, setIsInitialized] = useState(false);
   const { theme } = useTheme();
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } = useRegion();
+  const insets = useSafeAreaInsets();
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
   const eventListHeightsRef = useRef<Record<string, number>>({});
   const [heightUpdateTrigger, setHeightUpdateTrigger] = useState(0);
@@ -491,14 +492,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // 초기화 중이거나 화면 크기가 0이면 로딩 화면 표시
   if (!isInitialized || screenHeight === 0 || screenWidth === 0) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', justifyContent: 'center', alignItems: 'center', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
         <Text style={{ color: isDark ? '#f8fafc' : '#0f172a', fontSize: 16 }}>로딩 중...</Text>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       {/* 헤더 */}
       <View style={{ 
         paddingHorizontal: 20, 
@@ -1245,6 +1246,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         dailyAdCount={0}
         maxDailyAds={10}
       />
-    </SafeAreaView>
+    </View>
   );
 }

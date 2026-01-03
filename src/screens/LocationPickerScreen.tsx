@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -93,6 +93,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   const { theme } = useTheme();
   const { setSelectedLocation: setContextLocation, setSelectedRegion: setContextRegion } = useRegion();
   const isDark = theme === 'dark';
+  const insets = useSafeAreaInsets();
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number; longitude: number; name: string; region?: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [useMap, setUseMap] = useState(false);
@@ -336,7 +337,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
@@ -523,6 +524,6 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           </Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }

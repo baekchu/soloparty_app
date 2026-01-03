@@ -1,6 +1,6 @@
 import React, { useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../hooks/useNotifications';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,6 +14,7 @@ interface SettingsScreenProps {
 export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   const { theme, toggleTheme } = useTheme();
   const isDark = useMemo(() => theme === 'dark', [theme]);
+  const insets = useSafeAreaInsets();
   const { 
     settings: notificationSettings, 
     toggleNotifications, 
@@ -49,7 +50,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   }, []);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
@@ -392,6 +393,6 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           </Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }

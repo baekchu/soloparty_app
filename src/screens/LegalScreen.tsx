@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
@@ -127,6 +127,7 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
   const { theme } = useTheme();
   const isDark = useMemo(() => theme === 'dark', [theme]);
   const { type } = route.params;
+  const insets = useSafeAreaInsets();
 
   const content = useMemo(() => {
     switch (type) {
@@ -142,7 +143,7 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
   }, [type]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
@@ -189,6 +190,6 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
           </Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }

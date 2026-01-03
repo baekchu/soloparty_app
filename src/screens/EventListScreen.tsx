@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { format, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { loadEvents } from '../utils/storage';
@@ -29,6 +29,7 @@ interface EventWithDate extends Event {
 export default function EventListScreen({ navigation }: EventListScreenProps) {
   const [allEvents, setAllEvents] = useState<EventWithDate[]>([]);
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   useFocusEffect(
     useCallback(() => {
@@ -105,7 +106,7 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
   const isDark = useMemo(() => theme === 'dark', [theme]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16, backgroundColor: isDark ? '#030712' : '#ffffff' }}>
         <Text style={{ fontSize: 24, fontWeight: 'bold', color: isDark ? '#ffffff' : '#111827' }}>
           전체 이벤트
@@ -128,6 +129,6 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
           showsVerticalScrollIndicator={false}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
