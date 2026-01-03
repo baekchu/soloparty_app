@@ -49,7 +49,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   }, []);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',

@@ -70,7 +70,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
   const isDark = theme === 'dark';
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
       {/* 헤더 */}
       <View style={{ 
         paddingTop: 12, 

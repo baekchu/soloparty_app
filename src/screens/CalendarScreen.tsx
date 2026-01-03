@@ -498,7 +498,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
       {/* 헤더 */}
       <View style={{ 
         paddingHorizontal: 20, 

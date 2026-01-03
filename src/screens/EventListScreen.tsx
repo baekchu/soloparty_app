@@ -105,7 +105,7 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
   const isDark = useMemo(() => theme === 'dark', [theme]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
       <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16, backgroundColor: isDark ? '#030712' : '#ffffff' }}>
         <Text style={{ fontSize: 24, fontWeight: 'bold', color: isDark ? '#ffffff' : '#111827' }}>
           전체 이벤트

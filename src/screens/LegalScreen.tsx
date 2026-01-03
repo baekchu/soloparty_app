@@ -142,7 +142,7 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
   }, [type]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top', 'left', 'right', 'bottom']}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
