@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Dimensions, Animated, PanResponder, Linking, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Dimensions, Animated, PanResponder, Linking, Alert, Platform } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { loadEvents, saveEvents } from '../utils/storage';
 import { EventsByDate } from '../types';
@@ -949,7 +949,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         borderTopRightRadius: 24,
         paddingHorizontal: 20,
         paddingTop: 12,
-        paddingBottom: 30,
+        paddingBottom: Platform.OS === 'android' ? 50 : 30,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: -4 },
         shadowOpacity: 0.15,
@@ -1232,8 +1232,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         )}
         </ScrollView>
         
-        {/* 하단 SafeArea 여백 (홈버튼 가림 방지) */}
-        <View style={{ height: 20, backgroundColor: 'transparent' }} />
+        {/* 하단 SafeArea 여백 (홈버튼 가림 방지) - Android만 추가 여백 */}
+        <View style={{ height: Platform.OS === 'android' ? 40 : 20, backgroundColor: 'transparent' }} />
       </Animated.View>
 
       {/* 포인트 모달 */}

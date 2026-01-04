@@ -50,14 +50,14 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   }, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top']}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: getResponsivePadding(), 
-        paddingTop: 10,
+        paddingTop: 20,
         paddingBottom: 20, 
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
         borderBottomWidth: 1,
@@ -393,6 +393,6 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           </Text>
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }

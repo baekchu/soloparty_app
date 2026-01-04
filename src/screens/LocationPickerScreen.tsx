@@ -337,14 +337,14 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20, 
-        paddingTop: 10,
+        paddingTop: 20,
         paddingBottom: 20, 
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
         borderBottomWidth: 1,
