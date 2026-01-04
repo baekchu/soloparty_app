@@ -499,7 +499,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }}>
       {/* 헤더 */}
       <View style={{ 
         paddingHorizontal: 20, 
@@ -942,14 +942,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         position: 'absolute',
         left: 0,
         right: 0,
-        bottom: 0,
+        bottom: Platform.OS === 'android' ? insets.bottom : 0,
         height: panelHeight,
         backgroundColor: isDark ? '#a78bfa' : '#ec4899',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         paddingHorizontal: 20,
         paddingTop: 12,
-        paddingBottom: Platform.OS === 'android' ? 50 : 30,
+        paddingBottom: Platform.OS === 'android' ? 0 : 30,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: -4 },
         shadowOpacity: 0.15,
@@ -1232,8 +1232,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         )}
         </ScrollView>
         
-        {/* 하단 SafeArea 여백 (홈버튼 가림 방지) - Android만 추가 여백 */}
-        <View style={{ height: Platform.OS === 'android' ? 40 : 20, backgroundColor: 'transparent' }} />
+        {/* 하단 SafeArea 여백 (홈버튼 가림 방지) */}
+        <View style={{ height: 20, backgroundColor: 'transparent' }} />
       </Animated.View>
 
       {/* 포인트 모달 */}
