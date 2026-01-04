@@ -1236,6 +1236,18 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         <View style={{ height: 20, backgroundColor: 'transparent' }} />
       </Animated.View>
 
+      {/* 안드로이드 하단바 배경 */}
+      {Platform.OS === 'android' && insets.bottom > 0 && (
+        <View style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: insets.bottom,
+          backgroundColor: '#ffffff',
+        }} />
+      )}
+
       {/* 포인트 모달 */}
       <PointsModal
         visible={showPointsModal}
