@@ -50,7 +50,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   }, []);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
@@ -75,7 +75,13 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={getContainerStyle(800)}>
+      <ScrollView 
+        style={{ flex: 1 }} 
+        contentContainerStyle={{
+          ...getContainerStyle(800),
+          paddingBottom: insets.bottom,
+        }}
+      >
         {/* 다크모드 설정 */}
         <View style={{
           margin: getResponsivePadding(),
@@ -393,18 +399,6 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           </Text>
         </View>
       </ScrollView>
-
-      {/* 안드로이드 하단바 배경 */}
-      {Platform.OS === 'android' && insets.bottom > 0 && (
-        <View style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: insets.bottom,
-          backgroundColor: isDark ? '#0f172a' : '#ffffff',
-        }} />
-      )}
     </SafeAreaView>
   );
 }

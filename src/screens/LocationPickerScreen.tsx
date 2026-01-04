@@ -337,7 +337,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
@@ -363,7 +363,10 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       </View>
 
       {/* 검색 및 위치 목록 */}
-      <ScrollView style={{ flex: 1 }}>
+      <ScrollView 
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom }}
+      >
         {/* 검색창 */}
         <View style={{ padding: 20, paddingBottom: 12 }}>
           <TextInput
@@ -499,6 +502,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       {/* 하단 버튼 */}
       <View style={{
         padding: 20,
+        paddingBottom: Math.max(20, insets.bottom),
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
         borderTopWidth: 1,
         borderTopColor: isDark ? '#334155' : '#e5e7eb',
@@ -524,18 +528,6 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           </Text>
         </TouchableOpacity>
       </View>
-
-      {/* 안드로이드 하단바 배경 */}
-      {Platform.OS === 'android' && insets.bottom > 0 && (
-        <View style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: insets.bottom,
-          backgroundColor: isDark ? '#1e293b' : '#ffffff',
-        }} />
-      )}
     </SafeAreaView>
   );
 }
