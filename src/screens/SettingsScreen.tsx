@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Switch, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Switch, Alert, Platform } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../hooks/useNotifications';
@@ -393,6 +393,18 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           </Text>
         </View>
       </ScrollView>
+
+      {/* 안드로이드 하단바 배경 */}
+      {Platform.OS === 'android' && insets.bottom > 0 && (
+        <View style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: insets.bottom,
+          backgroundColor: isDark ? '#0f172a' : '#ffffff',
+        }} />
+      )}
     </SafeAreaView>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Alert, Platform } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
@@ -337,7 +337,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }} edges={['top']}>
       {/* 헤더 */}
       <View style={{ 
         flexDirection: 'row',
@@ -524,6 +524,18 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           </Text>
         </TouchableOpacity>
       </View>
-    </View>
+
+      {/* 안드로이드 하단바 배경 */}
+      {Platform.OS === 'android' && insets.bottom > 0 && (
+        <View style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: insets.bottom,
+          backgroundColor: isDark ? '#1e293b' : '#ffffff',
+        }} />
+      )}
+    </SafeAreaView>
   );
 }
