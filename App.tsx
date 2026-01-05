@@ -12,6 +12,7 @@ import AddEventScreen from "./src/screens/AddEventScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
 import LocationPickerScreen from "./src/screens/LocationPickerScreen";
 import LegalScreen from "./src/screens/LegalScreen";
+import CouponScreen from "./src/screens/CouponScreen";
 import SplashScreen from "./src/screens/SplashScreen";
 
 // Components
@@ -49,6 +50,7 @@ function AppNavigator() {
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ presentation: "modal" }} />
         <Stack.Screen name="LocationPicker" component={LocationPickerScreen} options={{ presentation: "modal" }} />
         <Stack.Screen name="Legal" component={LegalScreen} options={{ presentation: "modal" }} />
+        <Stack.Screen name="Coupon" component={CouponScreen} options={{ presentation: "modal" }} />
       </Stack.Navigator>
     </>
   );

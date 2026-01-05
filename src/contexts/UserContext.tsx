@@ -12,8 +12,8 @@
  * ========================================================================
  */
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback, useRef } from 'react';
+import { safeGetItem, safeSetItem, safeRemoveItem } from '../utils/asyncStorageManager';
 import * as Device from 'expo-device';
 import * as Crypto from 'expo-crypto';
 
@@ -42,6 +42,14 @@ export interface UserData {
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
+
+// ==================== 상수 정의 ====================
+const STORAGE_KEYS = {
+  USER_ID_SECURE: 'userId_secure',
+  USER_PREFIX: 'user_',
+  INVITE_HISTORY: 'invite_history',
+} as const;
+const MAX_INVITE_HISTORY = 500;
 
 // ==================== 보안 함수 ====================
 
@@ -111,15 +119,18 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [userId, setUserId] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
     initializeUser();
+    return () => { isMountedRef.current = false; };
   }, []);
 
   const initializeUser = async () => {
     try {
       // 암호화된 사용자 ID 확인
-      let encryptedUserId = await AsyncStorage.getItem('userId_secure');
+      let encryptedUserId = await safeGetItem(STORAGE_KEYS.USER_ID_SECURE);
       let storedUserId: string | null = null;
 
       if (encryptedUserId) {
@@ -137,7 +148,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const newInviteCode = await generateInviteCode();
         
         // 암호화하여 저장
-        await AsyncStorage.setItem('userId_secure', encryptData(storedUserId));
+        await safeSetItem(STORAGE_KEYS.USER_ID_SECURE, encryptData(storedUserId));
 
         // 사용자 데이터 생성
         const userDataWithoutHash = {
@@ -159,12 +170,14 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const dataHash = await generateDataHash(userDataWithoutHash);
         const userData: UserData = { ...userDataWithoutHash, dataHash };
 
-        await AsyncStorage.setItem(`user_${storedUserId}`, JSON.stringify(userData));
-        setInviteCode(newInviteCode);
+        await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`, JSON.stringify(userData));
+        if (isMountedRef.current) {
+          setInviteCode(newInviteCode);
+        }
         console.log('✅ 새 사용자 생성:', storedUserId.slice(0, 8) + '... (초대코드: ' + newInviteCode + ')');
       } else {
         // 기존 사용자 데이터 로드 및 검증
-        const userDataStr = await AsyncStorage.getItem(`user_${storedUserId}`);
+        const userDataStr = await safeGetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`);
         if (userDataStr) {
           const userData: UserData = JSON.parse(userDataStr);
           
@@ -183,13 +196,17 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const newHash = await generateDataHash(updatedDataWithoutHash);
           const updatedData: UserData = { ...updatedDataWithoutHash, dataHash: newHash };
 
-          await AsyncStorage.setItem(`user_${storedUserId}`, JSON.stringify(updatedData));
-          setInviteCode(userData.inviteCode);
+          await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`, JSON.stringify(updatedData));
+          if (isMountedRef.current) {
+            setInviteCode(userData.inviteCode);
+          }
           console.log('✅ 기존 사용자 로그인:', storedUserId.slice(0, 8) + '... (초대코드: ' + userData.inviteCode + ')');
         }
       }
 
-      setUserId(storedUserId);
+      if (isMountedRef.current) {
+        setUserId(storedUserId);
+      }
     } catch (error) {
       console.error('❌ 사용자 초기화 실패:', error);
     } finally {
@@ -202,7 +219,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!userId) return null;
 
     try {
-      const userDataStr = await AsyncStorage.getItem(`user_${userId}`);
+      const userDataStr = await safeGetItem(`${STORAGE_KEYS.USER_PREFIX}${userId}`);
       if (userDataStr) {
         const userData: UserData = JSON.parse(userDataStr);
         
@@ -225,12 +242,19 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!userId) return false;
 
     try {
+      // 초대 코드 형식 검증 (보안 강화)
+      if (!/^[A-Z0-9]{6}$/.test(inviterCode)) {
+        console.log('❌ 초대 코드 형식이 올바르지 않습니다:', inviterCode);
+        return false;
+      }
+
       // 초대 코드로 초대한 사람 찾기
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
       const keys = await AsyncStorage.getAllKeys();
-      const userKeys = keys.filter(key => key.startsWith('user_'));
+      const userKeys = keys.filter(key => key.startsWith(STORAGE_KEYS.USER_PREFIX));
       
       for (const key of userKeys) {
-        const dataStr = await AsyncStorage.getItem(key);
+        const dataStr = await safeGetItem(key);
         if (dataStr) {
           const data: UserData = JSON.parse(dataStr);
           if (data.inviteCode === inviterCode && data.userId !== userId) {
@@ -244,7 +268,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 invitedBy: data.userId,
               };
               const myHash = await generateDataHash(updatedMyData);
-              await AsyncStorage.setItem(`user_${userId}`, JSON.stringify({ ...updatedMyData, dataHash: myHash }));
+              await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${userId}`, JSON.stringify({ ...updatedMyData, dataHash: myHash }));
 
               // 초대한 사람 초대 수 증가
               const { dataHash: inviterHash, ...inviterDataWithoutHash } = data;
@@ -253,7 +277,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 invitedCount: data.invitedCount + 1,
               };
               const inviterNewHash = await generateDataHash(updatedInviterData);
-              await AsyncStorage.setItem(key, JSON.stringify({ ...updatedInviterData, dataHash: inviterNewHash }));
+              await safeSetItem(key, JSON.stringify({ ...updatedInviterData, dataHash: inviterNewHash }));
 
               // 초대 내역 기록
               await saveInviteHistory(data.userId, userId, inviterCode);
@@ -276,7 +300,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // 초대 내역 저장
   const saveInviteHistory = async (inviterId: string, inviteeId: string, inviteCode: string) => {
     try {
-      const historyStr = await AsyncStorage.getItem('invite_history');
+      const historyStr = await safeGetItem(STORAGE_KEYS.INVITE_HISTORY);
       const history = historyStr ? JSON.parse(historyStr) : [];
       history.unshift({
         inviterId,
@@ -284,7 +308,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         inviteCode,
         timestamp: new Date().toISOString(),
       });
-      await AsyncStorage.setItem('invite_history', JSON.stringify(history.slice(0, 500)));
+      await safeSetItem(STORAGE_KEYS.INVITE_HISTORY, JSON.stringify(history.slice(0, MAX_INVITE_HISTORY)));
     } catch (error) {
       console.error('초대 내역 저장 실패:', error);
     }

@@ -23,6 +23,7 @@ export type RootStackParamList = {
   Settings: undefined;
   LocationPicker: undefined;
   Reward: undefined; // 적립금 & 광고 화면
+  Coupon: undefined; // 쿠폰 화면
   Invite: undefined; // 친구 초대 화면
   Legal: { type: 'terms' | 'privacy' | 'copyright' }; // 약관 화면
 };

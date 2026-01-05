@@ -1,11 +1,25 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Dimensions, Animated, PanResponder, Linking, Alert, Platform } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { loadEvents, saveEvents } from '../utils/storage';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { 
+  View, 
+  Text, 
+  TouchableOpacity, 
+  ScrollView, 
+  Dimensions, 
+  Animated, 
+  PanResponder, 
+  Linking, 
+  Alert, 
+  Platform, 
+  BackHandler,
+  StyleSheet,
+  InteractionManager,
+  ActivityIndicator
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { loadEvents } from '../utils/storage';
 import { EventsByDate } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
-import { getContainerStyle, getResponsivePadding, isTablet } from '../utils/responsive';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { useFocusEffect } from '@react-navigation/native';
@@ -13,7 +27,6 @@ import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { MainTabParamList } from '../types';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import MonthCalendar from '../components/MonthCalendar';
-import PointsModal from '../components/PointsModal';
 import { usePoints } from '../hooks/usePoints';
 import { sendNewEventNotification } from '../services/NotificationService';
 
@@ -37,22 +50,54 @@ const deduplicateMonths = (months: Array<{ year: number; month: number }>) => {
   });
 };
 
-// 인스타그램 링크 처리 함수
+// ==================== 상수 정의 (성능 최적화) ====================
+const MONTH_NAMES = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'] as const;
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'] as const;
+const POLL_INTERVAL = 30000; // 30초 폴링
+const SCROLL_THRESHOLD = 500; // 무한 스크롤 트리거 임계값
+const INITIAL_MONTHS_RANGE = 3; // 초기 로드 월 범위 (앞뒤 3개월)
+
+// ==================== 광고 배너 설정 (활성화 시 사용) ====================
+const AD_CONFIG = {
+  bannerHeight: 50,
+  showBanner: false, // 광고 활성화 시 true로 변경
+  bannerUnitId: Platform.select({
+    ios: 'ca-app-pub-xxxxx/xxxxx', // iOS 광고 단위 ID
+    android: 'ca-app-pub-xxxxx/xxxxx', // Android 광고 단위 ID
+  }),
+};
+
+// ==================== 인스타그램 링크 처리 (보안 강화) ====================
+const SAFE_URL_PATTERN = /^https?:\/\/(www\.)?(instagram\.com|naver\.com|facebook\.com|twitter\.com|youtube\.com)/i;
+
 const openInstagramLink = async (link?: string) => {
-  if (!link) return;
+  if (!link || typeof link !== 'string') return;
   
   try {
-    let url = link;
-    
-    // Instagram URL 정규화
-    if (!link.startsWith('http')) {
-      url = `https://${link}`;
+    // URL 정규화 및 보안 검증
+    let url = link.trim();
+    if (!url.startsWith('http')) {
+      url = `https://${url}`;
     }
     
-    // Instagram 앱 링크로 변환 시도
-    if (link.includes('instagram.com')) {
-      const username = link.match(/instagram\.com\/([^\/\?]+)/);
-      if (username && username[1]) {
+    // 허용된 도메인만 열기 (보안 강화)
+    if (!SAFE_URL_PATTERN.test(url)) {
+      // 신뢰할 수 없는 URL은 사용자에게 경고 후 열기
+      Alert.alert(
+        '외부 링크',
+        '외부 사이트로 이동합니다. 계속하시겠습니까?',
+        [
+          { text: '취소', style: 'cancel' },
+          { text: '이동', onPress: () => Linking.openURL(url).catch(() => {}) },
+        ]
+      );
+      return;
+    }
+    
+    // Instagram 앱 딥링크 시도
+    if (url.includes('instagram.com')) {
+      const username = url.match(/instagram\.com\/([^\/\?]+)/);
+      if (username?.[1] && username[1] !== 'p' && username[1] !== 'reel') {
         const appUrl = `instagram://user?username=${username[1]}`;
         const canOpenApp = await Linking.canOpenURL(appUrl);
         if (canOpenApp) {
@@ -62,86 +107,100 @@ const openInstagramLink = async (link?: string) => {
       }
     }
     
-    // 일반 브라우저로 열기
-    const canOpen = await Linking.canOpenURL(url);
-    if (canOpen) {
-      await Linking.openURL(url);
-    } else {
-      Alert.alert('오류', '링크를 열 수 없습니다.');
-    }
+    // 기본 브라우저로 열기
+    await Linking.openURL(url);
   } catch (error) {
-    Alert.alert('오류', '링크를 열 수 없습니다.');
+    console.warn('링크 열기 실패:', error);
+    Alert.alert('알림', '링크를 열 수 없습니다.');
   }
 };
 
 export default function CalendarScreen({ navigation }: CalendarScreenProps) {
+  // ==================== 상태 관리 (최소화) ====================
   const [events, setEvents] = useState<EventsByDate>({});
-  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
-  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(() => new Date().getMonth() + 1);
+  const [currentYear, setCurrentYear] = useState(() => new Date().getFullYear());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [visibleMonths, setVisibleMonths] = useState<Array<{ year: number; month: number }>>([]);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isDataReady, setIsDataReady] = useState(false); // 데이터 로딩 상태
+  const [availableRegions, setAvailableRegions] = useState<string[]>([]);
+  const [isPanelExpanded, setIsPanelExpanded] = useState(false);
+  const [heightUpdateTrigger, setHeightUpdateTrigger] = useState(0);
+  
+  // ==================== Contexts ====================
   const { theme } = useTheme();
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } = useRegion();
   const insets = useSafeAreaInsets();
-  const [availableRegions, setAvailableRegions] = useState<string[]>([]);
-  const eventListHeightsRef = useRef<Record<string, number>>({});
-  const [heightUpdateTrigger, setHeightUpdateTrigger] = useState(0);
+  const { balance: points, spendPoints } = usePoints();
   
-  // 포인트 시스템
-  const { balance, history: pointHistory, addPoints, spendPoints, isLoading: pointsLoading } = usePoints();
-  const [showPointsModal, setShowPointsModal] = useState(false);
+  // ==================== Dimensions (메모이제이션) ====================
+  const [dimensions, setDimensions] = useState(() => ({
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+  }));
+  const { width: screenWidth, height: screenHeight } = dimensions;
+  
+  // ==================== Refs (성능 최적화) ====================
+  const panelHeight = useRef(new Animated.Value(100)).current;
+  const panelStartHeight = useRef(100);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const monthHeightsRef = useRef<Record<string, number>>({});
+  const eventListHeightsRef = useRef<Record<string, number>>({});
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isUserScrollingRef = useRef(false);
+  const previousEventsRef = useRef<EventsByDate>({});
+  const isMountedRef = useRef(true); // 마운트 상태 추적 (메모리 누수 방지)
   
   // ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
-  // const { balance: adBalance, addReward } = useReward();
-  // const { showAd: showRewardedAd, loaded: rewardedAdLoaded } = useRewardedAd((amount) => {
-  //   addReward(amount, '광고 시청 보상');
-  // });
+  // const { showAd: showRewardedAd, loaded: rewardedAdLoaded } = useRewardedAd();
   // const { showAdOnNavigation } = useInterstitialAd();
-  // useAppStartAd();
   // ========================================================================
+  
+  const isDark = theme === 'dark';
 
-  const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
-  const [screenHeight, setScreenHeight] = useState(Dimensions.get('window').height);
-  const panelHeight = useRef(new Animated.Value(100)).current; // 초기 높이 100px - 첫 일정까지 보이도록
-  const [isPanelExpanded, setIsPanelExpanded] = useState(false);
-  const scrollViewRef = useRef<ScrollView>(null);
-  const monthHeightsRef = useRef<{ [key: string]: number }>({});
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null); // 폴링 타이머
-  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 스크롤 디바운스용
-  const isUserScrollingRef = useRef(false); // 사용자 스크롤 중인지 추적
-  const previousEventsRef = useRef<EventsByDate>({}); // 이전 일정 추적 (알림용)
-
-  React.useEffect(() => {
+  // ==================== 마운트 상태 관리 ====================
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+  
+  // ==================== Dimensions 리스너 (최적화) ====================
+  useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
-      setScreenWidth(window.width);
-      setScreenHeight(window.height);
+      if (isMountedRef.current) {
+        setDimensions({ width: window.width, height: window.height });
+      }
     });
     return () => subscription?.remove();
   }, []);
 
-  React.useEffect(() => {
-    // 초기 마운트 시에만 현재 월 기준으로 이전 3개월, 현재 월, 다음 3개월 생성
-    if (visibleMonths.length === 0 && screenHeight > 0) {
+  // ==================== 초기화 (InteractionManager로 UI 블로킹 방지) ====================
+  useEffect(() => {
+    if (visibleMonths.length > 0 || screenHeight === 0) return;
+    
+    // InteractionManager를 사용하여 애니메이션 후 실행
+    const interactionHandle = InteractionManager.runAfterInteractions(() => {
+      if (!isMountedRef.current) return;
+      
       try {
         const now = new Date();
         const initialMonth = now.getMonth() + 1;
         const initialYear = now.getFullYear();
         
+        // 초기 월 배열 생성 (중복 방지)
         const months: Array<{ year: number; month: number }> = [];
-        const addedKeys = new Set<string>(); // 중복 방지
+        const addedKeys = new Set<string>();
         
-        for (let i = -3; i <= 3; i++) {
+        for (let i = -INITIAL_MONTHS_RANGE; i <= INITIAL_MONTHS_RANGE; i++) {
           let month = initialMonth + i;
           let year = initialYear;
           
-          if (month < 1) {
-            month += 12;
-            year--;
-          } else if (month > 12) {
-            month -= 12;
-            year++;
-          }
+          if (month < 1) { month += 12; year--; }
+          else if (month > 12) { month -= 12; year++; }
           
           const key = `${year}-${month}`;
           if (!addedKeys.has(key)) {
@@ -149,51 +208,44 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             addedKeys.add(key);
           }
         }
-        setVisibleMonths(months);
         
-        // 현재 월로 명시적 설정
-        setCurrentMonth(initialMonth);
-        setCurrentYear(initialYear);
-        
-        // 초기화 완료 표시
-        setIsInitialized(true);
-        
-        setTimeout(() => {
-          try {
-            // 실제 높이 기반 스크롤
-            let totalHeight = 0;
-            for (let i = 0; i < 3 && i < months.length; i++) {
-              const key = `${months[i].year}-${months[i].month}`;
-              const height = monthHeightsRef.current[key] || (screenHeight * 0.7);
-              totalHeight += height;
-            }
-            
-            // 월 헤더 높이를 빼서 월 헤더가 요일 헤더 바로 아래에 오도록 조정
-            const monthHeaderHeight = -56;
-            const adjustedHeight = Math.max(0, totalHeight - monthHeaderHeight);
-            
-            scrollViewRef.current?.scrollTo({ y: adjustedHeight, animated: false });
-          } catch (scrollError) {
-            console.log('초기 스크롤 실패 (무시):', scrollError);
-          }
-        }, 200);
-      } catch (initError) {
-        console.error('초기화 실패:', initError);
-        // 에러가 나도 최소한 현재 월은 생성
-        try {
-          const now = new Date();
-          const initialMonth = now.getMonth() + 1;
-          const initialYear = now.getFullYear();
-          setVisibleMonths([{ year: initialYear, month: initialMonth }]);
+        if (isMountedRef.current) {
+          setVisibleMonths(months);
           setCurrentMonth(initialMonth);
           setCurrentYear(initialYear);
-        } catch {}
-        setIsInitialized(true);
+          setIsInitialized(true);
+        }
+        
+        // 초기 스크롤 위치 설정 (지연 실행)
+        requestAnimationFrame(() => {
+          if (!isMountedRef.current) return;
+          
+          let totalHeight = 0;
+          for (let i = 0; i < INITIAL_MONTHS_RANGE && i < months.length; i++) {
+            const key = `${months[i].year}-${months[i].month}`;
+            totalHeight += monthHeightsRef.current[key] || (screenHeight * 0.7);
+          }
+          
+          const adjustedHeight = Math.max(0, totalHeight + 56);
+          scrollViewRef.current?.scrollTo({ y: adjustedHeight, animated: false });
+        });
+      } catch (error) {
+        console.warn('초기화 실패:', error);
+        // 폴백: 현재 월만 표시
+        if (isMountedRef.current) {
+          const now = new Date();
+          setVisibleMonths([{ year: now.getFullYear(), month: now.getMonth() + 1 }]);
+          setCurrentMonth(now.getMonth() + 1);
+          setCurrentYear(now.getFullYear());
+          setIsInitialized(true);
+        }
       }
-    }
+    });
+    
+    return () => interactionHandle.cancel();
   }, [screenHeight]);
-
-  const panelStartHeight = useRef(100);
+  
+  // ==================== 패널 애니메이션 (최적화) ====================
   
   const panResponder = useRef(
     PanResponder.create({
@@ -252,11 +304,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       friction: 8,
     }).start();
   };
-
-  const monthNames = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
   
-  // 월 변경 시 자동 스크롤
-  React.useEffect(() => {
+  // ==================== 월 변경 시 자동 스크롤 ====================
+  useEffect(() => {
     if (visibleMonths.length > 0 && !isUserScrollingRef.current) {
       const targetIndex = visibleMonths.findIndex(
         m => m.month === currentMonth && m.year === currentYear
@@ -353,41 +403,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     });
   }, [currentMonth, currentYear]);
 
-  useFocusEffect(
-    useCallback(() => {
-      // 초기 데이터 로드 (안전하게)
-      loadEventsData().catch(err => {
-        console.log('초기 데이터 로드 실패 (무시):', err);
-      });
-      
-      // 30초마다 Gist에서 데이터 자동 갱신 (배터리 최적화)
-      pollIntervalRef.current = setInterval(async () => {
-        try {
-          const latestEvents = await loadEvents(true).catch(() => ({} as EventsByDate));
-          
-          if (latestEvents && typeof latestEvents === 'object') {
-            // 새 일정 감지 및 알림
-            try {
-              checkForNewEvents(previousEventsRef.current, latestEvents);
-            } catch (checkError) {
-              console.log('일정 감지 실패 (무시):', checkError);
-            }
-            
-            setEvents(latestEvents);
-            previousEventsRef.current = latestEvents;
-          }
-        } catch (error) {
-          console.log('자동 갱신 실패 (무시):', error);
-        }
-      }, 30000);
-
-      return () => {
-        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-        if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-      };
-    }, [])
-  );
-
+  // ==================== 데이터 처리 함수 ====================
+  
   // 새 일정 감지 함수
   const checkForNewEvents = useCallback((oldEvents: EventsByDate, newEvents: EventsByDate) => {
     // 초기 로드 시에는 알림 보내지 않음
@@ -420,7 +437,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             sendNewEventNotification(event.title, formattedDate);
           } catch (notifError) {
             // Expo Go에서는 알림이 작동하지 않을 수 있음 (무시)
-            console.log('알림 전송 실패 (Expo Go에서는 정상):', notifError);
           }
         }
       });
@@ -433,67 +449,120 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       const loadedEvents = await loadEvents(false);
       
       if (!loadedEvents || typeof loadedEvents !== 'object') {
-        setEvents({});
-        setAvailableRegions([]);
+        if (isMountedRef.current) {
+          setEvents({});
+          setAvailableRegions([]);
+        }
         return;
       }
       
       // 초기 로드 시 이전 데이터 저장
       previousEventsRef.current = loadedEvents;
       
-      setEvents(loadedEvents);
-      
-      // 지역 목록 추출 (최적화)
-      const regionCount = new Map<string, number>();
-      for (const eventList of Object.values(loadedEvents)) {
-        for (const event of eventList) {
-          if (event?.region) {
-            regionCount.set(event.region, (regionCount.get(event.region) || 0) + 1);
+      if (isMountedRef.current) {
+        setEvents(loadedEvents);
+        
+        // 지역 목록 추출 (최적화)
+        const regionCount = new Map<string, number>();
+        for (const eventList of Object.values(loadedEvents)) {
+          for (const event of eventList) {
+            if (event?.region) {
+              regionCount.set(event.region, (regionCount.get(event.region) || 0) + 1);
+            }
           }
         }
+        
+        const sortedRegions = Array.from(regionCount.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([region]) => region);
+        setAvailableRegions(sortedRegions);
       }
-      
-      const sortedRegions = Array.from(regionCount.entries())
-        .sort((a, b) => b[1] - a[1])
-        .map(([region]) => region);
-      setAvailableRegions(sortedRegions);
-      
     } catch (error) {
       console.warn('데이터 로드 실패:', error);
-      setEvents({});
-      setAvailableRegions([]);
+      if (isMountedRef.current) {
+        setEvents({});
+        setAvailableRegions([]);
+      }
     }
-  }, []); // 무한 루프 방지: events dependency 제거
-
-  const goToPreviousMonth = useCallback(() => {
-    isUserScrollingRef.current = false;
-    setCurrentMonth((prevMonth) => {
-      if (prevMonth === 1) {
-        setCurrentYear((prevYear) => prevYear - 1);
-        return 12;
-      }
-      return prevMonth - 1;
-    });
   }, []);
 
-  const goToNextMonth = useCallback(() => {
-    isUserScrollingRef.current = false;
-    setCurrentMonth((prevMonth) => {
-      if (prevMonth === 12) {
-        setCurrentYear((prevYear) => prevYear + 1);
-        return 1;
-      }
-      return prevMonth + 1;
-    });
-  }, []);
+  // ==================== 데이터 로드 및 폴링 ====================
+  useFocusEffect(
+    useCallback(() => {
+      // 마운트 상태 확인
+      isMountedRef.current = true;
+      
+      // 초기 데이터 로드 (안전하게)
+      const loadData = async () => {
+        try {
+          await loadEventsData();
+          if (isMountedRef.current) {
+            setIsDataReady(true);
+          }
+        } catch (err) {
+          console.warn('초기 데이터 로드 실패:', err);
+          if (isMountedRef.current) {
+            setIsDataReady(true); // 실패해도 UI 표시
+          }
+        }
+      };
+      
+      loadData();
+      
+      // 폴링 설정 (배터리 최적화)
+      pollIntervalRef.current = setInterval(async () => {
+        if (!isMountedRef.current) return;
+        
+        try {
+          const latestEvents = await loadEvents(true);
+          
+          if (latestEvents && typeof latestEvents === 'object' && isMountedRef.current) {
+            // 새 일정 감지 및 알림
+            checkForNewEvents(previousEventsRef.current, latestEvents);
+            setEvents(latestEvents);
+            previousEventsRef.current = latestEvents;
+          }
+        } catch (error) {
+          // 실패 시 조용히 무시
+        }
+      }, POLL_INTERVAL);
 
-  const isDark = theme === 'dark';
+      // 안드로이드 뒤로가기 버튼 처리
+      const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (isPanelExpanded) {
+          if (selectedDate) {
+            setSelectedDate(null);
+            return true;
+          } else {
+            collapsePanel();
+            return true;
+          }
+        }
+        return false;
+      });
 
-  // 초기화 중이거나 화면 크기가 0이면 로딩 화면 표시
+      // 클린업 함수
+      return () => {
+        isMountedRef.current = false;
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current);
+          scrollTimeoutRef.current = null;
+        }
+        backHandler.remove();
+      };
+    }, [isPanelExpanded, selectedDate, loadEventsData, checkForNewEvents])
+  );
+
+  // ==================== 로딩 화면 ====================
   if (!isInitialized || screenHeight === 0 || screenWidth === 0) {
     return (
-      <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', justifyContent: 'center', alignItems: 'center', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
-        <Text style={{ color: isDark ? '#f8fafc' : '#0f172a', fontSize: 16 }}>로딩 중...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={isDark ? '#a78bfa' : '#ec4899'} />
+        <Text style={[styles.loadingText, { color: isDark ? '#94a3b8' : '#64748b' }]}>로딩 중...</Text>
       </View>
     );
   }
@@ -574,10 +643,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           
           {/* 오른쪽 영역 - 고정 너비 */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {/* 포인트 버튼 */}
+            {/* 포인트/쿠폰 버튼 */}
             {/* <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => setShowPointsModal(true)}
+              onPress={() => navigation.navigate('Coupon')}
               style={{
                 paddingHorizontal: 10,
                 paddingVertical: 6,
@@ -657,7 +726,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                   color: isActive ? (isDark ? '#a78bfa' : '#ec4899') : isDark ? '#64748b' : '#94a3b8',
                   letterSpacing: 0.5,
                 }}>
-                  {monthNames[monthNum - 1]}
+                  {MONTH_NAMES[monthNum - 1]}
                 </Text>
                 {isActive && (
                   <View style={{ 
@@ -1002,29 +1071,23 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             )}
           </View>
           
-          {/* 화살표 버튼 - 패널 상태에 따라 변경 */}
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => {
-              if (isPanelExpanded) {
-                collapsePanel();
-              } else {
-                expandPanel();
-              }
-            }}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 16,
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}
-          >
-            <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: '700' }}>
-              {isPanelExpanded ? '▽' : '△'}
-            </Text>
-          </TouchableOpacity>
+          {/* X 버튼 - 패널이 확장되었을 때만 표시 */}
+          {isPanelExpanded && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={collapsePanel}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+          )}
         </View>
         
         <ScrollView 
@@ -1057,7 +1120,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 const eventsForDate = groupedByDate[date];
                 const eventDate = new Date(date);
                 const day = eventDate.getDate();
-                const monthName = monthNames[eventDate.getMonth()];
+                const monthName = MONTH_NAMES[eventDate.getMonth()];
                 const isLastDate = dateIndex === dates.length - 1;
 
                 const bubbleSize = 44;
@@ -1247,17 +1310,123 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           backgroundColor: '#ffffff',
         }} />
       )}
-
-      {/* 포인트 모달 */}
-      <PointsModal
-        visible={showPointsModal}
-        onClose={() => setShowPointsModal(false)}
-        points={balance || 0}
-        onSpendPoints={spendPoints}
-        isDark={isDark}
-        dailyAdCount={0}
-        maxDailyAds={10}
-      />
+      
+      {/* ==================== 광고 배너 슬롯 (활성화 시 사용) ==================== */} 
+      {/* AD_CONFIG.showBanner && (
+        <View style={styles.adBannerContainer}>
+          <BannerAd
+            unitId={AD_CONFIG.bannerUnitId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+          />
+        </View>
+      ) */}
     </View>
   );
 }
+
+// ==================== 스타일시트 (성능 최적화) ====================
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  adBannerContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  // 자주 사용되는 컨테이너 스타일
+  container: {
+    flex: 1,
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    gap: 8,
+  },
+  // 패널 관련 스타일
+  panelHandle: {
+    alignItems: 'center',
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  panelHandleBar: {
+    width: 40,
+    height: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    borderRadius: 3,
+  },
+  // 이벤트 카드 스타일
+  eventCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+  },
+  eventTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+    flex: 1,
+  },
+  eventTime: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#e0e7ff',
+  },
+  eventLocation: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.7)',
+    marginLeft: 8,
+  },
+  linkButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  linkButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  noLinkBadge: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  noLinkText: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+});

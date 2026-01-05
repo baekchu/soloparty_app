@@ -1,7 +1,13 @@
-import React, { useMemo, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
+import React, { useMemo, useCallback, useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, Dimensions, StyleSheet } from 'react-native';
 import { EventsByDate, Event } from '../types';
 import EventColorManager from '../utils/eventColorManager';
+
+// ==================== 상수 정의 (컴포넌트 외부) ====================
+const MONTH_NAMES = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'] as const;
+const WEEKS_COUNT = 6;
+const DAYS_IN_WEEK = 7;
+const MAX_VISIBLE_EVENTS = 3;
 
 interface MonthCalendarProps {
   year: number;
@@ -235,35 +241,71 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
 
   const weeks = useMemo(() => renderWeeks(), [renderWeeks]);
 
-  const monthNames = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
-
   return (
-    <View style={{ backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
+    <View style={[monthStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 월 헤더 */}
-      <View style={{ 
-        paddingVertical: 16,
-        paddingHorizontal: 20,
-        backgroundColor: isDark ? '#0f172a' : '#ffffff',
-        borderBottomWidth: 1,
-        borderBottomColor: isDark ? '#374151' : '#e5e7eb',
-      }}>
-        <Text style={{
-          fontSize: 20,
-          fontWeight: '800',
-          color: isDark ? '#f8fafc' : '#0f172a',
-        }}>
-          {monthNames[month - 1]}
+      <View style={[
+        monthStyles.monthHeader,
+        { 
+          backgroundColor: isDark ? '#0f172a' : '#ffffff',
+          borderBottomColor: isDark ? '#374151' : '#e5e7eb',
+        }
+      ]}>
+        <Text style={[monthStyles.monthTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+          {MONTH_NAMES[month - 1]}
         </Text>
       </View>
 
       {/* 날짜 그리드 */}
       <View>
         {weeks.map((week, weekIndex) => (
-          <View key={weekIndex} style={{ flexDirection: 'row' }}>
+          <View key={weekIndex} style={monthStyles.weekRow}>
             {week.map((cell, dayIndex) => renderDay(cell.day, weekIndex, dayIndex, cell.isOtherMonth))}
           </View>
         ))}
       </View>
     </View>
   );
+});
+
+// ==================== 스타일시트 (성능 최적화) ====================
+const monthStyles = StyleSheet.create({
+  container: {},
+  monthHeader: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+  },
+  monthTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  weekRow: {
+    flexDirection: 'row',
+  },
+  dayCell: {
+    borderBottomWidth: 0,
+    backgroundColor: 'transparent',
+  },
+  dayNumber: {
+    alignItems: 'center',
+    marginBottom: 6,
+    marginTop: 3,
+  },
+  eventList: {
+    flex: 1,
+    gap: 1,
+  },
+  eventItem: {
+    borderRadius: 2,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  moreEventsContainer: {
+    borderRadius: 3,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+    alignSelf: 'flex-start',
+    marginTop: 1,
+  },
 });

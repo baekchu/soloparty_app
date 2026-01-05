@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Alert, Platform } from 'react-native';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Platform } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 
 interface LocationPickerScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'LocationPicker'>;
@@ -15,19 +16,14 @@ interface LocationPickerScreenProps {
   };
 }
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// 네이버 지도 API 키 (실제 사용 시 환경 변수로 관리)
-const NAVER_MAP_CLIENT_ID = 'YOUR_NAVER_CLIENT_ID'; // TODO: .env 파일에서 불러오기
-
-// 장소 통계 저장소 키
+// ==================== 상수 정의 ====================
 const LOCATION_STATS_KEY = '@location_stats';
-
-// GitHub Gist 이벤트 데이터 URL (장소 정보 추출용)
 const EVENTS_GIST_URL = 'https://gist.githubusercontent.com/baekchu/f805cac22604ff764916280710db490e/raw/gistfile1.txt';
+const FETCH_TIMEOUT = 10000; // 10초 타임아웃
+const MAX_LOCATIONS = 100; // 최대 장소 수 제한
 
 // 기본 인기 장소 목록
-const DEFAULT_LOCATIONS = [
+const DEFAULT_LOCATIONS: LocationData[] = [
   { name: '서울 강남역', region: '서울', latitude: 37.4979, longitude: 127.0276, count: 0 },
   { name: '서울 홍대입구', region: '서울', latitude: 37.5572, longitude: 126.9236, count: 0 },
   { name: '서울 명동', region: '서울', latitude: 37.5636, longitude: 126.9835, count: 0 },
@@ -36,252 +32,221 @@ const DEFAULT_LOCATIONS = [
   { name: '인천 송도', region: '인천', latitude: 37.3896, longitude: 126.6439, count: 0 },
 ];
 
-// 네이버 지도 HTML (WebView용)
-const getNaverMapHTML = (latitude: number, longitude: number) => `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=${NAVER_MAP_CLIENT_ID}"></script>
-    <style>
-        body { margin: 0; padding: 0; }
-        #map { width: 100%; height: 100vh; }
-    </style>
-</head>
-<body>
-    <div id="map"></div>
-    <script>
-        var map = new naver.maps.Map('map', {
-            center: new naver.maps.LatLng(${latitude}, ${longitude}),
-            zoom: 15,
-            zoomControl: true,
-            zoomControlOptions: {
-                position: naver.maps.Position.TOP_RIGHT
-            }
-        });
-        
-        var marker = new naver.maps.Marker({
-            position: new naver.maps.LatLng(${latitude}, ${longitude}),
-            map: map,
-            draggable: true
-        });
-        
-        // 마커 드래그 이벤트
-        naver.maps.Event.addListener(marker, 'dragend', function(e) {
-            var position = marker.getPosition();
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-                latitude: position.lat(),
-                longitude: position.lng()
-            }));
-        });
-        
-        // 지도 클릭 이벤트
-        naver.maps.Event.addListener(map, 'click', function(e) {
-            marker.setPosition(e.coord);
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-                latitude: e.coord.lat(),
-                longitude: e.coord.lng()
-            }));
-        });
-    </script>
-</body>
-</html>
-`;
+// 장소 데이터 타입
+interface LocationData {
+  name: string;
+  region: string;
+  latitude: number;
+  longitude: number;
+  count: number;
+}
 
 export default function LocationPickerScreen({ navigation, route }: LocationPickerScreenProps) {
   const { theme } = useTheme();
   const { setSelectedLocation: setContextLocation, setSelectedRegion: setContextRegion } = useRegion();
   const isDark = theme === 'dark';
   const insets = useSafeAreaInsets();
+  
+  // ==================== 상태 ====================
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number; longitude: number; name: string; region?: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [useMap, setUseMap] = useState(false);
-  const [allLocations, setAllLocations] = useState<Array<{ name: string; region: string; latitude: number; longitude: number; count: number }>>(DEFAULT_LOCATIONS);
-  const [filteredLocations, setFilteredLocations] = useState<Array<{ name: string; region: string; latitude: number; longitude: number; count: number }>>(DEFAULT_LOCATIONS);
+  const [allLocations, setAllLocations] = useState<LocationData[]>(DEFAULT_LOCATIONS);
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string | null>(null);
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
+  const isMountedRef = useRef(true);
 
-  const [dimensions, setDimensions] = useState(() => {
-    const { width, height } = Dimensions.get('window');
-    return { width, height };
-  });
+  const [dimensions, setDimensions] = useState(() => ({
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+  }));
+
+  // ==================== 마운트 상태 관리 ====================
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   // 화면 크기 변경 감지
-  React.useEffect(() => {
+  useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
-      setDimensions({ width: window.width, height: window.height });
+      if (isMountedRef.current) {
+        setDimensions({ width: window.width, height: window.height });
+      }
     });
     return () => subscription?.remove();
   }, []);
 
-  // 장소 데이터 및 통계 불러오기
-  React.useEffect(() => {
+  // 장소 데이터 로드
+  useEffect(() => {
     loadLocationsFromGist();
   }, []);
 
-  // 검색어 및 지역 필터 변경 시 필터링
-  React.useEffect(() => {
+  // 필터링된 장소 목록 (메모이제이션)
+  const filteredLocations = useMemo(() => {
     let filtered = allLocations;
     
-    // 지역 필터
     if (selectedRegionFilter) {
       filtered = filtered.filter(loc => loc.region === selectedRegionFilter);
     }
     
-    // 검색어 필터
-    if (searchQuery.trim() !== '') {
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
       filtered = filtered.filter(loc => 
-        loc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        loc.region.toLowerCase().includes(searchQuery.toLowerCase())
+        loc.name.toLowerCase().includes(query) ||
+        loc.region.toLowerCase().includes(query)
       );
     }
     
-    setFilteredLocations(filtered);
-  }, [searchQuery, allLocations, selectedRegionFilter]);
+    return filtered;
+  }, [allLocations, selectedRegionFilter, searchQuery]);
 
-  const loadLocationsFromGist = async () => {
+  // ==================== 데이터 로드 함수 ====================
+  const loadLocationsFromGist = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    
     try {
-      // Gist에서 이벤트 데이터 가져오기
-      const response = await fetch(`${EVENTS_GIST_URL}?t=${Date.now()}`);
+      const response = await fetch(`${EVENTS_GIST_URL}?t=${Date.now()}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       
-      if (response.ok) {
-        const text = await response.text();
+      if (!response.ok) {
+        await loadLocalStats();
+        return;
+      }
+      
+      const text = await response.text();
+      
+      // JSON 파싱 (제어 문자 제거)
+      let data;
+      try {
+        const cleanText = text
+          .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
+          .replace(/""\s*([,}])/g, '"$1')
+          .replace(/[\n\r\t]/g, ' ')
+          .replace(/\s+/g, ' ');
+        data = JSON.parse(cleanText);
+      } catch {
+        await loadLocalStats();
+        return;
+      }
+      
+      // 장소 추출 (보안: 문자열 길이 제한)
+      const locationMap = new Map<string, LocationData>();
+      
+      Object.values(data).forEach((events: any) => {
+        if (!Array.isArray(events)) return;
         
-        // JSON 파싱 (control character 제거)
-        let data;
-        try {
-          const cleanText = text
-            .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
-            .replace(/""\s*([,}])/g, '"$1')
-            .replace(/\n/g, ' ')
-            .replace(/\r/g, '')
-            .replace(/\t/g, ' ')
-            .replace(/\s+/g, ' ');
-          data = JSON.parse(cleanText);
-        } catch (parseError) {
-          await loadLocalStats();
-          return;
-        }
-        
-        // 모든 이벤트에서 location 필드 추출
-        const locationMap = new Map<string, { name: string; region: string; latitude: number; longitude: number; count: number }>();
-        
-        Object.values(data).forEach((events: any) => {
-          if (Array.isArray(events)) {
-            events.forEach((event: any) => {
-              if (event.location) {
-                const locationName = event.location.trim();
-                const region = event.region || '기타';
-                
-                if (locationMap.has(locationName)) {
-                  // 이미 존재하면 count 증가
-                  const existing = locationMap.get(locationName)!;
-                  existing.count++;
-                  // coordinates가 있으면 업데이트
-                  if (event.coordinates?.latitude && event.coordinates?.longitude) {
-                    existing.latitude = event.coordinates.latitude;
-                    existing.longitude = event.coordinates.longitude;
-                  }
-                } else {
-                  // 새로운 장소 추가
-                  locationMap.set(locationName, {
-                    name: locationName,
-                    region: region,
-                    latitude: event.coordinates?.latitude || 37.5665, // 기본값: 서울
-                    longitude: event.coordinates?.longitude || 126.9780,
-                    count: 1 // Gist에서 등장 횟수
-                  });
-                }
-              }
+        events.forEach((event: any) => {
+          if (!event?.location || typeof event.location !== 'string') return;
+          
+          const locationName = event.location.trim().substring(0, 100); // 최대 100자
+          const region = (event.region || '기타').substring(0, 50);
+          
+          if (locationMap.has(locationName)) {
+            const existing = locationMap.get(locationName)!;
+            existing.count++;
+            if (event.coordinates?.latitude && event.coordinates?.longitude) {
+              existing.latitude = Number(event.coordinates.latitude) || 37.5665;
+              existing.longitude = Number(event.coordinates.longitude) || 126.9780;
+            }
+          } else if (locationMap.size < MAX_LOCATIONS) {
+            locationMap.set(locationName, {
+              name: locationName,
+              region,
+              latitude: Number(event.coordinates?.latitude) || 37.5665,
+              longitude: Number(event.coordinates?.longitude) || 126.9780,
+              count: 1,
             });
           }
         });
+      });
         
-        // Map을 배열로 변환
-        const locationsFromGist = Array.from(locationMap.values());
-        
-        // 지역 목록 추출 및 정렬
-        const regions = [...new Set(locationsFromGist.map(loc => loc.region))];
-        setAvailableRegions(regions.sort());
-        
-        // 로컬 통계 불러오기 (사용자 선택 횟수)
-        const statsJson = await AsyncStorage.getItem(LOCATION_STATS_KEY);
-        let locationStats: { [key: string]: number } = {};
-        
-        if (statsJson) {
+      // Map을 배열로 변환
+      const locationsFromGist = Array.from(locationMap.values());
+      
+      // 지역 목록 추출 및 정렬
+      const regions = [...new Set(locationsFromGist.map(loc => loc.region))];
+      
+      // 로컬 통계 불러오기
+      const statsJson = await safeGetItem(LOCATION_STATS_KEY);
+      let locationStats: Record<string, number> = {};
+      
+      if (statsJson) {
+        try {
           locationStats = JSON.parse(statsJson);
-        }
-        
-        // Gist 등장 횟수 + 로컬 사용자 선택 횟수 합산
-        const mergedLocations = locationsFromGist.map(loc => ({
+        } catch {}
+      }
+      
+      // 통계 합산 및 정렬
+      const mergedLocations = locationsFromGist
+        .map(loc => ({
           ...loc,
-          count: (loc.count || 0) + (locationStats[loc.name] || 0)
-        }));
-        
-        // count 기준 내림차순 정렬 (인기 순)
-        const sortedLocations = mergedLocations.sort((a, b) => b.count - a.count);
-        
-        setAllLocations(sortedLocations);
-        setFilteredLocations(sortedLocations);
-      } else {
-        await loadLocalStats();
+          count: (loc.count || 0) + (locationStats[loc.name] || 0),
+        }))
+        .sort((a, b) => b.count - a.count);
+      
+      if (isMountedRef.current) {
+        setAvailableRegions(regions.sort());
+        setAllLocations(mergedLocations);
       }
     } catch (error) {
+      clearTimeout(timeoutId);
       await loadLocalStats();
     }
-  };
+  }, []);
   
-  const loadLocalStats = async () => {
+  const loadLocalStats = useCallback(async () => {
     try {
-      const statsJson = await AsyncStorage.getItem(LOCATION_STATS_KEY);
-      let locationStats: { [key: string]: number } = {};
+      const statsJson = await safeGetItem(LOCATION_STATS_KEY);
+      let locationStats: Record<string, number> = {};
       
       if (statsJson) {
-        locationStats = JSON.parse(statsJson);
+        try {
+          locationStats = JSON.parse(statsJson);
+        } catch {}
       }
       
-      const locationsWithStats = DEFAULT_LOCATIONS.map(loc => ({
-        ...loc,
-        count: locationStats[loc.name] || 0
-      }));
+      const locationsWithStats = DEFAULT_LOCATIONS
+        .map(loc => ({
+          ...loc,
+          count: locationStats[loc.name] || 0,
+        }))
+        .sort((a, b) => b.count - a.count);
       
-      const sortedLocations = locationsWithStats.sort((a, b) => b.count - a.count);
-      setAllLocations(sortedLocations);
-      setFilteredLocations(sortedLocations);
-    } catch (error) {
+      if (isMountedRef.current) {
+        setAllLocations(locationsWithStats);
+      }
+    } catch {
       // 로컬 통계 로드 실패는 무시
     }
-  };
+  }, []);
 
-  const saveLocationStats = async (locationName: string, count: number) => {
+  const saveLocationStats = useCallback(async (locationName: string, count: number) => {
     try {
-      const statsJson = await AsyncStorage.getItem(LOCATION_STATS_KEY);
-      let locationStats: { [key: string]: number } = {};
+      const statsJson = await safeGetItem(LOCATION_STATS_KEY);
+      let locationStats: Record<string, number> = {};
       
       if (statsJson) {
-        locationStats = JSON.parse(statsJson);
+        try {
+          locationStats = JSON.parse(statsJson);
+        } catch {}
       }
       
       locationStats[locationName] = count;
-      await AsyncStorage.setItem(LOCATION_STATS_KEY, JSON.stringify(locationStats));
-    } catch (error) {
+      await safeSetItem(LOCATION_STATS_KEY, JSON.stringify(locationStats));
+    } catch {
       // 통계 저장 실패는 무시
     }
-  };
+  }, []);
 
-  const handleSelectLocation = (location: { name: string; latitude: number; longitude: number; count?: number }) => {
+  // ==================== 이벤트 핸들러 ====================
+  const handleSelectLocation = useCallback((location: LocationData) => {
     setSelectedLocation(location);
-  };
+  }, []);
 
-  const handleMapLocationSelect = (data: { latitude: number; longitude: number }) => {
-    setSelectedLocation({
-      ...data,
-      name: `위치 (${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)})`,
-    });
-  };
-
-  const handleConfirm = async () => {
+  const handleConfirm = useCallback(async () => {
     if (selectedLocation) {
       // 장소 선택 횟수 증가
       const updatedLocations = allLocations.map(loc => 
@@ -291,9 +256,8 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       );
       
       // count 기준 내림차순 정렬
-      const sortedLocations = updatedLocations.sort((a, b) => b.count - a.count);
+      const sortedLocations = [...updatedLocations].sort((a, b) => b.count - a.count);
       setAllLocations(sortedLocations);
-      setFilteredLocations(sortedLocations);
       
       // 통계 저장
       const location = updatedLocations.find(loc => loc.name === selectedLocation.name);
@@ -306,7 +270,6 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       if (selectedLocation.region) {
         setContextRegion(selectedLocation.region);
       }
-
       
       // 콜백 호출
       if (route?.params?.onLocationSelect) {
@@ -322,19 +285,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       index: 0,
       routes: [{ name: 'MainTabs' }],
     });
-  };
-
-  const handleUseMap = () => {
-    if (NAVER_MAP_CLIENT_ID === 'YOUR_NAVER_CLIENT_ID') {
-      Alert.alert(
-        '네이버 지도 API 설정 필요',
-        'NAVER_MAP_SETUP.md 파일을 참고하여 네이버 지도 API 키를 설정해주세요.\n\n지금은 인기 장소 목록에서 선택할 수 있습니다.',
-        [{ text: '확인' }]
-      );
-    } else {
-      setUseMap(true);
-    }
-  };
+  }, [selectedLocation, allLocations, saveLocationStats, setContextLocation, setContextRegion, route, navigation]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>

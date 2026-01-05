@@ -1,11 +1,10 @@
-import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import React, { useMemo, useCallback } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../types';
-import { getContainerStyle, getResponsivePadding, getResponsiveFontSize } from '../utils/responsive';
 
 interface LegalScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Legal'>;
@@ -142,51 +141,31 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
     }
   }, [type]);
 
+  const goBack = useCallback(() => {
+    navigation.goBack();
+  }, [navigation]);
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
+    <SafeAreaView style={[legalStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 헤더 */}
-      <View style={{ 
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: getResponsivePadding(), 
-        paddingTop: 20,
-        paddingBottom: 20, 
-        backgroundColor: isDark ? '#1e293b' : '#ffffff',
-        borderBottomWidth: 1,
-        borderBottomColor: isDark ? '#334155' : '#e5e7eb',
-      }}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={{ padding: 8 }}
-        >
-          <Text style={{ fontSize: 24, color: isDark ? '#f8fafc' : '#0f172a' }}>‹</Text>
+      <View style={[legalStyles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
+        <TouchableOpacity onPress={goBack} style={legalStyles.backButton}>
+          <Text style={[legalStyles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: getResponsiveFontSize(20), fontWeight: '700', color: isDark ? '#f8fafc' : '#0f172a' }}>
+        <Text style={[legalStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
           {content.title}
         </Text>
-        <View style={{ width: 40 }} />
+        <View style={legalStyles.headerSpacer} />
       </View>
 
       {/* 내용 */}
       <ScrollView 
-        style={{ flex: 1 }} 
-        contentContainerStyle={{
-          ...getContainerStyle(800),
-          padding: getResponsivePadding(),
-          paddingBottom: Math.max(getResponsivePadding(), insets.bottom),
-        }}
+        style={legalStyles.scrollView} 
+        contentContainerStyle={{ padding: 20, paddingBottom: Math.max(20, insets.bottom) }}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={{
-          backgroundColor: isDark ? '#1e293b' : '#f9fafb',
-          borderRadius: 12,
-          padding: getResponsivePadding(),
-        }}>
-          <Text style={{
-            fontSize: 14,
-            lineHeight: 22,
-            color: isDark ? '#e2e8f0' : '#1e293b',
-          }}>
+        <View style={[legalStyles.contentBox, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+          <Text style={[legalStyles.contentText, { color: isDark ? '#e2e8f0' : '#1e293b' }]}>
             {content.text}
           </Text>
         </View>
@@ -194,3 +173,43 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
     </SafeAreaView>
   );
 }
+
+// ==================== 스타일시트 ====================
+const legalStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+  },
+  backButton: {
+    padding: 8,
+  },
+  backButtonText: {
+    fontSize: 24,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  headerSpacer: {
+    width: 40,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  contentBox: {
+    borderRadius: 12,
+    padding: 20,
+  },
+  contentText: {
+    fontSize: 14,
+    lineHeight: 22,
+  },
+});
