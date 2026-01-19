@@ -2,6 +2,55 @@
 
 ## ✅ 완료된 작업
 
+### 0️⃣ **JSON 파싱 보안 강화 (2026-01-17 업데이트)** 🛡️
+
+#### 안전한 JSON 파싱 적용
+모든 `JSON.parse()` 호출에 다음 보안 조치 적용:
+
+1. **크기 제한 검증**: DoS 공격 방지
+   - 일반 데이터: 100KB~500KB 제한
+   - 이벤트 데이터: 5MB 제한
+   
+2. **try-catch 래핑**: 앱 크래시 방지
+   
+3. **타입 검증**: 데이터 무결성 보장
+   - 숫자 필드: `typeof === 'number' && Number.isFinite()`
+   - 배열 필드: `Array.isArray()`
+   - 범위 검증: 최대/최소값 체크
+
+4. **입력 정제(Sanitization)**:
+   - 문자열 길이 제한
+   - HTML 태그 제거
+   - URL 스킴 검증
+
+```typescript
+// ✅ 안전한 JSON 파싱 예시
+const safeJSONParse = <T>(text: string, fallback: T): T => {
+  try {
+    if (!text || typeof text !== 'string') return fallback;
+    if (text.length > MAX_JSON_SIZE) return fallback;
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+};
+```
+
+#### 수정된 파일
+- `src/utils/storage.ts` - 이벤트 데이터 파싱
+- `src/hooks/usePoints.ts` - 포인트 데이터 파싱
+- `src/hooks/useCoupons.ts` - 쿠폰 데이터 파싱
+- `src/services/NotificationService.ts` - 알림 설정 파싱
+- `src/services/PointsMigrationService.ts` - 마이그레이션 데이터 파싱
+- `src/utils/eventColorManager.ts` - 색상 맵 파싱
+
+#### URL 보안 (CalendarScreen.tsx)
+- 허용된 도메인 화이트리스트 검증
+- 외부 링크 사용자 확인 알림
+- 프로토콜 검증 (http/https만 허용)
+
+---
+
 ### 1️⃣ **보안 강화** 🛡️
 
 #### 데이터 암호화

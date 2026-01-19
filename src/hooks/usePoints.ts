@@ -24,6 +24,8 @@ const INITIAL_POINTS = 2500; // 가입 축하 포인트
 const AD_REWARD_POINTS = 50; // 광고 1회 시청 보상
 const MAX_ADS_PER_PERIOD = 10; // 기간당 최대 광고 수
 const AD_RESET_PERIOD_MS = 6 * 60 * 60 * 1000; // 6시간 (밀리초)
+const MAX_POINTS = 1000000; // 최대 포인트 제한 (보안)
+const MAX_HISTORY_SIZE = 1000; // 최대 히스토리 크기
 
 // ==================== 타입 정의 ====================
 interface PointHistory {
@@ -53,26 +55,49 @@ const loadPointsData = async (): Promise<PointsData> => {
   try {
     const data = await safeGetItem(STORAGE_KEYS.POINTS_DATA);
     if (data) {
-      const parsed = JSON.parse(data);
-      if (typeof parsed.balance === 'number' && Array.isArray(parsed.history)) {
-        return parsed;
+      // 보안: 크기 제한 검증
+      if (data.length > 1024 * 100) { // 100KB 제한
+        console.warn('⚠️ 포인트 데이터 크기 초과');
+        return getDefaultPointsData();
+      }
+      
+      let parsed;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        console.warn('⚠️ 포인트 JSON 파싱 실패');
+        return getDefaultPointsData();
+      }
+      
+      // 보안: 타입 및 범위 검증
+      if (typeof parsed.balance === 'number' && 
+          Array.isArray(parsed.history) &&
+          parsed.balance >= 0 && 
+          parsed.balance <= MAX_POINTS &&
+          parsed.history.length <= MAX_HISTORY_SIZE) {
+        return {
+          balance: Math.floor(parsed.balance), // 정수로 변환
+          history: parsed.history.slice(0, 100) // 최대 100개만 로드
+        };
       }
     }
   } catch {
     // 로드 실패 시 기본값
   }
   
-  // 기본값: 초기 포인트
-  return {
-    balance: INITIAL_POINTS,
-    history: [{
-      id: generateId('init'),
-      amount: INITIAL_POINTS,
-      reason: '🎉 가입 축하 포인트',
-      timestamp: Date.now()
-    }]
-  };
+  return getDefaultPointsData();
 };
+
+// 기본 포인트 데이터 생성
+const getDefaultPointsData = (): PointsData => ({
+  balance: INITIAL_POINTS,
+  history: [{
+    id: generateId('init'),
+    amount: INITIAL_POINTS,
+    reason: '🎉 가입 축하 포인트',
+    timestamp: Date.now()
+  }]
+});
 
 const savePointsData = async (data: PointsData): Promise<void> => {
   try {
@@ -86,8 +111,23 @@ const loadAdLimitData = async (): Promise<AdLimitData> => {
   try {
     const data = await safeGetItem(STORAGE_KEYS.AD_LIMIT);
     if (data) {
-      const parsed: AdLimitData = JSON.parse(data);
+      let parsed: AdLimitData;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        console.warn('⚠️ 광고 제한 JSON 파싱 실패');
+        return getDefaultAdLimitData();
+      }
+      
       const now = Date.now();
+      
+      // 보안: 타입 및 범위 검증
+      if (typeof parsed.count !== 'number' || 
+          typeof parsed.resetTimestamp !== 'number' ||
+          parsed.count < 0 || 
+          parsed.count > MAX_ADS_PER_PERIOD * 2) { // 비정상 값 감지
+        return getDefaultAdLimitData();
+      }
       
       // 리셋 시간이 지났으면 초기화
       if (now >= parsed.resetTimestamp) {
@@ -102,11 +142,14 @@ const loadAdLimitData = async (): Promise<AdLimitData> => {
     // 로드 실패 시 기본값
   }
   
-  return {
-    count: 0,
-    resetTimestamp: Date.now() + AD_RESET_PERIOD_MS,
-  };
+  return getDefaultAdLimitData();
 };
+
+// 기본 광고 제한 데이터 생성
+const getDefaultAdLimitData = (): AdLimitData => ({
+  count: 0,
+  resetTimestamp: Date.now() + AD_RESET_PERIOD_MS,
+});
 
 const saveAdLimitData = async (data: AdLimitData): Promise<void> => {
   try {

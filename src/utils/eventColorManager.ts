@@ -36,7 +36,34 @@ class EventColorManager {
     try {
       const saved = await safeGetItem(COLOR_MAP_KEY);
       if (saved) {
-        this.colorMap = JSON.parse(saved);
+        // 보안: 크기 제한 및 안전한 파싱
+        if (saved.length > 500000) { // 500KB 제한
+          console.warn('⚠️ 색상 맵 데이터 크기 초과, 초기화');
+          this.colorMap = {};
+        } else {
+          try {
+            const parsed = JSON.parse(saved);
+            // 보안: 타입 검증
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              // 각 값이 유효한 색상 문자열인지 검증
+              const validMap: { [eventId: string]: string } = {};
+              for (const [key, value] of Object.entries(parsed)) {
+                if (typeof key === 'string' && 
+                    key.length < 200 && 
+                    typeof value === 'string' && 
+                    /^#[0-9a-fA-F]{6}$/.test(value)) {
+                  validMap[key] = value;
+                }
+              }
+              this.colorMap = validMap;
+            } else {
+              this.colorMap = {};
+            }
+          } catch {
+            console.warn('⚠️ 색상 맵 JSON 파싱 실패');
+            this.colorMap = {};
+          }
+        }
       }
       this.isInitialized = true;
     } catch (error) {

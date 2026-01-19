@@ -3,6 +3,9 @@ import { View, Text, TouchableOpacity, ScrollView, Switch, Alert, Platform, Styl
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../hooks/useNotifications';
+import { usePoints } from '../hooks/usePoints';
+import { useCoupons } from '../hooks/useCoupons';
+// import { PointsMigrationService } from '../services/PointsMigrationService'; // 로그인 기능 추가 시 활성화
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 
@@ -25,6 +28,24 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     toggleNewEventAlerts, 
     toggleEventReminders 
   } = useNotifications();
+
+  // 포인트 & 쿠폰 정보
+  const { balance: points } = usePoints();
+  const { availableCoupons } = useCoupons();
+
+  // 마이그레이션 상태 (로그인 기능 추가 시 활성화)
+  // const [migrationStatus, setMigrationStatus] = useState<{
+  //   isMigrated: boolean;
+  //   hasData: boolean;
+  // }>({ isMigrated: false, hasData: false });
+  //
+  // useEffect(() => {
+  //   const checkMigration = async () => {
+  //     const status = await PointsMigrationService.previewMigrationData();
+  //     setMigrationStatus({ isMigrated: status.isMigrated, hasData: status.hasData });
+  //   };
+  //   checkMigration();
+  // }, []);
 
   // 알림 토글 핸들러
   const handleNotificationToggle = useCallback(async (value: boolean) => {
@@ -255,8 +276,11 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
         {/* 포인트 & 쿠폰 */}
         {/* <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <TouchableOpacity onPress={navigateToCoupon}>
-            <View>
+          <TouchableOpacity 
+            onPress={navigateToCoupon}
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <View style={{ flex: 1 }}>
               <Text style={{
                 fontSize: 18,
                 fontWeight: '700',
@@ -269,17 +293,10 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 fontSize: 14,
                 color: isDark ? '#94a3b8' : '#64748b',
               }}>
-                50,000P 모아 무료 쿠폰 받기
+                {points.toLocaleString()}P · 쿠폰 {availableCoupons.length}장
               </Text>
             </View>
-            <View style={{
-              position: 'absolute',
-              right: 0,
-              top: '50%',
-              transform: [{ translateY: -12 }],
-            }}>
-              <Text style={{ fontSize: 24, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
-            </View>
+            <Text style={{ fontSize: 24, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
           </TouchableOpacity>
         </View> */}
 

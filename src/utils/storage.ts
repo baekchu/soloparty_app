@@ -2,18 +2,40 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventsByDate, Event } from '../types';
 import { safeGetItem, safeSetItem, safeRemoveItem, safeMultiGet, safeMultiSet } from './asyncStorageManager';
 
-// GitHub Gist Raw URL
+// GitHub Gist Raw URL (환경변수 사용 권장)
+// TODO: 프로덕션에서는 환경변수나 안전한 설정으로 이동
 const GIST_RAW_URL = 'https://gist.githubusercontent.com/baekchu/f805cac22604ff764916280710db490e/raw/gistfile1.txt';
 
 const CACHE_KEY = '@events_cache';
 const CACHE_TIMESTAMP_KEY = '@events_cache_timestamp';
 const CACHE_DURATION = 180000; // 3분 캐시 (성능 최적화)
 const FETCH_TIMEOUT = 10000; // 10초 타임아웃
+const MAX_JSON_SIZE = 5 * 1024 * 1024; // 5MB 최대 JSON 크기 (DoS 방지)
 
-// ==================== 간소화된 JSON 처리 ====================
+// ==================== 보안 강화 JSON 처리 ====================
+
+/**
+ * 안전한 JSON 파싱 (보안 강화)
+ * - 크기 제한으로 DoS 공격 방지
+ * - 에러 처리로 앱 크래시 방지
+ */
+const safeJSONParse = <T>(text: string, fallback: T): T => {
+  try {
+    if (!text || typeof text !== 'string') return fallback;
+    if (text.length > MAX_JSON_SIZE) {
+      console.warn('⚠️ JSON 크기 초과, 파싱 거부');
+      return fallback;
+    }
+    return JSON.parse(text) as T;
+  } catch (error) {
+    console.warn('⚠️ JSON 파싱 실패:', error);
+    return fallback;
+  }
+};
 
 // 간단한 JSON 정제 (필수 작업만)
 const cleanJSON = (text: string): string => {
+  if (!text || typeof text !== 'string') return '{}';
   return text
     .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // 제어 문자 제거
     .replace(/,\s*([}\]])/g, '$1') // 후행 콤마 제거
@@ -39,12 +61,18 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     
     const text = await response.text();
     
-    // 2단계 파싱만 (간소화)
-    try {
-      return JSON.parse(text);
-    } catch {
-      return JSON.parse(cleanJSON(text));
+    // 보안: 응답 크기 검증
+    if (text.length > MAX_JSON_SIZE) {
+      throw new Error('Response too large');
     }
+    
+    // 2단계 파싱만 (간소화) - 안전한 파싱 사용
+    const parsed = safeJSONParse<EventsByDate>(text, {});
+    if (Object.keys(parsed).length > 0) {
+      return parsed;
+    }
+    // 정제 후 재시도
+    return safeJSONParse<EventsByDate>(cleanJSON(text), {});
   } catch (error: any) {
     clearTimeout(timeoutId);
     throw error;
@@ -114,10 +142,13 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
     
     if (!cached || !timestamp) return null;
     
-    const age = Date.now() - parseInt(timestamp, 10);
+    const timestampNum = parseInt(timestamp, 10);
+    if (isNaN(timestampNum)) return null;
+    
+    const age = Date.now() - timestampNum;
     if (age < 0 || age >= CACHE_DURATION) return null;
     
-    const events = JSON.parse(cached);
+    const events = safeJSONParse<EventsByDate>(cached, {});
     return validateEvents(events) ? events : null;
   } catch {
     return null;

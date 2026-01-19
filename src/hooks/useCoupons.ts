@@ -88,34 +88,64 @@ const loadCouponsData = async (): Promise<CouponsData> => {
   try {
     const data = await safeGetItem(STORAGE_KEY);
     if (data) {
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed.coupons) && Array.isArray(parsed.history)) {
-        // 만료된 쿠폰 자동 처리
-        const now = Date.now();
-        const updatedCoupons = parsed.coupons.map((coupon: Coupon) => {
+      // 보안: 크기 제한
+      if (data.length > 500000) { // 500KB 제한
+        console.warn('⚠️ 쿠폰 데이터 크기 초과, 초기화');
+        return getDefaultCouponsData();
+      }
+      
+      let parsed;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        console.warn('⚠️ 쿠폰 JSON 파싱 실패');
+        return getDefaultCouponsData();
+      }
+      
+      // 보안: 타입 검증
+      if (!Array.isArray(parsed.coupons) || !Array.isArray(parsed.history)) {
+        return getDefaultCouponsData();
+      }
+      
+      // 보안: 쿠폰 수 제한 검증
+      if (parsed.coupons.length > MAX_COUPONS * 2 || parsed.history.length > MAX_HISTORY * 2) {
+        console.warn('⚠️ 비정상적인 쿠폰/히스토리 수');
+        return getDefaultCouponsData();
+      }
+      
+      // 만료된 쿠폰 자동 처리 및 데이터 정제
+      const now = Date.now();
+      const updatedCoupons = parsed.coupons
+        .filter((coupon: any) => coupon && typeof coupon === 'object')
+        .slice(0, MAX_COUPONS)
+        .map((coupon: Coupon) => {
           if (!coupon.isUsed && coupon.expiresAt < now) {
             return { ...coupon, isUsed: true }; // 만료 처리
           }
           return coupon;
         });
-        
-        return {
-          ...parsed,
-          coupons: updatedCoupons,
-        };
-      }
+      
+      return {
+        coupons: updatedCoupons,
+        history: parsed.history.slice(0, MAX_HISTORY),
+        totalExchanged: typeof parsed.totalExchanged === 'number' ? Math.max(0, parsed.totalExchanged) : 0,
+        totalUsed: typeof parsed.totalUsed === 'number' ? Math.max(0, parsed.totalUsed) : 0,
+      };
     }
   } catch {
     // 로드 실패 시 기본값
   }
   
-  return {
-    coupons: [],
-    history: [],
-    totalExchanged: 0,
-    totalUsed: 0,
-  };
+  return getDefaultCouponsData();
 };
+
+// 기본 쿠폰 데이터 생성
+const getDefaultCouponsData = (): CouponsData => ({
+  coupons: [],
+  history: [],
+  totalExchanged: 0,
+  totalUsed: 0,
+});
 
 const saveCouponsData = async (data: CouponsData): Promise<boolean> => {
   try {

@@ -118,7 +118,14 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       
       const text = await response.text();
       
-      // JSON 파싱 (제어 문자 제거)
+      // 보안: 응답 크기 제한 (5MB)
+      if (text.length > 5 * 1024 * 1024) {
+        console.warn('⚠️ 응답 크기 초과');
+        await loadLocalStats();
+        return;
+      }
+      
+      // JSON 파싱 (제어 문자 제거) - 안전한 파싱
       let data;
       try {
         const cleanText = text
@@ -127,7 +134,15 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           .replace(/[\n\r\t]/g, ' ')
           .replace(/\s+/g, ' ');
         data = JSON.parse(cleanText);
-      } catch {
+      } catch (parseError) {
+        console.warn('⚠️ JSON 파싱 실패:', parseError);
+        await loadLocalStats();
+        return;
+      }
+      
+      // 보안: 데이터 타입 검증
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        console.warn('⚠️ 유효하지 않은 데이터 형식');
         await loadLocalStats();
         return;
       }
@@ -203,9 +218,25 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       let locationStats: Record<string, number> = {};
       
       if (statsJson) {
-        try {
-          locationStats = JSON.parse(statsJson);
-        } catch {}
+        // 보안: 크기 제한
+        if (statsJson.length > 100000) {
+          console.warn('⚠️ 위치 통계 크기 초과');
+        } else {
+          try {
+            const parsed = JSON.parse(statsJson);
+            // 보안: 타입 검증
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              // 각 값이 숫자인지 검증
+              for (const [key, value] of Object.entries(parsed)) {
+                if (typeof key === 'string' && key.length < 200 && typeof value === 'number' && value >= 0) {
+                  locationStats[key] = value;
+                }
+              }
+            }
+          } catch {
+            console.warn('⚠️ 위치 통계 JSON 파싱 실패');
+          }
+        }
       }
       
       const locationsWithStats = DEFAULT_LOCATIONS
@@ -224,14 +255,34 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   }, []);
 
   const saveLocationStats = useCallback(async (locationName: string, count: number) => {
+    // 보안: 입력 검증
+    if (!locationName || typeof locationName !== 'string' || locationName.length > 200) {
+      return;
+    }
+    if (typeof count !== 'number' || count < 0 || !Number.isFinite(count)) {
+      return;
+    }
+    
     try {
       const statsJson = await safeGetItem(LOCATION_STATS_KEY);
       let locationStats: Record<string, number> = {};
       
-      if (statsJson) {
+      if (statsJson && statsJson.length < 100000) {
         try {
-          locationStats = JSON.parse(statsJson);
-        } catch {}
+          const parsed = JSON.parse(statsJson);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            locationStats = parsed;
+          }
+        } catch {
+          // 파싱 실패 시 빈 객체 사용
+        }
+      }
+      
+      // 보안: 최대 항목 수 제한
+      if (Object.keys(locationStats).length >= 500) {
+        // 가장 오래된/적은 항목 제거
+        const entries = Object.entries(locationStats).sort((a, b) => a[1] - b[1]);
+        locationStats = Object.fromEntries(entries.slice(-400));
       }
       
       locationStats[locationName] = count;

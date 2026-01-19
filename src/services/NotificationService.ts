@@ -100,7 +100,31 @@ export const getNotificationSettings = async (): Promise<NotificationSettings> =
   try {
     const settings = await AsyncStorage.getItem(NOTIFICATION_SETTINGS_KEY);
     if (settings) {
-      return JSON.parse(settings);
+      // 보안: 크기 제한
+      if (settings.length > 10000) {
+        console.warn('⚠️ 알림 설정 데이터 크기 초과');
+        return DEFAULT_SETTINGS;
+      }
+      
+      let parsed;
+      try {
+        parsed = JSON.parse(settings);
+      } catch {
+        console.warn('⚠️ 알림 설정 JSON 파싱 실패');
+        return DEFAULT_SETTINGS;
+      }
+      
+      // 보안: 타입 검증
+      if (typeof parsed.enabled === 'boolean' &&
+          typeof parsed.newEventAlerts === 'boolean' &&
+          typeof parsed.eventReminders === 'boolean') {
+        return {
+          enabled: parsed.enabled,
+          newEventAlerts: parsed.newEventAlerts,
+          eventReminders: parsed.eventReminders,
+        };
+      }
+      return DEFAULT_SETTINGS;
     }
     return DEFAULT_SETTINGS;
   } catch (error) {
