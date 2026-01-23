@@ -23,7 +23,8 @@
             "ITSAppUsesNonExemptEncryption": false,
             "NSPhotoLibraryUsageDescription": "이 앱은 사진 라이브러리에 접근하지 않습니다. 이 권한 요청은 사용된 SDK의 기술적 요구사항입니다.",
             "NSUserNotificationsUsageDescription": "새로운 파티 등록 및 매칭 알림을 받기 위해 알림 권한이 필요합니다."
-}
+      },
+      "associatedDomains": ["applinks:soloparty.app"]
     },
     "android": {
       "adaptiveIcon": {
@@ -45,8 +46,26 @@
         "visible": "leanback",
         "barStyle": "light-content",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "soloparty.app",
+              "pathPrefix": "/event"
+            },
+            {
+              "scheme": "soloparty"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
+    "scheme": "soloparty",
     "jsEngine": "hermes",
     "web": {
       "favicon": "./assets/favicon.png",

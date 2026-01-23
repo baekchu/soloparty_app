@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from "react";
-import { NavigationContainer } from "@react-navigation/native";
+import React, { useState, useEffect, useRef } from "react";
+import { NavigationContainer, NavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { View, Text } from "react-native";
+import { View, Text, Linking } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { RootStackParamList } from "./src/types";
+import { RootStackParamList, Event } from "./src/types";
 
 // Screens
 import CalendarScreen from "./src/screens/CalendarScreen";
@@ -13,6 +13,7 @@ import SettingsScreen from "./src/screens/SettingsScreen";
 import LocationPickerScreen from "./src/screens/LocationPickerScreen";
 import LegalScreen from "./src/screens/LegalScreen";
 import CouponScreen from "./src/screens/CouponScreen";
+import EventDetailScreen from "./src/screens/EventDetailScreen";
 import SplashScreen from "./src/screens/SplashScreen";
 
 // Components
@@ -51,6 +52,7 @@ function AppNavigator() {
         <Stack.Screen name="LocationPicker" component={LocationPickerScreen} options={{ presentation: "modal" }} />
         <Stack.Screen name="Legal" component={LegalScreen} options={{ presentation: "modal" }} />
         <Stack.Screen name="Coupon" component={CouponScreen} options={{ presentation: "modal" }} />
+        <Stack.Screen name="EventDetail" component={EventDetailScreen} options={{ presentation: "card" }} />
       </Stack.Navigator>
     </>
   );
@@ -59,6 +61,20 @@ function AppNavigator() {
 function AppContent() {
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
+  const [pendingDeepLink, setPendingDeepLink] = useState<{ eventId: string; date: string } | null>(null);
+
+  // 딥링크 처리 함수
+  const handleDeepLink = (url: string | null) => {
+    if (!url) return;
+    
+    // soloparty://event/이벤트ID?date=2026-01-24 형식 파싱
+    const match = url.match(/soloparty:\/\/event\/([^?]+)\?date=([^&]+)/);
+    if (match) {
+      const [, eventId, date] = match;
+      setPendingDeepLink({ eventId, date });
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -67,6 +83,10 @@ function AppContent() {
     const initApp = async () => {
       try {
         await initAsyncStorage();
+        
+        // 딥링크 체크 (앱이 꺼져있다가 열릴 때)
+        const initialUrl = await Linking.getInitialURL();
+        handleDeepLink(initialUrl);
         
         // 1초 추가 대기 (스플래시 화면 표시)
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -84,11 +104,37 @@ function AppContent() {
     };
     
     initApp();
+    
+    // 딥링크 리스너 (앱이 실행 중일 때)
+    const linkSubscription = Linking.addEventListener('url', ({ url }) => {
+      handleDeepLink(url);
+    });
 
     return () => {
       mounted = false;
+      linkSubscription.remove();
     };
   }, []);
+  
+  // 딥링크로 이벤트 페이지 이동
+  useEffect(() => {
+    if (isReady && pendingDeepLink && navigationRef.current) {
+      // 딥링크에서 받은 이벤트 정보로 이동
+      // 실제로는 Gist에서 해당 이벤트를 찾아야 하지만, 
+      // 여기서는 기본 정보로 이동
+      const mockEvent: Event = {
+        id: pendingDeepLink.eventId,
+        title: '파티 정보 로딩 중...',
+      };
+      
+      navigationRef.current.navigate('EventDetail', {
+        event: mockEvent,
+        date: pendingDeepLink.date,
+      });
+      
+      setPendingDeepLink(null);
+    }
+  }, [isReady, pendingDeepLink]);
 
   if (error) {
     return <ErrorScreen message={error} />;
@@ -99,7 +145,7 @@ function AppContent() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <AppNavigator />
     </NavigationContainer>
   );

@@ -1653,31 +1653,29 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                             >
                               {item.event.time || "시간 미정"}
                             </Text>
-                            {item.event.link && (
-                              <TouchableOpacity
-                                onPress={() =>
-                                  openInstagramLink(item.event.link)
-                                }
+                            <TouchableOpacity
+                              onPress={() =>
+                                navigation.navigate('EventDetail', { event: item.event, date: item.date })
+                              }
+                              style={{
+                                marginTop: 10,
+                                paddingVertical: 6,
+                                paddingHorizontal: 12,
+                                backgroundColor: "rgba(255, 255, 255, 0.2)",
+                                borderRadius: 8,
+                                alignSelf: "flex-start",
+                              }}
+                            >
+                              <Text
                                 style={{
-                                  marginTop: 10,
-                                  paddingVertical: 6,
-                                  paddingHorizontal: 12,
-                                  backgroundColor: "rgba(255, 255, 255, 0.2)",
-                                  borderRadius: 8,
-                                  alignSelf: "flex-start",
+                                  color: "#ffffff",
+                                  fontSize: 12,
+                                  fontWeight: "600",
                                 }}
                               >
-                                <Text
-                                  style={{
-                                    color: "#ffffff",
-                                    fontSize: 12,
-                                    fontWeight: "600",
-                                  }}
-                                >
-                                  자세히 보기
-                                </Text>
-                              </TouchableOpacity>
-                            )}
+                                자세히 보기
+                              </Text>
+                            </TouchableOpacity>
                           </View>
                         ))}
                       </View>
@@ -1738,51 +1736,29 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                       {event.time || "시간 미정"}
                     </Text>
 
-                    {event.link ? (
-                      <TouchableOpacity
-                        onPress={() => openInstagramLink(event.link)}
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate('EventDetail', { event, date })}
+                      style={{
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
+                        backgroundColor: "rgba(255, 255, 255, 0.25)",
+                        borderRadius: 10,
+                        alignSelf: "flex-start",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <Text
                         style={{
-                          paddingVertical: 8,
-                          paddingHorizontal: 14,
-                          backgroundColor: "rgba(255, 255, 255, 0.25)",
-                          borderRadius: 10,
-                          alignSelf: "flex-start",
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 6,
+                          color: "#ffffff",
+                          fontSize: 13,
+                          fontWeight: "700",
                         }}
                       >
-                        <Text
-                          style={{
-                            color: "#ffffff",
-                            fontSize: 13,
-                            fontWeight: "700",
-                          }}
-                        >
-                          자세히 보기
-                        </Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <View
-                        style={{
-                          paddingVertical: 8,
-                          paddingHorizontal: 14,
-                          backgroundColor: "rgba(255, 255, 255, 0.1)",
-                          borderRadius: 10,
-                          alignSelf: "flex-start",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: "rgba(255, 255, 255, 0.6)",
-                            fontSize: 12,
-                            fontWeight: "600",
-                          }}
-                        >
-                          링크 없음
-                        </Text>
-                      </View>
-                    )}
+                        자세히 보기
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 ));
               }
