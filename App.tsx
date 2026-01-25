@@ -64,20 +64,28 @@ function AppContent() {
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
   const [pendingDeepLink, setPendingDeepLink] = useState<{ eventId: string; date: string } | null>(null);
 
-  // 딥링크 처리 함수
-  const handleDeepLink = (url: string | null) => {
+  // 딥링크 처리 함수 (useCallback으로 최적화)
+  const handleDeepLink = React.useCallback((url: string | null) => {
     if (!url) return;
     
-    // soloparty://event/이벤트ID?date=2026-01-24 형식 파싱
-    const match = url.match(/soloparty:\/\/event\/([^?]+)\?date=([^&]+)/);
-    if (match) {
-      const [, eventId, date] = match;
-      setPendingDeepLink({ eventId, date });
+    try {
+      // soloparty://event/이벤트ID?date=2026-01-24 형식 파싱
+      const match = url.match(/soloparty:\/\/event\/([^?]+)\?date=([^&]+)/);
+      if (match) {
+        const [, eventId, date] = match;
+        // 날짜 유효성 검증
+        if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          setPendingDeepLink({ eventId, date });
+        }
+      }
+    } catch (err) {
+      console.warn('딥링크 파싱 실패:', err);
     }
-  };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
+    let timeoutId: NodeJS.Timeout | null = null;
     
     // AsyncStorage 초기화 후 앱 시작
     const initApp = async () => {
@@ -89,7 +97,9 @@ function AppContent() {
         handleDeepLink(initialUrl);
         
         // 1초 추가 대기 (스플래시 화면 표시)
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => {
+          timeoutId = setTimeout(resolve, 1000);
+        });
         
         if (mounted) {
           setIsReady(true);
@@ -112,28 +122,33 @@ function AppContent() {
 
     return () => {
       mounted = false;
+      if (timeoutId) clearTimeout(timeoutId);
       linkSubscription.remove();
     };
-  }, []);
+  }, [handleDeepLink]);
   
-  // 딥링크로 이벤트 페이지 이동
+  // 딥링크로 이벤트 페이지 이동 (최적화)
   useEffect(() => {
-    if (isReady && pendingDeepLink && navigationRef.current) {
-      // 딥링크에서 받은 이벤트 정보로 이동
-      // 실제로는 Gist에서 해당 이벤트를 찾아야 하지만, 
-      // 여기서는 기본 정보로 이동
-      const mockEvent: Event = {
-        id: pendingDeepLink.eventId,
-        title: '파티 정보 로딩 중...',
-      };
-      
-      navigationRef.current.navigate('EventDetail', {
-        event: mockEvent,
-        date: pendingDeepLink.date,
-      });
-      
-      setPendingDeepLink(null);
-    }
+    if (!isReady || !pendingDeepLink || !navigationRef.current) return;
+    
+    // 짧은 지연 후 네비게이션 (UI 안정화)
+    const timeoutId = setTimeout(() => {
+      if (navigationRef.current) {
+        const mockEvent: Event = {
+          id: pendingDeepLink.eventId,
+          title: '파티 정보 로딩 중...',
+        };
+        
+        navigationRef.current.navigate('EventDetail', {
+          event: mockEvent,
+          date: pendingDeepLink.date,
+        });
+        
+        setPendingDeepLink(null);
+      }
+    }, 100);
+    
+    return () => clearTimeout(timeoutId);
   }, [isReady, pendingDeepLink]);
 
   if (error) {

@@ -54,9 +54,9 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
     setAllEvents(eventList);
   }, []);
 
+  const isDark = useMemo(() => theme === 'dark', [theme]);
+
   const renderEvent = useCallback(({ item }: { item: EventWithDate }) => {
-    const isDark = theme === 'dark';
-    
     return (
       <View 
         style={{
@@ -101,9 +101,7 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
         </View>
       </View>
     );
-  }, [theme]);
-
-  const isDark = useMemo(() => theme === 'dark', [theme]);
+  }, [isDark]);
 
   return (
     <View style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>

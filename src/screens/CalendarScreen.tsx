@@ -405,24 +405,55 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       onPanResponderMove: (_, gestureState) => {
         // 드래그 시작점에서 이동한 거리만큼 패널 높이 조정
         const newValue = panelStartHeight.current - gestureState.dy;
-        if (newValue >= 100 && newValue <= screenHeight - 100) {
+        const minHeight = 100;
+        const maxHeight = screenHeight - 100;
+        
+        if (newValue >= minHeight && newValue <= maxHeight) {
           panelHeight.setValue(newValue);
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy < -50) {
+        const threshold = 50;
+        
+        if (gestureState.dy < -threshold) {
           // 위로 스와이프 - 패널 확장
-          expandPanel();
-        } else if (gestureState.dy > 50) {
+          setIsPanelExpanded(true);
+          Animated.spring(panelHeight, {
+            toValue: screenHeight - 100,
+            useNativeDriver: false,
+            tension: 50,
+            friction: 8,
+          }).start();
+        } else if (gestureState.dy > threshold) {
           // 아래로 스와이프 - 패널 축소
-          collapsePanel();
+          setIsPanelExpanded(false);
+          Animated.spring(panelHeight, {
+            toValue: 100,
+            useNativeDriver: false,
+            tension: 50,
+            friction: 8,
+          }).start();
         } else {
           // 현재 위치에 따라 결정
           const currentValue = (panelHeight as any)._value;
-          if (currentValue > (100 + screenHeight - 100) / 2) {
-            expandPanel();
+          const midPoint = (100 + screenHeight - 100) / 2;
+          
+          if (currentValue > midPoint) {
+            setIsPanelExpanded(true);
+            Animated.spring(panelHeight, {
+              toValue: screenHeight - 100,
+              useNativeDriver: false,
+              tension: 50,
+              friction: 8,
+            }).start();
           } else {
-            collapsePanel();
+            setIsPanelExpanded(false);
+            Animated.spring(panelHeight, {
+              toValue: 100,
+              useNativeDriver: false,
+              tension: 50,
+              friction: 8,
+            }).start();
           }
         }
       },
@@ -453,23 +484,54 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 50) {
-          // 50px 이상 아래로 드래그하면 패널 닫힘
-          collapsePanel();
-        } else {
-          // 원래 위치로 복구
+        const threshold = 50;
+        
+        if (gestureState.dy < -threshold) {
+          // 위로 스와이프 - 패널 확장
+          setIsPanelExpanded(true);
           Animated.spring(panelHeight, {
-            toValue: panelStartHeight.current,
+            toValue: screenHeight - 100,
             useNativeDriver: false,
             tension: 50,
             friction: 8,
           }).start();
+        } else if (gestureState.dy > threshold) {
+          // 아래로 스와이프 - 패널 축소
+          setIsPanelExpanded(false);
+          Animated.spring(panelHeight, {
+            toValue: 100,
+            useNativeDriver: false,
+            tension: 50,
+            friction: 8,
+          }).start();
+        } else {
+          // 현재 위치에 따라 결정
+          const currentValue = (panelHeight as any)._value;
+          const midPoint = (100 + screenHeight - 100) / 2;
+          
+          if (currentValue > midPoint) {
+            setIsPanelExpanded(true);
+            Animated.spring(panelHeight, {
+              toValue: screenHeight - 100,
+              useNativeDriver: false,
+              tension: 50,
+              friction: 8,
+            }).start();
+          } else {
+            setIsPanelExpanded(false);
+            Animated.spring(panelHeight, {
+              toValue: 100,
+              useNativeDriver: false,
+              tension: 50,
+              friction: 8,
+            }).start();
+          }
         }
       },
     })
   ).current;
 
-  const expandPanel = () => {
+  const expandPanel = useCallback(() => {
     setIsPanelExpanded(true);
     Animated.spring(panelHeight, {
       toValue: screenHeight - 100,
@@ -477,9 +539,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       tension: 50,
       friction: 8,
     }).start();
-  };
+  }, [panelHeight, screenHeight]);
 
-  const collapsePanel = () => {
+  const collapsePanel = useCallback(() => {
     setIsPanelExpanded(false);
     Animated.spring(panelHeight, {
       toValue: 100,
@@ -487,7 +549,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       tension: 50,
       friction: 8,
     }).start();
-  };
+  }, [panelHeight]);
 
   // ==================== 월 변경 시 자동 스크롤 ====================
   useEffect(() => {
@@ -516,7 +578,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }
   }, [currentMonth, currentYear]);
 
-  const getVisibleMonths = () => {
+  const getVisibleMonths = useCallback(() => {
     const isLargeScreen = screenWidth >= 600;
     const monthCount = isLargeScreen ? 5 : 3;
     const sideCount = Math.floor((monthCount - 1) / 2);
@@ -529,7 +591,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       months.push(month);
     }
     return months;
-  };
+  }, [currentMonth, screenWidth]);
 
   const getUpcomingEvents = useCallback(() => {
     // 필터링 함수

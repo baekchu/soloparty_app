@@ -23,12 +23,16 @@ const safeJSONParse = <T>(text: string, fallback: T): T => {
   try {
     if (!text || typeof text !== 'string') return fallback;
     if (text.length > MAX_JSON_SIZE) {
-      console.warn('⚠️ JSON 크기 초과, 파싱 거부');
+      console.warn('⚠️ JSON 크기 초과 (최대 5MB), 파싱 거부');
       return fallback;
     }
+    
+    // 빈 문자열이나 공백만 있는 경우
+    if (text.trim().length === 0) return fallback;
+    
     return JSON.parse(text) as T;
   } catch (error) {
-    console.warn('⚠️ JSON 파싱 실패:', error);
+    console.warn('⚠️ JSON 파싱 실패:', error instanceof Error ? error.message : 'Unknown error');
     return fallback;
   }
 };
@@ -42,7 +46,7 @@ const cleanJSON = (text: string): string => {
     .trim();
 };
 
-// 최적화된 fetch
+// 최적화된 fetch (에러 처리 개선)
 const fetchData = async (url: string): Promise<EventsByDate> => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
@@ -53,16 +57,15 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
       headers: { 'Cache-Control': 'no-cache' }
     });
     
-    clearTimeout(timeoutId);
-    
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     
     const text = await response.text();
     
     // 보안: 응답 크기 검증
     if (text.length > MAX_JSON_SIZE) {
+      console.warn('⚠️ 응답 크기 초과 (최대 5MB)');
       throw new Error('Response too large');
     }
     
@@ -74,6 +77,11 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     // 정제 후 재시도
     return safeJSONParse<EventsByDate>(cleanJSON(text), {});
   } catch (error: any) {
+    if (error.name === 'AbortError') {
+      console.warn('⚠️ 네트워크 타임아웃 (10초 초과)');
+    } else {
+      console.warn('⚠️ 네트워크 오류:', error.message || 'Unknown error');
+    }
     clearTimeout(timeoutId);
     throw error;
   }
@@ -101,6 +109,26 @@ const validateEvents = (data: any): data is EventsByDate => {
 
 // ==================== 데이터 정제 (간소화) ====================
 
+// 지역명 정규화 ("서울시" → "서울", "남양주시" → "남양주" 등)
+const normalizeRegion = (region: string | undefined): string | undefined => {
+  if (!region) return undefined;
+  
+  let normalized = region.trim();
+  
+  // 순서 중요: 긴 패턴부터 먼저 제거
+  // "특별시", "광역시" 제거 (예: 부산광역시 → 부산, 서울특별시 → 서울)
+  normalized = normalized.replace(/(특별|광역)시$/, '');
+  
+  // "시" 접미사 제거 (예: 남양주시 → 남양주, 천안시 → 천안)
+  normalized = normalized.replace(/시$/, '');
+  
+  // "도" 접미사 제거 (예: 경기도 → 경기)
+  normalized = normalized.replace(/도$/, '');
+  
+  return normalized.trim() || undefined;
+};
+
+
 const sanitizeEvent = (event: Event): Event => {
   const cleanString = (str: string | undefined, maxLen: number = 200): string | undefined => {
     if (!str) return undefined;
@@ -121,8 +149,8 @@ const sanitizeEvent = (event: Event): Event => {
     title: cleanString(event.title, 100) || '',
     time: cleanString(event.time, 50),
     description: cleanString(event.description, 200),
-    location: cleanString(event.location, 100),
-    region: cleanString(event.region, 50),
+    location: cleanString(event.location, 100), // 원본 주소 유지 (지도용)
+    region: normalizeRegion(cleanString(event.region, 50)), // 지역명 정규화 적용
     link: cleanUrl(event.link),
     coordinates: event.coordinates,
   };
@@ -133,6 +161,7 @@ const sanitizeEvent = (event: Event): Event => {
 // AsyncStorage 초기화는 asyncStorageManager에서 처리
 
 const loadFromCache = async (): Promise<EventsByDate | null> => {
+  // 캠시 비활성화 시 바로 반환
   if (CACHE_DURATION <= 0) return null;
   
   try {
@@ -143,31 +172,53 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
     if (!cached || !timestamp) return null;
     
     const timestampNum = parseInt(timestamp, 10);
-    if (isNaN(timestampNum)) return null;
+    if (isNaN(timestampNum) || timestampNum <= 0) return null;
     
     const age = Date.now() - timestampNum;
-    if (age < 0 || age >= CACHE_DURATION) return null;
+    // 음수나 만료된 캠시 거부
+    if (age < 0 || age >= CACHE_DURATION) {
+      console.log('⌛ 캠시 만료 (${Math.round(age / 1000)}초 경과)');
+      return null;
+    }
     
     const events = safeJSONParse<EventsByDate>(cached, {});
-    return validateEvents(events) ? events : null;
-  } catch {
+    if (!validateEvents(events)) {
+      console.warn('⚠️ 캠시 데이터 검증 실패');
+      return null;
+    }
+    
+    return events;
+  } catch (error) {
+    console.warn('⚠️ 캠시 로드 실패:', error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 };
 
 const saveToCache = async (events: EventsByDate): Promise<void> => {
   try {
-    if (!events || typeof events !== 'object') return;
+    if (!events || typeof events !== 'object' || Object.keys(events).length === 0) {
+      console.warn('⚠️ 빈 데이터는 캠시하지 않음');
+      return;
+    }
     
     const jsonString = JSON.stringify(events);
-    if (jsonString.length > 1024 * 1024) return; // 1MB 초과 방지
+    const sizeInBytes = new Blob([jsonString]).size;
+    
+    // 1MB 초과 방지
+    if (sizeInBytes > 1024 * 1024) {
+      console.warn(`⚠️ 캠시 데이터 크기 초과 (${Math.round(sizeInBytes / 1024)}KB), 저장 스킨`);
+      return;
+    }
     
     await safeMultiSet([
       [CACHE_KEY, jsonString],
       [CACHE_TIMESTAMP_KEY, Date.now().toString()]
     ]);
-  } catch {
-    // 캐시 저장 실패는 무시
+    
+    console.log(`✅ 캠시 저장 완료 (${Math.round(sizeInBytes / 1024)}KB, ${Object.keys(events).length}일)`);
+  } catch (error) {
+    // 캠시 저장 실패는 치명적이지 않음
+    console.warn('⚠️ 캠시 저장 실패:', error instanceof Error ? error.message : 'Unknown error');
   }
 };
 

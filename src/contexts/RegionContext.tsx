@@ -42,7 +42,6 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
         }
       } catch (error) {
         // 필터 로드 실패는 무시 (기본값 사용)
-        console.log('필터 로드 실패 (무시)');
       }
     };
     

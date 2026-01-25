@@ -120,36 +120,37 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 (${days[d.getDay()]})`;
   }, [date]);
   
-  // 정원 정보
-  const maleCapacity = event.maleCapacity ?? 10;
-  const femaleCapacity = event.femaleCapacity ?? 10;
+  // 정원 정보 (memoized)
+  const capacityInfo = useMemo(() => ({
+    male: event.maleCapacity ?? 10,
+    female: event.femaleCapacity ?? 10
+  }), [event.maleCapacity, event.femaleCapacity]);
   
-  // 안전한 URL 생성
-  const getSafeUrl = useCallback((url: string): string | null => {
-    if (!isValidUrl(url)) return null;
-    const trimmed = url.trim();
+  // 안전한 URL 생성 (memoized)
+  const safeLink = useMemo(() => {
+    if (!event.link || !isValidUrl(event.link)) return null;
+    const trimmed = event.link.trim();
     return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
-  }, []);
+  }, [event.link]);
   
   // 링크 열기 (보안 강화)
   const handleOpenLink = useCallback(async () => {
-    const safeUrl = getSafeUrl(event.link || '');
-    if (!safeUrl) {
+    if (!safeLink) {
       Alert.alert('알림', '유효하지 않은 링크입니다.');
       return;
     }
     
     try {
-      const canOpen = await Linking.canOpenURL(safeUrl);
+      const canOpen = await Linking.canOpenURL(safeLink);
       if (canOpen) {
-        await Linking.openURL(safeUrl);
+        await Linking.openURL(safeLink);
       } else {
         Alert.alert('알림', '링크를 열 수 없습니다.');
       }
     } catch {
       Alert.alert('알림', '링크를 열 수 없습니다.');
     }
-  }, [event.link, getSafeUrl]);
+  }, [safeLink]);
   
   // 지도 앱 열기
   const handleOpenMap = useCallback(async () => {
@@ -182,7 +183,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   
   // 참가 신청
   const handleJoin = useCallback(() => {
-    if (!event.link || !isValidUrl(event.link)) {
+    if (!safeLink) {
       Alert.alert('알림', '참가 신청 링크가 없습니다.\n주최자에게 문의해주세요.');
       return;
     }
@@ -190,7 +191,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       { text: '취소', style: 'cancel' },
       { text: '이동', onPress: handleOpenLink },
     ]);
-  }, [event.link, handleOpenLink]);
+  }, [safeLink, handleOpenLink]);
 
   // 뒤로가기 핸들러
   const handleGoBack = useCallback(() => navigation.goBack(), [navigation]);
@@ -273,12 +274,12 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               모집 정원
             </Text>
             <View style={[styles.remainingBadge, { backgroundColor: '#10b981' }]}>
-              <Text style={styles.remainingText}>총 {maleCapacity + femaleCapacity}명</Text>
+              <Text style={styles.remainingText}>총 {capacityInfo.male + capacityInfo.female}명</Text>
             </View>
           </View>
           
-          <CapacityBar label="남자" capacity={maleCapacity} color="#3b82f6" isDark={isDark} />
-          <CapacityBar label="여자" capacity={femaleCapacity} color="#ec4899" isDark={isDark} />
+          <CapacityBar label="남자" capacity={capacityInfo.male} color="#3b82f6" isDark={isDark} />
+          <CapacityBar label="여자" capacity={capacityInfo.female} color="#ec4899" isDark={isDark} />
           
           {/* 참가비 & 연령대 */}
           <View style={styles.additionalInfoRow}>

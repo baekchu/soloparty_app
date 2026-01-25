@@ -41,6 +41,33 @@ interface LocationData {
   count: number;
 }
 
+// 표시용 이름 정규화 ("종로구 주소" → "종로", "서울시" → "서울")
+const normalizeDisplayName = (text: string | undefined): string => {
+  if (!text) return '';
+  
+  let normalized = text.trim();
+  
+  // "구" 앞의 이름 추출 (예: 종로구 어쩌구 → 종로)
+  const guMatch = normalized.match(/^([^\s시음면동리길가로]+)구/);
+  if (guMatch) {
+    return guMatch[1].trim();
+  }
+  
+  // 순서 중요: 긴 패턴부터 먼저 제거
+  // "특별시", "광역시" 제거 (예: 부산광역시 → 부산, 서울특별시 → 서울)
+  normalized = normalized.replace(/(특별|광역)시$/, '');
+  
+  // "시" 접미사 제거 (예: 천안시 → 천안)
+  normalized = normalized.replace(/시$/, '');
+  
+  // "도" 접미사 제거 (예: 경기도 → 경기)
+  normalized = normalized.replace(/도$/, '');
+  
+  // 공백 이전까지만 반환 (첫 단어)
+  const firstWord = normalized.split(/\s+/)[0];
+  return firstWord || text;
+};
+
 export default function LocationPickerScreen({ navigation, route }: LocationPickerScreenProps) {
   const { theme } = useTheme();
   const { setSelectedLocation: setContextLocation, setSelectedRegion: setContextRegion } = useRegion();
@@ -86,15 +113,19 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
     let filtered = allLocations;
     
     if (selectedRegionFilter) {
-      filtered = filtered.filter(loc => loc.region === selectedRegionFilter);
+      filtered = filtered.filter(loc => normalizeDisplayName(loc.region) === selectedRegionFilter);
     }
     
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(loc => 
-        loc.name.toLowerCase().includes(query) ||
-        loc.region.toLowerCase().includes(query)
-      );
+      filtered = filtered.filter(loc => {
+        const normalizedLocation = normalizeDisplayName(loc.name).toLowerCase();
+        const normalizedRegion = normalizeDisplayName(loc.region).toLowerCase();
+        return normalizedLocation.includes(query) ||
+               normalizedRegion.includes(query) ||
+               loc.name.toLowerCase().includes(query) ||
+               loc.region.toLowerCase().includes(query);
+      });
     }
     
     return filtered;
@@ -156,8 +187,8 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
         events.forEach((event: any) => {
           if (!event?.location || typeof event.location !== 'string') return;
           
-          const locationName = event.location.trim().substring(0, 100); // 최대 100자
-          const region = (event.region || '기타').substring(0, 50);
+          const locationName = event.location.trim().substring(0, 100); // 최대 100자 (원본 유지)
+          const region = event.region?.trim().substring(0, 50) || '기타'; // 원본 지역명 유지
           
           if (locationMap.has(locationName)) {
             const existing = locationMap.get(locationName)!;
@@ -181,8 +212,9 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       // Map을 배열로 변환
       const locationsFromGist = Array.from(locationMap.values());
       
-      // 지역 목록 추출 및 정렬
-      const regions = [...new Set(locationsFromGist.map(loc => loc.region))];
+      // 지역 목록 추출 및 정규화 (중복 제거)
+      const normalizedRegions = locationsFromGist.map(loc => normalizeDisplayName(loc.region));
+      const regions = [...new Set(normalizedRegions)].filter(r => r);
       
       // 로컬 통계 불러오기
       const statsJson = await safeGetItem(LOCATION_STATS_KEY);
@@ -488,7 +520,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
                     fontWeight: '600',
                     color: isDark ? '#f8fafc' : '#0f172a',
                   }}>
-                    {location.region} {location.name}
+                    {normalizeDisplayName(location.region)} {normalizeDisplayName(location.name)}
                   </Text>
                 </View>
                 {selectedLocation?.name === location.name && (

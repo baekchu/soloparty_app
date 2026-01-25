@@ -41,7 +41,6 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
       } catch (error) {
         // 테마 로드 실패는 무시 (기본값 사용)
-        console.log('테마 로드 실패 (무시)');
       }
     };
     
@@ -56,7 +55,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setThemeModeState(mode);
       await safeSetItem(THEME_KEY, mode);
     } catch (error) {
-      console.log('테마 저장 실패 (무시):', error);
+      // 테마 저장 실패는 무시
     }
   }, []);
 

@@ -1,10 +1,11 @@
-import React, { useMemo, useCallback, memo } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch, Alert, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../hooks/useNotifications';
 import { usePoints } from '../hooks/usePoints';
 import { useCoupons } from '../hooks/useCoupons';
+import { clearCache } from '../utils/storage';
 // import { PointsMigrationService } from '../services/PointsMigrationService'; // 로그인 기능 추가 시 활성화
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
