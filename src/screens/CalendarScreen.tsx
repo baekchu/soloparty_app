@@ -33,6 +33,8 @@ import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { MainTabParamList } from "../types";
 import { CompositeNavigationProp } from "@react-navigation/native";
 import MonthCalendar from "../components/MonthCalendar";
+import { NotificationPrompt } from "../components/NotificationPrompt";
+import { StartupAdModal } from "../components/StartupAdModal";
 import { usePoints } from "../hooks/usePoints";
 import { sendNewEventNotification } from "../services/NotificationService";
 
@@ -821,6 +823,21 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   );
 
   // ==================== 로딩 화면 ====================
+  // 알림 프롬프트 닫힌 후 광고 모달 표시 상태
+  const [showAdModal, setShowAdModal] = useState(false);
+  const [notificationPromptClosed, setNotificationPromptClosed] = useState(false);
+
+  // 알림 프롬프트가 닫히면 광고 모달 표시
+  useEffect(() => {
+    if (notificationPromptClosed && isInitialized) {
+      // 약간의 딜레이 후 광고 모달 표시
+      const timer = setTimeout(() => {
+        setShowAdModal(true);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [notificationPromptClosed, isInitialized]);
+
   if (!isInitialized || screenHeight === 0 || screenWidth === 0) {
     return (
       <View
@@ -1857,6 +1874,20 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           />
         </View>
       ) */}
+
+      {/* ==================== 초기 알림 설정 프롬프트 ==================== */}
+      <NotificationPrompt 
+        isDark={isDark} 
+        onClose={() => setNotificationPromptClosed(true)}
+      />
+
+      {/* ==================== 앱 시작 광고 팝업 모달 ==================== */}
+      {showAdModal && (
+        <StartupAdModal 
+          isDark={isDark}
+          onClose={() => setShowAdModal(false)}
+        />
+      )}
     </View>
   );
 }

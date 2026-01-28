@@ -25,6 +25,16 @@ type Props = {
   route: RouteProp<RootStackParamList, 'EventDetail'>;
 };
 
+// ==================== 상수 ====================
+const STORE_LINKS = {
+  ios: 'https://apps.apple.com/us/app/%EC%86%94%EB%A1%9C%ED%8C%8C%ED%8B%B0/id6757147307',
+  android: 'https://play.google.com/store/apps/details?id=com.soloparty.dating',
+} as const;
+
+const SHARE_CONFIG = {
+  title: '솔로파티',
+} as const;
+
 // 보안: URL 검증 함수
 const isValidUrl = (url: string): boolean => {
   if (!url || typeof url !== 'string') return false;
@@ -121,10 +131,23 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   }, [date]);
   
   // 정원 정보 (memoized)
-  const capacityInfo = useMemo(() => ({
-    male: event.maleCapacity ?? 10,
-    female: event.femaleCapacity ?? 10
-  }), [event.maleCapacity, event.femaleCapacity]);
+  const capacityInfo = useMemo(() => {
+    const maleVal = event.maleCapacity;
+    const femaleVal = event.femaleCapacity;
+    const hasMale = typeof maleVal === 'number';
+    const hasFemale = typeof femaleVal === 'number';
+    const male = hasMale ? maleVal : 0;
+    const female = hasFemale ? femaleVal : 0;
+    
+    return {
+      male,
+      female,
+      hasMaleData: hasMale,
+      hasFemaleData: hasFemale,
+      hasAnyData: hasMale || hasFemale,
+      total: male + female,
+    };
+  }, [event.maleCapacity, event.femaleCapacity]);
   
   // 안전한 URL 생성 (memoized)
   const safeLink = useMemo(() => {
@@ -152,32 +175,48 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     }
   }, [safeLink]);
   
-  // 지도 앱 열기
+  // 지도 앱 열기 (address 우선)
   const handleOpenMap = useCallback(async () => {
-    const address = sanitizeText(event.address || event.location);
-    if (!address) return;
-    
-    const q = encodeURIComponent(address);
-    const urls = Platform.OS === 'ios'
-      ? [`nmap://search?query=${q}`, `kakaomap://search?q=${q}`]
-      : [`nmap://search?query=${q}&appname=com.soloparty`, `kakaomap://search?q=${q}`, `geo:0,0?q=${q}`];
-    
-    for (const url of urls) {
-      try {
-        if (await Linking.canOpenURL(url)) { await Linking.openURL(url); return; }
-      } catch { /* continue */ }
+    // address가 있으면 address로 검색, 없으면 venue 또는 location으로 검색
+    const query = event.address || event.venue || event.location;
+    if (!query) {
+      Alert.alert('알림', '지도 검색에 필요한 주소 정보가 없습니다.');
+      return;
     }
-    Linking.openURL(`https://map.naver.com/v5/search/${q}`);
-  }, [event.address, event.location]);
+    
+    const encoded = encodeURIComponent(query);
+    const mapUrls = Platform.OS === 'ios'
+      ? [`nmap://search?query=${encoded}`, `kakaomap://search?q=${encoded}`]
+      : [`nmap://search?query=${encoded}&appname=com.soloparty`, `kakaomap://search?q=${encoded}`, `geo:0,0?q=${encoded}`];
+    
+    // 네이티브 지도 앱 시도
+    for (const url of mapUrls) {
+      try {
+        if (await Linking.canOpenURL(url)) {
+          await Linking.openURL(url);
+          return;
+        }
+      } catch {}
+    }
+    
+    // 모든 네이티브 앱 실패 시 웹 네이버 지도
+    Linking.openURL(`https://map.naver.com/v5/search/${encoded}`);
+  }, [event.address, event.venue, event.location]);
   
-  // 공유하기
+  // 공유하기 (플랫폼별 스토어 링크)
   const handleShare = useCallback(async () => {
+    const storeLink = Platform.OS === 'ios' ? STORE_LINKS.ios : STORE_LINKS.android;
+    
     try {
-      const storeLink = Platform.OS === 'ios' 
-        ? 'https://apps.apple.com/app/id6740537498' 
-        : 'https://play.google.com/store/apps/details?id=com.soloparty.dating';
-      
-      await Share.share({ message: storeLink });
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { url: storeLink }
+          : { message: storeLink, title: SHARE_CONFIG.title },
+        {
+          dialogTitle: SHARE_CONFIG.title,
+          subject: SHARE_CONFIG.title,
+        }
+      );
     } catch { /* 공유 취소 무시 */ }
   }, []);
   
@@ -259,10 +298,10 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             )}
           </View>
           
-          {/* 설명 */}
+          {/* 상세 설명 */}
           {(event.detailDescription || event.description) && (
-            <Text style={[styles.description, { color: isDark ? '#cbd5e1' : '#475569' }]} numberOfLines={10}>
-              {sanitizeText(event.detailDescription || event.description)}
+            <Text style={[styles.description, { color: isDark ? '#cbd5e1' : '#475569' }]}>
+              {event.detailDescription || event.description}
             </Text>
           )}
         </View>
@@ -273,13 +312,24 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
               모집 정원
             </Text>
-            <View style={[styles.remainingBadge, { backgroundColor: '#10b981' }]}>
-              <Text style={styles.remainingText}>총 {capacityInfo.male + capacityInfo.female}명</Text>
-            </View>
+            {capacityInfo.hasAnyData && (
+              <View style={[styles.remainingBadge, { backgroundColor: '#10b981' }]}>
+                <Text style={styles.remainingText}>총 {capacityInfo.total}명</Text>
+              </View>
+            )}
           </View>
           
-          <CapacityBar label="남자" capacity={capacityInfo.male} color="#3b82f6" isDark={isDark} />
-          <CapacityBar label="여자" capacity={capacityInfo.female} color="#ec4899" isDark={isDark} />
+          {capacityInfo.hasMaleData && (
+            <CapacityBar label="남자" capacity={capacityInfo.male} color="#3b82f6" isDark={isDark} />
+          )}
+          {capacityInfo.hasFemaleData && (
+            <CapacityBar label="여자" capacity={capacityInfo.female} color="#ec4899" isDark={isDark} />
+          )}
+          {!capacityInfo.hasAnyData && (
+            <Text style={[styles.noDataText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+              정원 정보가 없습니다
+            </Text>
+          )}
           
           {/* 참가비 & 연령대 */}
           <View style={styles.additionalInfoRow}>
@@ -328,22 +378,11 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             isDark={isDark}
           />
           
-          {/* 지도 보기 버튼 */}
-          {(event.address || event.location) && (
-            <TouchableOpacity 
-              style={[styles.mapButton, { backgroundColor: isDark ? '#374151' : '#e0e7ff' }]}
-              onPress={handleOpenMap}
-            >
-              <Text style={styles.mapButtonIcon}>🗺️</Text>
-              <Text style={[styles.mapButtonText, { color: isDark ? '#f8fafc' : '#3b82f6' }]}>
-                지도에서 보기
-              </Text>
-            </TouchableOpacity>
-          )}
+          
         </View>
         
         {/* 주최자 정보 */}
-        {(event.organizer || event.contact) && (
+        {/* {(event.organizer || event.contact) && (
           <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
             <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a', marginBottom: 16 }]}>
               👤 주최자 정보
@@ -362,7 +401,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               isDark={isDark}
             />
           </View>
-        )}
+        )} */}
         
         {/* 링크 */}
         {event.link && (
@@ -681,5 +720,10 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  noDataText: {
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 12,
   },
 });

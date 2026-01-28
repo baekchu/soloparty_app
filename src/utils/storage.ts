@@ -143,16 +143,44 @@ const sanitizeEvent = (event: Event): Event => {
     const trimmed = url.trim();
     return /^(https?:|mailto:)/.test(trimmed) ? trimmed.substring(0, 500) : undefined;
   };
+  
+  const cleanNumber = (num: unknown): number | undefined => {
+    if (typeof num !== 'number' || isNaN(num)) return undefined;
+    return Math.max(0, Math.floor(num));
+  };
+  
+  const cleanTags = (tags: unknown): string[] | undefined => {
+    if (!Array.isArray(tags)) return undefined;
+    return tags
+      .filter((t): t is string => typeof t === 'string')
+      .map(t => t.trim().replace(/[<>]/g, '').substring(0, 30))
+      .filter(t => t.length > 0)
+      .slice(0, 10);
+  };
 
   return {
     id: event.id?.substring(0, 50),
     title: cleanString(event.title, 100) || '',
     time: cleanString(event.time, 50),
     description: cleanString(event.description, 200),
-    location: cleanString(event.location, 100), // 원본 주소 유지 (지도용)
-    region: normalizeRegion(cleanString(event.region, 50)), // 지역명 정규화 적용
+    detailDescription: cleanString(event.detailDescription, 2000), // 상세 설명
+    location: cleanString(event.location, 100),
+    venue: cleanString(event.venue, 100), // 장소명
+    address: cleanString(event.address, 200), // 상세 주소
+    region: normalizeRegion(cleanString(event.region, 50)),
     link: cleanUrl(event.link),
     coordinates: event.coordinates,
+    // 참석자 정보
+    maleCapacity: cleanNumber(event.maleCapacity),
+    femaleCapacity: cleanNumber(event.femaleCapacity),
+    maleCount: cleanNumber(event.maleCount),
+    femaleCount: cleanNumber(event.femaleCount),
+    // 추가 정보
+    price: cleanNumber(event.price),
+    ageRange: cleanString(event.ageRange, 20),
+    organizer: cleanString(event.organizer, 100),
+    contact: cleanString(event.contact, 100),
+    tags: cleanTags(event.tags),
   };
 };
 
