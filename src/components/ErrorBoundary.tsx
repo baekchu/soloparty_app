@@ -1,5 +1,6 @@
 import React, { Component, ReactNode } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { secureLog } from '../utils/secureStorage';
 
 interface Props {
   children: ReactNode;
@@ -21,9 +22,10 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: any) {
-    console.error('❌ 앱 크래시 감지:', error);
-    console.error('상세 정보:', errorInfo);
-    console.error('스택:', error.stack);
+    // 프로덕션에서는 에러 메시지만 전송 (스택 제외)
+    secureLog.error('❌ 앱 크래시 감지:', error.message);
+    // 개발 환경에서만 상세 정보 출력
+    secureLog.info('상세 정보:', errorInfo);
   }
 
   handleReset = () => {

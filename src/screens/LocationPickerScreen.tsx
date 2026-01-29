@@ -6,6 +6,7 @@ import { useRegion } from '../contexts/RegionContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
+import { secureLog } from '../utils/secureStorage';
 
 interface LocationPickerScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'LocationPicker'>;
@@ -151,7 +152,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       
       // 보안: 응답 크기 제한 (5MB)
       if (text.length > 5 * 1024 * 1024) {
-        console.warn('⚠️ 응답 크기 초과');
+        secureLog.warn('⚠️ 응답 크기 초과');
         await loadLocalStats();
         return;
       }
@@ -166,14 +167,14 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           .replace(/\s+/g, ' ');
         data = JSON.parse(cleanText);
       } catch (parseError) {
-        console.warn('⚠️ JSON 파싱 실패:', parseError);
+        secureLog.warn('⚠️ JSON 파싱 실패');
         await loadLocalStats();
         return;
       }
       
       // 보안: 데이터 타입 검증
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        console.warn('⚠️ 유효하지 않은 데이터 형식');
+        secureLog.warn('⚠️ 유효하지 않은 데이터 형식');
         await loadLocalStats();
         return;
       }
@@ -252,7 +253,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       if (statsJson) {
         // 보안: 크기 제한
         if (statsJson.length > 100000) {
-          console.warn('⚠️ 위치 통계 크기 초과');
+          secureLog.warn('⚠️ 위치 통계 크기 초과');
         } else {
           try {
             const parsed = JSON.parse(statsJson);
@@ -266,7 +267,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
               }
             }
           } catch {
-            console.warn('⚠️ 위치 통계 JSON 파싱 실패');
+            secureLog.warn('⚠️ 위치 통계 JSON 파싱 실패');
           }
         }
       }

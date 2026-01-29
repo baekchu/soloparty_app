@@ -43,6 +43,7 @@
 
 import { Alert } from 'react-native';
 import { safeGetItem, safeSetItem, safeRemoveItem } from '../utils/asyncStorageManager';
+import { secureLog } from '../utils/secureStorage';
 
 // ==================== 상수 ====================
 const KEYS = {
@@ -116,7 +117,7 @@ export const PointsMigrationService = {
       if (pRaw) {
         // 보안: 크기 제한
         if (pRaw.length > 100000) {
-          console.warn('⚠️ 포인트 데이터 크기 초과');
+          secureLog.warn('⚠️ 포인트 데이터 크기 초과');
         } else {
           try {
             const p = JSON.parse(pRaw);
@@ -132,7 +133,7 @@ export const PointsMigrationService = {
       if (cRaw) {
         // 보안: 크기 제한
         if (cRaw.length > 100000) {
-          console.warn('⚠️ 쿠폰 데이터 크기 초과');
+          secureLog.warn('⚠️ 쿠폰 데이터 크기 초과');
         } else {
           try {
             const c = JSON.parse(cRaw);
@@ -201,7 +202,7 @@ export const PointsMigrationService = {
       
       // 보안: 크기 제한
       if (raw.length > 100000) {
-        console.warn('⚠️ 백업 데이터 크기 초과');
+        secureLog.warn('⚠️ 백업 데이터 크기 초과');
         return false;
       }
 
@@ -209,7 +210,7 @@ export const PointsMigrationService = {
       try {
         parsed = JSON.parse(raw);
       } catch {
-        console.warn('⚠️ 백업 JSON 파싱 실패');
+        secureLog.warn('⚠️ 백업 JSON 파싱 실패');
         return false;
       }
       
@@ -220,7 +221,7 @@ export const PointsMigrationService = {
           !Number.isFinite(d.points) ||
           d.points < 0 || 
           d.points > CONFIG.MAX_POINTS) {
-        console.warn('⚠️ 백업 데이터 검증 실패');
+        secureLog.warn('⚠️ 백업 데이터 검증 실패');
         return false;
       }
 

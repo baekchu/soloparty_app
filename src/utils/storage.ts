@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventsByDate, Event } from '../types';
 import { safeGetItem, safeSetItem, safeRemoveItem, safeMultiGet, safeMultiSet } from './asyncStorageManager';
+import { secureLog } from './secureStorage';
+import { env } from '../config/env';
 
-// GitHub Gist Raw URL (환경변수 사용 권장)
-// TODO: 프로덕션에서는 환경변수나 안전한 설정으로 이동
-const GIST_RAW_URL = 'https://gist.githubusercontent.com/baekchu/f805cac22604ff764916280710db490e/raw/gistfile1.txt';
+// 환경 변수에서 Gist URL 로드 (보안 강화)
+const GIST_RAW_URL = env.GIST_RAW_URL;
 
 const CACHE_KEY = '@events_cache';
 const CACHE_TIMESTAMP_KEY = '@events_cache_timestamp';
@@ -23,7 +24,7 @@ const safeJSONParse = <T>(text: string, fallback: T): T => {
   try {
     if (!text || typeof text !== 'string') return fallback;
     if (text.length > MAX_JSON_SIZE) {
-      console.warn('⚠️ JSON 크기 초과 (최대 5MB), 파싱 거부');
+      secureLog.warn('⚠️ JSON 크기 초과');
       return fallback;
     }
     
@@ -32,7 +33,7 @@ const safeJSONParse = <T>(text: string, fallback: T): T => {
     
     return JSON.parse(text) as T;
   } catch (error) {
-    console.warn('⚠️ JSON 파싱 실패:', error instanceof Error ? error.message : 'Unknown error');
+    secureLog.warn('⚠️ JSON 파싱 실패');
     return fallback;
   }
 };
@@ -65,7 +66,7 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     
     // 보안: 응답 크기 검증
     if (text.length > MAX_JSON_SIZE) {
-      console.warn('⚠️ 응답 크기 초과 (최대 5MB)');
+      secureLog.warn('⚠️ 응답 크기 초과');
       throw new Error('Response too large');
     }
     
@@ -78,9 +79,9 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     return safeJSONParse<EventsByDate>(cleanJSON(text), {});
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      console.warn('⚠️ 네트워크 타임아웃 (10초 초과)');
+      secureLog.warn('⚠️ 네트워크 타임아웃');
     } else {
-      console.warn('⚠️ 네트워크 오류:', error.message || 'Unknown error');
+      secureLog.warn('⚠️ 네트워크 오류');
     }
     clearTimeout(timeoutId);
     throw error;
@@ -205,19 +206,19 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
     const age = Date.now() - timestampNum;
     // 음수나 만료된 캠시 거부
     if (age < 0 || age >= CACHE_DURATION) {
-      console.log('⌛ 캠시 만료 (${Math.round(age / 1000)}초 경과)');
+      secureLog.info('⌛ 캀시 만료');
       return null;
     }
     
     const events = safeJSONParse<EventsByDate>(cached, {});
     if (!validateEvents(events)) {
-      console.warn('⚠️ 캠시 데이터 검증 실패');
+      secureLog.warn('⚠️ 캀시 데이터 검증 실패');
       return null;
     }
     
     return events;
   } catch (error) {
-    console.warn('⚠️ 캠시 로드 실패:', error instanceof Error ? error.message : 'Unknown error');
+    secureLog.warn('⚠️ 캀시 로드 실패:', error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 };
@@ -225,7 +226,7 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
 const saveToCache = async (events: EventsByDate): Promise<void> => {
   try {
     if (!events || typeof events !== 'object' || Object.keys(events).length === 0) {
-      console.warn('⚠️ 빈 데이터는 캠시하지 않음');
+      secureLog.warn('⚠️ 빈 데이터는 캀시하지 않음');
       return;
     }
     
@@ -234,7 +235,7 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
     
     // 1MB 초과 방지
     if (sizeInBytes > 1024 * 1024) {
-      console.warn(`⚠️ 캠시 데이터 크기 초과 (${Math.round(sizeInBytes / 1024)}KB), 저장 스킨`);
+      secureLog.warn('⚠️ 캀시 데이터 크기 초과, 저장 스킵');
       return;
     }
     
@@ -243,10 +244,10 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
       [CACHE_TIMESTAMP_KEY, Date.now().toString()]
     ]);
     
-    console.log(`✅ 캠시 저장 완료 (${Math.round(sizeInBytes / 1024)}KB, ${Object.keys(events).length}일)`);
+    secureLog.info('✅ 캀시 저장 완료');
   } catch (error) {
     // 캠시 저장 실패는 치명적이지 않음
-    console.warn('⚠️ 캠시 저장 실패:', error instanceof Error ? error.message : 'Unknown error');
+    secureLog.warn('⚠️ 캀시 저장 실패');
   }
 };
 
@@ -257,18 +258,18 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
   if (!forceRefresh) {
     const cached = await loadFromCache();
     if (cached) {
-      console.log('✅ 캐시 사용');
+      secureLog.info('✅ 캐시 사용');
       return cached;
     }
   }
   
   try {
-    console.log('🔄 데이터 로딩...');
+    secureLog.info('🔄 데이터 로딩...');
     const url = `${GIST_RAW_URL}?_=${Date.now()}`;
     const rawData = await fetchData(url);
     
     if (!validateEvents(rawData)) {
-      console.warn('⚠️ 데이터 검증 실패');
+      secureLog.warn('⚠️ 데이터 검증 실패');
       throw new Error('Invalid data');
     }
     
@@ -284,23 +285,23 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
       }
     }
     
-    console.log('✅ 로딩 완료:', Object.keys(processed).length, '일');
+    secureLog.info('✅ 로딩 완료');
     
-    // 캐시 저장
+    // 캠시 저장
     await saveToCache(processed);
     
     return processed;
   } catch (error) {
-    console.warn('⚠️ 네트워크 오류, 캐시 복구 시도');
+    secureLog.warn('⚠️ 네트워크 오류, 캀시 복구 시도');
     
     // 캐시 복구 시도
     const cached = await loadFromCache();
     if (cached) {
-      console.log('✅ 캐시 복구');
+      secureLog.info('✅ 캐시 복구');
       return cached;
     }
     
-    console.warn('❌ 빈 데이터 반환');
+    secureLog.warn('❌ 빈 데이터 반환');
     return {};
   }
 };
@@ -323,7 +324,7 @@ export const clearCache = async (): Promise<void> => {
   try {
     await safeRemoveItem(CACHE_KEY);
     await safeRemoveItem(CACHE_TIMESTAMP_KEY);
-    console.log('🗑️ 캐시 삭제 완료');
+    secureLog.info('🗑️ 캐시 삭제 완료');
   } catch {
     // 무시
   }

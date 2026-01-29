@@ -6,6 +6,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { secureLog } from './secureStorage';
 
 let isReady = false;
 let initPromise: Promise<void> | null = null;
@@ -23,7 +24,7 @@ export const initAsyncStorage = async (): Promise<void> => {
   
   initPromise = (async () => {
     try {
-      console.log('🔧 AsyncStorage 초기화 시작...');
+      secureLog.info('🔧 AsyncStorage 초기화 시작...');
       
       // 1초 대기 (네이티브 모듈 완전 로드)
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -35,12 +36,12 @@ export const initAsyncStorage = async (): Promise<void> => {
       if (test === 'ok') {
         await AsyncStorage.removeItem('@storage_init_test');
         isReady = true;
-        console.log('✅ AsyncStorage 준비 완료');
+        secureLog.info('✅ AsyncStorage 준비 완료');
       } else {
         throw new Error('AsyncStorage test failed');
       }
     } catch (error) {
-      console.error('❌ AsyncStorage 초기화 실패:', error);
+      secureLog.error('❌ AsyncStorage 초기화 실패');
       // 2초 추가 대기 후 강제 진행
       await new Promise(resolve => setTimeout(resolve, 2000));
       isReady = true;
@@ -67,7 +68,7 @@ export const safeGetItem = async (key: string): Promise<string | null> => {
   try {
     return await AsyncStorage.getItem(key);
   } catch (error) {
-    console.error(`AsyncStorage getItem 실패 [${key}]:`, error);
+    secureLog.error('AsyncStorage getItem 실패');
     return null;
   }
 };
@@ -81,7 +82,7 @@ export const safeSetItem = async (key: string, value: string): Promise<boolean> 
     await AsyncStorage.setItem(key, value);
     return true;
   } catch (error) {
-    console.error(`AsyncStorage setItem 실패 [${key}]:`, error);
+    secureLog.error('AsyncStorage setItem 실패');
     return false;
   }
 };
@@ -95,7 +96,7 @@ export const safeRemoveItem = async (key: string): Promise<boolean> => {
     await AsyncStorage.removeItem(key);
     return true;
   } catch (error) {
-    console.error(`AsyncStorage removeItem 실패 [${key}]:`, error);
+    secureLog.error('AsyncStorage removeItem 실패');
     return false;
   }
 };
@@ -108,7 +109,7 @@ export const safeMultiGet = async (keys: string[]): Promise<readonly [string, st
   try {
     return await AsyncStorage.multiGet(keys);
   } catch (error) {
-    console.error('AsyncStorage multiGet 실패:', error);
+    secureLog.error('AsyncStorage multiGet 실패');
     return keys.map(k => [k, null] as [string, string | null]);
   }
 };
@@ -122,7 +123,7 @@ export const safeMultiSet = async (keyValuePairs: [string, string][]): Promise<b
     await AsyncStorage.multiSet(keyValuePairs);
     return true;
   } catch (error) {
-    console.error('AsyncStorage multiSet 실패:', error);
+    secureLog.error('AsyncStorage multiSet 실패');
     return false;
   }
 };

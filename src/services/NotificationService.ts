@@ -13,6 +13,7 @@ import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import { secureLog } from '../utils/secureStorage';
 
 const NOTIFICATION_SETTINGS_KEY = '@solo_party_notification_settings';
 
@@ -51,7 +52,7 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   try {
     // Expo Go에서는 알림 기능 비활성화
     if (isExpoGo) {
-      console.log('⚠️ Expo Go에서는 알림이 지원되지 않습니다');
+      // Expo Go에서는 로그 생략 (개발 환경)
       return false;
     }
 
@@ -88,7 +89,7 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
 
     return true;
   } catch (error) {
-    console.error('알림 권한 요청 실패:', error);
+    secureLog.error('알림 권한 요청 실패');
     return false;
   }
 };
@@ -102,7 +103,7 @@ export const getNotificationSettings = async (): Promise<NotificationSettings> =
     if (settings) {
       // 보안: 크기 제한
       if (settings.length > 10000) {
-        console.warn('⚠️ 알림 설정 데이터 크기 초과');
+        secureLog.warn('⚠️ 알림 설정 데이터 크기 초과');
         return DEFAULT_SETTINGS;
       }
       
@@ -120,12 +121,12 @@ export const getNotificationSettings = async (): Promise<NotificationSettings> =
           };
         }
       } catch {
-        console.warn('⚠️ 알림 설정 JSON 파싱 실패');
+        secureLog.warn('⚠️ 알림 설정 JSON 파싱 실패');
       }
     }
     return DEFAULT_SETTINGS;
   } catch (error) {
-    console.error('알림 설정 불러오기 실패:', error);
+    secureLog.error('알림 설정 불러오기 실패');
     return DEFAULT_SETTINGS;
   }
 };
@@ -137,7 +138,7 @@ export const saveNotificationSettings = async (settings: NotificationSettings): 
   try {
     await AsyncStorage.setItem(NOTIFICATION_SETTINGS_KEY, JSON.stringify(settings));
   } catch (error) {
-    console.error('알림 설정 저장 실패:', error);
+    secureLog.error('알림 설정 저장 실패');
     throw error;
   }
 };
@@ -161,7 +162,7 @@ export const toggleNotifications = async (enabled: boolean): Promise<boolean> =>
     
     return true;
   } catch (error) {
-    console.error('알림 토글 실패:', error);
+    secureLog.error('알림 토글 실패');
     return false;
   }
 };
@@ -195,7 +196,7 @@ export const sendNewEventNotification = async (eventTitle: string, eventDate: st
       trigger: null, // 즉시 전송
     });
   } catch (error) {
-    console.error('새 일정 알림 전송 실패:', error);
+    secureLog.error('새 일정 알림 전송 실패');
   }
 };
 
@@ -222,7 +223,7 @@ export const sendTestNotification = async (): Promise<boolean> => {
 
     return true;
   } catch (error) {
-    console.error('테스트 알림 전송 실패:', error);
+    secureLog.error('테스트 알림 전송 실패');
     return false;
   }
 };
@@ -256,7 +257,7 @@ export const sendAdLimitResetNotification = async (): Promise<void> => {
       trigger: null, // 즉시 전송
     });
   } catch (error) {
-    console.error('광고 한도 리셋 알림 전송 실패:', error);
+    secureLog.error('광고 한도 리셋 알림 전송 실패');
   }
 };
 
@@ -299,7 +300,7 @@ export const scheduleEventReminder = async (
 
     return notificationId;
   } catch (error) {
-    console.error('리마인더 설정 실패:', error);
+    secureLog.error('리마인더 설정 실패');
     return null;
   }
 };
@@ -311,7 +312,7 @@ export const cancelNotification = async (notificationId: string): Promise<void> 
   try {
     await Notifications.cancelScheduledNotificationAsync(notificationId);
   } catch (error) {
-    console.error('알림 취소 실패:', error);
+    secureLog.error('알림 취소 실패');
   }
 };
 
@@ -322,6 +323,6 @@ export const cancelAllNotifications = async (): Promise<void> => {
   try {
     await Notifications.cancelAllScheduledNotificationsAsync();
   } catch (error) {
-    console.error('모든 알림 취소 실패:', error);
+    secureLog.error('모든 알림 취소 실패');
   }
 };

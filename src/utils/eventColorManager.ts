@@ -1,4 +1,5 @@
 import { safeGetItem, safeSetItem } from './asyncStorageManager';
+import { secureLog } from './secureStorage';
 
 const COLOR_MAP_KEY = '@event_color_map';
 
@@ -38,7 +39,7 @@ class EventColorManager {
       if (saved) {
         // 보안: 크기 제한 및 안전한 파싱
         if (saved.length > 500000) { // 500KB 제한
-          console.warn('⚠️ 색상 맵 데이터 크기 초과, 초기화');
+          secureLog.warn('⚠️ 색상 맵 데이터 크기 초과');
           this.colorMap = {};
         } else {
           try {
@@ -60,14 +61,14 @@ class EventColorManager {
               this.colorMap = {};
             }
           } catch {
-            console.warn('⚠️ 색상 맵 JSON 파싱 실패');
+            secureLog.warn('⚠️ 색상 맵 JSON 파싱 실패');
             this.colorMap = {};
           }
         }
       }
       this.isInitialized = true;
     } catch (error) {
-      console.error('Error loading color map:', error);
+      secureLog.error('색상 맵 로드 실패');
       this.colorMap = {};
       this.isInitialized = true;
     }
@@ -158,8 +159,8 @@ class EventColorManager {
     this.colorMap[eventId] = selectedColor;
     
     // 즉시 저장 (비동기이지만 백그라운드에서 실행)
-    this.saveColorMap().catch(err => {
-      console.error('Failed to save color map:', err);
+    this.saveColorMap().catch(() => {
+      // 색상 저장 실패는 치명적이지 않음
     });
 
     return selectedColor;

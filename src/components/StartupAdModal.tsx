@@ -26,14 +26,15 @@ import {
   TouchableOpacity, 
   Modal, 
   StyleSheet, 
-  Image,
   Dimensions,
   Linking,
   ActivityIndicator,
   ImageBackground,
   Pressable,
 } from 'react-native';
+import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { env } from '../config/env';
 
 // ==================== 상수 ====================
 const STORAGE_KEYS = {
@@ -49,8 +50,8 @@ const CONFIG = {
   MODAL_WIDTH: Math.min(Dimensions.get('window').width * 0.72, 260),
 } as const;
 
-// 🔧 Gist Raw URL (비어있으면 기본값 사용)
-const GIST_RAW_URL = '';
+// 환경 변수에서 광고 설정 URL 로드
+const GIST_RAW_URL = env.AD_CONFIG_URL;
 
 // ==================== 타입 ====================
 interface AdConfig {
@@ -174,12 +175,13 @@ const AdImage = memo<{ uri: string; isDark: boolean; onError: () => void }>(
     return (
       <View style={styles.imageWrapper}>
         <Image
-          source={{ uri, cache: 'force-cache' }}
+          source={{ uri }}
           style={styles.image}
-          resizeMode="cover"
+          contentFit="cover"
+          cachePolicy="disk"
+          transition={200}
           onLoadEnd={() => setLoading(false)}
           onError={onError}
-          fadeDuration={200}
         />
         {loading && (
           <View style={styles.loader}>
@@ -200,6 +202,7 @@ export const StartupAdModal = memo<StartupAdModalProps>(({ isDark, onClose }) =>
   // 초기화
   useEffect(() => {
     mountedRef.current = true;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
     
     (async () => {
       // 1. 숨김 기간 확인 (먼저 체크 - 불필요한 fetch 방지)
@@ -214,12 +217,15 @@ export const StartupAdModal = memo<StartupAdModalProps>(({ isDark, onClose }) =>
       
       // 3. 모달 표시
       setConfig(adConfig);
-      setTimeout(() => {
+      timerId = setTimeout(() => {
         if (mountedRef.current) setVisible(true);
       }, CONFIG.MODAL_DELAY);
     })();
     
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      if (timerId) clearTimeout(timerId);
+    };
   }, []);
 
   // 하루동안 숨기기

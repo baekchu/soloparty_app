@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Alert } from 'react-native';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
+import { secureLog } from '../utils/secureStorage';
 
 // ==================== 상수 정의 ====================
 const STORAGE_KEYS = {
@@ -57,7 +58,7 @@ const loadPointsData = async (): Promise<PointsData> => {
     if (data) {
       // 보안: 크기 제한 검증
       if (data.length > 1024 * 100) { // 100KB 제한
-        console.warn('⚠️ 포인트 데이터 크기 초과');
+        secureLog.warn('⚠️ 포인트 데이터 크기 초과');
         return getDefaultPointsData();
       }
       
@@ -65,7 +66,7 @@ const loadPointsData = async (): Promise<PointsData> => {
       try {
         parsed = JSON.parse(data);
       } catch {
-        console.warn('⚠️ 포인트 JSON 파싱 실패');
+        secureLog.warn('⚠️ 포인트 JSON 파싱 실패');
         return getDefaultPointsData();
       }
       
@@ -115,7 +116,7 @@ const loadAdLimitData = async (): Promise<AdLimitData> => {
       try {
         parsed = JSON.parse(data);
       } catch {
-        console.warn('⚠️ 광고 제한 JSON 파싱 실패');
+        secureLog.warn('⚠️ 광고 제한 JSON 파싱 실패');
         return getDefaultAdLimitData();
       }
       

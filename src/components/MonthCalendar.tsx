@@ -5,9 +5,6 @@ import EventColorManager from '../utils/eventColorManager';
 
 // ==================== 상수 정의 (컴포넌트 외부) ====================
 const MONTH_NAMES = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'] as const;
-const WEEKS_COUNT = 6;
-const DAYS_IN_WEEK = 7;
-const MAX_VISIBLE_EVENTS = 3;
 
 interface MonthCalendarProps {
   year: number;
@@ -95,11 +92,9 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const daysInMonth = useMemo(() => getDaysInMonth(year, month), [year, month]);
   const firstDay = useMemo(() => getFirstDayOfMonth(year, month), [year, month]);
   
-  // 오늘 날짜 계산 - 메모이제이션 (날짜가 바뀌면 컴포넌트가 다시 마운트됨)
-  const todayString = useMemo(() => {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  }, []);
+  // 오늘 날짜 계산 - 매번 계산하여 날짜 변경 반영
+  const today = new Date();
+  const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
   const renderDay = useCallback((day: number | null, weekIndex: number, dayIndex: number, isOtherMonth: boolean = false) => {
     if (!day || isOtherMonth) {
@@ -112,6 +107,8 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
 
     const dateString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const dayEvents = filteredEvents[dateString] || [];
+    const today = new Date();
+    const todayString = today.toISOString().split('T')[0];
     const isToday = dateString === todayString;
     const isSunday = dayIndex === 0;
     const isSaturday = dayIndex === 6;

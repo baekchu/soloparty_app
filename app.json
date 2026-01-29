@@ -74,7 +74,11 @@
     "extra": {
       "eas": {
         "projectId": "e208b050-52b3-4957-94c7-227046e0409e"
-      }
+      },
+      "GIST_RAW_URL": "https://gist.githubusercontent.com/baekchu/f805cac22604ff764916280710db490e/raw/gistfile1.txt",
+      "AD_CONFIG_URL": "",
+      "API_BASE_URL": "",
+      "APP_ENV": "production"
     }
   }
 }

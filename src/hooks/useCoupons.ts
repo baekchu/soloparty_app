@@ -12,6 +12,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
+import { secureLog } from '../utils/secureStorage';
 
 // ==================== 상수 정의 ====================
 const STORAGE_KEY = '@coupons_data';
@@ -90,7 +91,7 @@ const loadCouponsData = async (): Promise<CouponsData> => {
     if (data) {
       // 보안: 크기 제한
       if (data.length > 500000) { // 500KB 제한
-        console.warn('⚠️ 쿠폰 데이터 크기 초과, 초기화');
+        secureLog.warn('⚠️ 쿠폰 데이터 크기 초과');
         return getDefaultCouponsData();
       }
       
@@ -98,7 +99,7 @@ const loadCouponsData = async (): Promise<CouponsData> => {
       try {
         parsed = JSON.parse(data);
       } catch {
-        console.warn('⚠️ 쿠폰 JSON 파싱 실패');
+        secureLog.warn('⚠️ 쿠폰 JSON 파싱 실패');
         return getDefaultCouponsData();
       }
       
@@ -109,7 +110,7 @@ const loadCouponsData = async (): Promise<CouponsData> => {
       
       // 보안: 쿠폰 수 제한 검증
       if (parsed.coupons.length > MAX_COUPONS * 2 || parsed.history.length > MAX_HISTORY * 2) {
-        console.warn('⚠️ 비정상적인 쿠폰/히스토리 수');
+        secureLog.warn('⚠️ 비정상적인 쿠폰/히스토리 수');
         return getDefaultCouponsData();
       }
       

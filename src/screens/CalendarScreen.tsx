@@ -35,8 +35,8 @@ import { CompositeNavigationProp } from "@react-navigation/native";
 import MonthCalendar from "../components/MonthCalendar";
 import { NotificationPrompt } from "../components/NotificationPrompt";
 import { StartupAdModal } from "../components/StartupAdModal";
-import { usePoints } from "../hooks/usePoints";
 import { sendNewEventNotification } from "../services/NotificationService";
+import { secureLog } from "../utils/secureStorage";
 
 type CalendarScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, "Calendar">,
@@ -73,20 +73,10 @@ const MONTH_NAMES = [
   "11월",
   "12월",
 ] as const;
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 const POLL_INTERVAL = 30000; // 30초 폴링
-const SCROLL_THRESHOLD = 500; // 무한 스크롤 트리거 임계값
 const INITIAL_MONTHS_RANGE = 3; // 초기 로드 월 범위 (앞뒤 3개월)
 
 // ==================== 광고 배너 설정 (활성화 시 사용) ====================
-const AD_CONFIG = {
-  bannerHeight: 50,
-  showBanner: false, // 광고 활성화 시 true로 변경
-  bannerUnitId: Platform.select({
-    ios: "ca-app-pub-xxxxx/xxxxx", // iOS 광고 단위 ID
-    android: "ca-app-pub-xxxxx/xxxxx", // Android 광고 단위 ID
-  }),
-};
 
 // ==================== 인스타그램 링크 처리 (보안 강화) ====================
 
@@ -114,129 +104,7 @@ const ALLOWED_DOMAINS = [
   "www.band.us",
 ] as const;
 
-// URL 유효성 검증 (보안 강화)
-const isValidUrl = (url: string): boolean => {
-  try {
-    const parsed = new URL(url);
-    // http/https만 허용
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return false;
-    }
-    // 도메인 길이 제한 (보안)
-    if (parsed.hostname.length > 253) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-};
 
-// 허용된 도메인인지 확인
-const isAllowedDomain = (url: string): boolean => {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
-    return ALLOWED_DOMAINS.some(
-      (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
-    );
-  } catch {
-    return false;
-  }
-};
-
-// URL 정제 (XSS 방지)
-const sanitizeUrl = (url: string): string => {
-  // javascript:, data:, vbscript: 등 위험한 스킴 차단
-  const dangerous = /^(javascript|data|vbscript|file):/i;
-  if (dangerous.test(url.trim())) {
-    return "";
-  }
-  // URL 인코딩된 위험 패턴 차단
-  const decoded = decodeURIComponent(url);
-  if (dangerous.test(decoded.trim())) {
-    return "";
-  }
-  return url.trim();
-};
-
-const openInstagramLink = async (link?: string) => {
-  if (!link || typeof link !== "string") return;
-
-  // 보안: 링크 길이 제한
-  if (link.length > 2000) {
-    Alert.alert("알림", "링크가 너무 깁니다.");
-    return;
-  }
-
-  try {
-    // URL 정제
-    let url = sanitizeUrl(link);
-    if (!url) {
-      Alert.alert("알림", "유효하지 않은 링크입니다.");
-      return;
-    }
-
-    // URL 정규화
-    if (!url.startsWith("http")) {
-      url = `https://${url}`;
-    }
-
-    // URL 유효성 검증
-    if (!isValidUrl(url)) {
-      Alert.alert("알림", "유효하지 않은 링크 형식입니다.");
-      return;
-    }
-
-    // 허용된 도메인만 바로 열기 (보안 강화)
-    if (!isAllowedDomain(url)) {
-      // 신뢰할 수 없는 URL은 사용자에게 경고 후 열기
-      Alert.alert(
-        "외부 링크",
-        "신뢰할 수 없는 외부 사이트로 이동합니다.\n계속하시겠습니까?",
-        [
-          { text: "취소", style: "cancel" },
-          {
-            text: "이동",
-            onPress: () =>
-              Linking.openURL(url).catch(() => {
-                Alert.alert("알림", "링크를 열 수 없습니다.");
-              }),
-          },
-        ]
-      );
-      return;
-    }
-
-    // Instagram 앱 딥링크 시도
-    if (url.includes("instagram.com")) {
-      const username = url.match(/instagram\.com\/([^\/\?#]+)/);
-      if (
-        username?.[1] &&
-        username[1] !== "p" &&
-        username[1] !== "reel" &&
-        username[1] !== "stories" &&
-        username[1].length <= 30
-      ) {
-        // 인스타그램 유저네임 길이 제한
-        const appUrl = `instagram://user?username=${encodeURIComponent(
-          username[1]
-        )}`;
-        const canOpenApp = await Linking.canOpenURL(appUrl);
-        if (canOpenApp) {
-          await Linking.openURL(appUrl);
-          return;
-        }
-      }
-    }
-
-    // 기본 브라우저로 열기
-    await Linking.openURL(url);
-  } catch (error) {
-    console.warn("링크 열기 실패:", error);
-    Alert.alert("알림", "링크를 열 수 없습니다.");
-  }
-};
 
 export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // ==================== 상태 관리 (최소화) ====================
@@ -262,7 +130,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } =
     useRegion();
   const insets = useSafeAreaInsets();
-  const { balance: points, spendPoints } = usePoints();
 
   // ==================== Dimensions (메모이제이션) ====================
   const [dimensions, setDimensions] = useState(() => ({
@@ -281,7 +148,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // 패널 내부 스크롤 상태 추적 (사용자 편의성 개선)
   const panelScrollRef = useRef<ScrollView>(null);
   const panelScrollYRef = useRef(0);
-  const panelDragStartYRef = useRef(0);
   const isPanelScrollAtTopRef = useRef(true);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -374,7 +240,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           });
         });
       } catch (error) {
-        console.warn("초기화 실패:", error);
+        secureLog.warn("초기화 실패");
         // 폴백: 현재 월만 표시
         if (isMountedRef.current) {
           const now = new Date();
@@ -736,7 +602,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         setAvailableRegions(sortedRegions);
       }
     } catch (error) {
-      console.warn("데이터 로드 실패:", error);
+      secureLog.warn("데이터 로드 실패");
       if (isMountedRef.current) {
         setEvents({});
         setAvailableRegions([]);
@@ -758,7 +624,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             setIsDataReady(true);
           }
         } catch (err) {
-          console.warn("초기 데이터 로드 실패:", err);
+          secureLog.warn("초기 데이터 로드 실패");
           if (isMountedRef.current) {
             setIsDataReady(true); // 실패해도 UI 표시
           }

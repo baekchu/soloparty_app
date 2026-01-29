@@ -14,6 +14,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback, useRef } from 'react';
 import { safeGetItem, safeSetItem, safeRemoveItem } from '../utils/asyncStorageManager';
+import { encryptData, decryptData, secureLog, maskSensitiveData } from '../utils/secureStorage';
 import * as Device from 'expo-device';
 import * as Crypto from 'expo-crypto';
 
@@ -95,24 +96,6 @@ const verifyDataIntegrity = async (data: UserData): Promise<boolean> => {
   return computedHash === dataHash;
 };
 
-// Base64 인코딩/디코딩 (React Native 호환)
-const encryptData = (data: string): string => {
-  // React Native에서는 btoa 사용
-  try {
-    return btoa(unescape(encodeURIComponent(data)));
-  } catch {
-    return data;
-  }
-};
-
-const decryptData = (encrypted: string): string => {
-  try {
-    return decodeURIComponent(escape(atob(encrypted)));
-  } catch {
-    return encrypted;
-  }
-};
-
 // ==================================================
 
 export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -135,7 +118,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (encryptedUserId) {
         try {
-          storedUserId = decryptData(encryptedUserId);
+          storedUserId = await decryptData(encryptedUserId);
         } catch {
           // 복호화 실패 시 새 사용자로 처리
           encryptedUserId = null;
@@ -148,7 +131,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const newInviteCode = await generateInviteCode();
         
         // 암호화하여 저장
-        await safeSetItem(STORAGE_KEYS.USER_ID_SECURE, encryptData(storedUserId));
+        await safeSetItem(STORAGE_KEYS.USER_ID_SECURE, await encryptData(storedUserId));
 
         // 사용자 데이터 생성
         const userDataWithoutHash = {
@@ -174,7 +157,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (isMountedRef.current) {
           setInviteCode(newInviteCode);
         }
-        console.log('✅ 새 사용자 생성:', storedUserId.slice(0, 8) + '... (초대코드: ' + newInviteCode + ')');
+        secureLog.info('✅ 새 사용자 생성:', maskSensitiveData(storedUserId), '(초대코드: ' + newInviteCode + ')');
       } else {
         // 기존 사용자 데이터 로드 및 검증
         const userDataStr = await safeGetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`);
@@ -184,7 +167,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           // 데이터 무결성 검증
           const isValid = await verifyDataIntegrity(userData);
           if (!isValid) {
-            console.warn('⚠️ 데이터 무결성 검증 실패 - 데이터가 변조되었을 수 있습니다');
+            secureLog.warn('⚠️ 데이터 무결성 검증 실패 - 데이터가 변조되었을 수 있습니다');
           }
 
           // 마지막 활동 시간 업데이트
@@ -200,7 +183,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (isMountedRef.current) {
             setInviteCode(userData.inviteCode);
           }
-          console.log('✅ 기존 사용자 로그인:', storedUserId.slice(0, 8) + '... (초대코드: ' + userData.inviteCode + ')');
+          secureLog.info('✅ 기존 사용자 로그인:', maskSensitiveData(storedUserId), '(초대코드: ' + userData.inviteCode + ')');
         }
       }
 
@@ -208,7 +191,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setUserId(storedUserId);
       }
     } catch (error) {
-      console.error('❌ 사용자 초기화 실패:', error);
+      secureLog.error('❌ 사용자 초기화 실패:', error);
     } finally {
       setIsLoading(false);
     }
@@ -226,13 +209,13 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // 데이터 무결성 검증
         const isValid = await verifyDataIntegrity(userData);
         if (!isValid) {
-          console.warn('⚠️ 데이터 무결성 검증 실패');
+          secureLog.warn('⚠️ 데이터 무결성 검증 실패');
         }
         
         return userData;
       }
     } catch (error) {
-      console.error('❌ 사용자 데이터 로드 실패:', error);
+      secureLog.error('❌ 사용자 데이터 로드 실패:', error);
     }
     return null;
   }, [userId]);
@@ -244,7 +227,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       // 초대 코드 형식 검증 (보안 강화)
       if (!/^[A-Z0-9]{6}$/.test(inviterCode)) {
-        console.log('❌ 초대 코드 형식이 올바르지 않습니다:', inviterCode);
+        secureLog.warn('❌ 초대 코드 형식이 올바르지 않습니다');
         return false;
       }
 
@@ -282,17 +265,17 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               // 초대 내역 기록
               await saveInviteHistory(data.userId, userId, inviterCode);
 
-              console.log('✅ 초대 코드 등록 완료:', inviterCode);
+              secureLog.info('초대 코드 등록 완료:', maskSensitiveData(inviterCode));
               return true;
             }
           }
         }
       }
       
-      console.log('❌ 유효하지 않은 초대 코드:', inviterCode);
+      secureLog.warn('유효하지 않은 초대 코드:', maskSensitiveData(inviterCode));
       return false;
     } catch (error) {
-      console.error('❌ 초대 코드 등록 실패:', error);
+      secureLog.error('❌ 초대 코드 등록 실패');
       return false;
     }
   }, [userId, getUserData]);
@@ -310,7 +293,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
       await safeSetItem(STORAGE_KEYS.INVITE_HISTORY, JSON.stringify(history.slice(0, MAX_INVITE_HISTORY)));
     } catch (error) {
-      console.error('초대 내역 저장 실패:', error);
+      secureLog.error('초대 내역 저장 실패');
     }
   };
 

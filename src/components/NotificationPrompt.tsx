@@ -55,7 +55,7 @@ export const NotificationPrompt: React.FC<NotificationPromptProps> = ({ onClose 
           }, 300);
         }
       } catch (error) {
-        console.log('알림 권한 요청 실패:', error);
+        // 알림 권한 요청 실패는 치명적이지 않음 - 로그 생략
         if (mounted) onClose?.();
       }
     };

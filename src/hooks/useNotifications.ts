@@ -15,6 +15,7 @@ import {
   toggleNotifications as toggleNotificationsService,
   requestNotificationPermission,
 } from '../services/NotificationService';
+import { secureLog } from '../utils/secureStorage';
 
 export const useNotifications = () => {
   const [settings, setSettings] = useState<NotificationSettings>({
@@ -44,7 +45,7 @@ export const useNotifications = () => {
           }
         } catch (permError) {
           // Expo Go에서는 권한 확인 실패할 수 있음 (무시)
-          console.log('알림 권한 확인 실패 (Expo Go에서는 정상):', permError);
+          // 로그 생략 - 정상 동작
         }
         
         if (mounted) {
@@ -52,7 +53,7 @@ export const useNotifications = () => {
           setIsLoading(false);
         }
       } catch (error) {
-        console.error('설정 불러오기 실패:', error);
+        secureLog.error('설정 불러오기 실패');
         if (mounted) setIsLoading(false);
       }
     };
@@ -77,7 +78,7 @@ export const useNotifications = () => {
       
       return false;
     } catch (error) {
-      console.error('알림 토글 실패:', error);
+      secureLog.error('알림 토글 실패');
       return false;
     }
   }, []);
@@ -91,7 +92,7 @@ export const useNotifications = () => {
         return newSettings;
       });
     } catch (error) {
-      console.error('새 일정 알림 토글 실패:', error);
+      secureLog.error('새 일정 알림 토글 실패');
     }
   }, []);
 
@@ -104,7 +105,7 @@ export const useNotifications = () => {
         return newSettings;
       });
     } catch (error) {
-      console.error('리마인더 토글 실패:', error);
+      secureLog.error('리마인더 토글 실패');
     }
   }, []);
 
