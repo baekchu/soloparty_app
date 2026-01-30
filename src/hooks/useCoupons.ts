@@ -10,7 +10,7 @@
  * ========================================================================
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog } from '../utils/secureStorage';
 
@@ -183,8 +183,11 @@ export const useCoupons = () => {
     return () => { isMountedRef.current = false; };
   }, []);
 
-  // 사용 가능한 쿠폰 수
-  const availableCoupons = coupons.filter(c => !c.isUsed && c.expiresAt > Date.now());
+  // 사용 가능한 쿠폰 수 (useMemo로 최적화)
+  const availableCoupons = useMemo(
+    () => coupons.filter(c => !c.isUsed && c.expiresAt > Date.now()),
+    [coupons]
+  );
 
   // 포인트로 쿠폰 교환
   const exchangePointsForCoupon = useCallback(async (

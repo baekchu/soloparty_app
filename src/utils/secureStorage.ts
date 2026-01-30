@@ -20,7 +20,8 @@ const SALT_LENGTH = 16;
 // 프로덕션 빌드에서는 false, 개발 중에는 true
 
 /**
- * 안전한 로깅 - 프로덕션에서는 자동 제거
+ * 안전한 로깅 - 프로덕션에서는 완전 제거
+ * 에러도 프로덕션에서는 노출하지 않음 (보안 강화)
  */
 export const secureLog = {
   info: (...args: any[]) => {
@@ -30,8 +31,8 @@ export const secureLog = {
     if (__DEV__) console.warn(...args);
   },
   error: (...args: any[]) => {
-    // 에러는 프로덕션에서도 로그 (단, 민감한 정보 제외)
-    console.error(...args);
+    // 프로덕션에서도 에러는 제거 (민감한 정보 유출 방지)
+    if (__DEV__) console.error(...args);
   },
 };
 

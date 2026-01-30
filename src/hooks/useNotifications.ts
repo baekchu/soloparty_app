@@ -33,19 +33,19 @@ export const useNotifications = () => {
       try {
         const loadedSettings = await getNotificationSettings();
         
-        // 권한 상태와 설정 동기화 (안전하게)
+        // 권한 상태 확인 (알림이 enabled인 경우에만)
+        // 중요: 사용자가 끈 설정을 권한 상태로 덮어쓰지 않음
         try {
           const { status } = await Notifications.getPermissionsAsync();
-          if (status === 'granted' && !loadedSettings.enabled) {
-            loadedSettings.enabled = true;
-            await saveNotificationSettings(loadedSettings);
-          } else if (status !== 'granted' && loadedSettings.enabled) {
+          // 권한이 없는데 enabled가 true면 -> false로 변경
+          if (status !== 'granted' && loadedSettings.enabled) {
             loadedSettings.enabled = false;
             await saveNotificationSettings(loadedSettings);
           }
+          // 주의: 권한이 있다고 해서 자동으로 enabled를 true로 바꾸지 않음!
+          // 사용자가 앱 내에서 알림을 끈 경우를 존중
         } catch (permError) {
           // Expo Go에서는 권한 확인 실패할 수 있음 (무시)
-          // 로그 생략 - 정상 동작
         }
         
         if (mounted) {
@@ -83,30 +83,26 @@ export const useNotifications = () => {
     }
   }, []);
 
-  // 새 일정 알림 토글
-  const toggleNewEventAlerts = useCallback(async (enabled: boolean) => {
-    try {
-      setSettings(prev => {
-        const newSettings = { ...prev, newEventAlerts: enabled };
-        saveNotificationSettings(newSettings);
-        return newSettings;
+  // 새 일정 알림 토글 (async 불필요 - 상태 업데이트만 수행)
+  const toggleNewEventAlerts = useCallback((enabled: boolean) => {
+    setSettings(prev => {
+      const newSettings = { ...prev, newEventAlerts: enabled };
+      saveNotificationSettings(newSettings).catch(() => {
+        secureLog.error('새 일정 알림 설정 저장 실패');
       });
-    } catch (error) {
-      secureLog.error('새 일정 알림 토글 실패');
-    }
+      return newSettings;
+    });
   }, []);
 
-  // 일정 리마인더 토글
-  const toggleEventReminders = useCallback(async (enabled: boolean) => {
-    try {
-      setSettings(prev => {
-        const newSettings = { ...prev, eventReminders: enabled };
-        saveNotificationSettings(newSettings);
-        return newSettings;
+  // 일정 리마인더 토글 (async 불필요)
+  const toggleEventReminders = useCallback((enabled: boolean) => {
+    setSettings(prev => {
+      const newSettings = { ...prev, eventReminders: enabled };
+      saveNotificationSettings(newSettings).catch(() => {
+        secureLog.error('리마인더 설정 저장 실패');
       });
-    } catch (error) {
-      secureLog.error('리마인더 토글 실패');
-    }
+      return newSettings;
+    });
   }, []);
 
   // 권한 요청

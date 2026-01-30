@@ -154,6 +154,13 @@ export const toggleNotifications = async (enabled: boolean): Promise<boolean> =>
       if (!hasPermission) {
         return false;
       }
+    } else {
+      // 알림 비활성화 시 모든 예약된 알림 취소
+      try {
+        await Notifications.cancelAllScheduledNotificationsAsync();
+      } catch {
+        // 취소 실패해도 설정은 저장
+      }
     }
 
     const settings = await getNotificationSettings();

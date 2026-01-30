@@ -198,35 +198,60 @@ export const StartupAdModal = memo<StartupAdModalProps>(({ isDark, onClose }) =>
   const [config, setConfig] = useState<AdConfig | null>(null);
   const [imgError, setImgError] = useState(false);
   const mountedRef = useRef(true);
+  const initRef = useRef(false); // 중복 초기화 방지
 
   // 초기화
   useEffect(() => {
+    // 이미 초기화됐으면 스킵
+    if (initRef.current) return;
+    initRef.current = true;
     mountedRef.current = true;
+    
     let timerId: ReturnType<typeof setTimeout> | null = null;
     
-    (async () => {
-      // 1. 숨김 기간 확인 (먼저 체크 - 불필요한 fetch 방지)
+    const init = async () => {
       try {
+        // 1. 숨김 기간 확인 (먼저 체크 - 불필요한 fetch 방지)
         const hideUntil = await AsyncStorage.getItem(STORAGE_KEYS.HIDE_UNTIL);
-        if (hideUntil && Date.now() < new Date(hideUntil).getTime()) return;
-      } catch {}
-      
-      // 2. 광고 설정 로드
-      const adConfig = await AdConfigLoader.load();
-      if (!mountedRef.current || !adConfig.enabled) return;
-      
-      // 3. 모달 표시
-      setConfig(adConfig);
-      timerId = setTimeout(() => {
-        if (mountedRef.current) setVisible(true);
-      }, CONFIG.MODAL_DELAY);
-    })();
+        if (hideUntil && Date.now() < new Date(hideUntil).getTime()) {
+          onClose?.();
+          return;
+        }
+        
+        // 2. 광고 설정 로드
+        const adConfig = await AdConfigLoader.load();
+        if (!mountedRef.current) return;
+        
+        if (!adConfig.enabled) {
+          onClose?.();
+          return;
+        }
+        
+        // 3. 모달 표시 (약간의 딜레이 후)
+        setConfig(adConfig);
+        timerId = setTimeout(() => {
+          if (mountedRef.current) {
+            setVisible(true);
+          }
+        }, CONFIG.MODAL_DELAY);
+      } catch {
+        // 에러 시에도 기본 광고 표시 (enabled면)
+        if (mountedRef.current && DEFAULT_CONFIG.enabled) {
+          setConfig(DEFAULT_CONFIG);
+          timerId = setTimeout(() => {
+            if (mountedRef.current) setVisible(true);
+          }, CONFIG.MODAL_DELAY);
+        }
+      }
+    };
+    
+    init();
     
     return () => {
       mountedRef.current = false;
       if (timerId) clearTimeout(timerId);
     };
-  }, []);
+  }, [onClose]);
 
   // 하루동안 숨기기
   const hideForDay = useCallback(() => {

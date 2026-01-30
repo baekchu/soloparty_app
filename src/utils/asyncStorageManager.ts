@@ -1,7 +1,8 @@
 /**
- * AsyncStorage 전역 관리자
+ * AsyncStorage 전역 관리자 (성능 최적화 버전)
  * - 앱 시작 시 AsyncStorage 초기화 보장
  * - 모든 AsyncStorage 접근을 순차적으로 처리
+ * - 배치 작업 지원으로 성능 향상
  * - 크래시 방지
  */
 
@@ -10,6 +11,11 @@ import { secureLog } from './secureStorage';
 
 let isReady = false;
 let initPromise: Promise<void> | null = null;
+
+// 배치 쓰기 큐
+let writeQueue: Array<[string, string]> = [];
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+const WRITE_BATCH_DELAY = 100; // 100ms 내의 쓰기는 배치로 처리
 
 /**
  * AsyncStorage 초기화 (앱 시작 시 한 번만 호출)
@@ -26,8 +32,8 @@ export const initAsyncStorage = async (): Promise<void> => {
     try {
       secureLog.info('🔧 AsyncStorage 초기화 시작...');
       
-      // 1초 대기 (네이티브 모듈 완전 로드)
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // 300ms 대기 (네이티브 모듈 완전 로드 - 더 단축)
+      await new Promise(resolve => setTimeout(resolve, 300));
       
       // 테스트 쓰기/읽기
       await AsyncStorage.setItem('@storage_init_test', 'ok');
@@ -42,8 +48,8 @@ export const initAsyncStorage = async (): Promise<void> => {
       }
     } catch (error) {
       secureLog.error('❌ AsyncStorage 초기화 실패');
-      // 2초 추가 대기 후 강제 진행
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // 500ms 추가 대기 후 강제 진행 (더 단축)
+      await new Promise(resolve => setTimeout(resolve, 500));
       isReady = true;
     }
   })();
@@ -61,6 +67,35 @@ const ensureReady = async (): Promise<void> => {
 };
 
 /**
+ * 배치 쓰기 실행
+ */
+const flushWriteQueue = async (): Promise<void> => {
+  if (writeQueue.length === 0) return;
+  
+  const itemsToWrite = [...writeQueue];
+  writeQueue = [];
+  writeTimer = null;
+  
+  try {
+    if (itemsToWrite.length === 1) {
+      await AsyncStorage.setItem(itemsToWrite[0][0], itemsToWrite[0][1]);
+    } else {
+      await AsyncStorage.multiSet(itemsToWrite);
+    }
+  } catch (error) {
+    secureLog.error('AsyncStorage 배치 쓰기 실패');
+    // 개별 쓰기로 폴백
+    for (const [key, value] of itemsToWrite) {
+      try {
+        await AsyncStorage.setItem(key, value);
+      } catch {
+        // 개별 아이템 실패는 무시
+      }
+    }
+  }
+};
+
+/**
  * 안전한 getItem
  */
 export const safeGetItem = async (key: string): Promise<string | null> => {
@@ -74,12 +109,25 @@ export const safeGetItem = async (key: string): Promise<string | null> => {
 };
 
 /**
- * 안전한 setItem
+ * 안전한 setItem (배치 지원)
+ * @param immediate true면 즉시 저장, false면 배치 처리
  */
-export const safeSetItem = async (key: string, value: string): Promise<boolean> => {
+export const safeSetItem = async (key: string, value: string, immediate: boolean = true): Promise<boolean> => {
   await ensureReady();
+  
   try {
-    await AsyncStorage.setItem(key, value);
+    if (immediate) {
+      await AsyncStorage.setItem(key, value);
+      return true;
+    }
+    
+    // 배치 처리
+    writeQueue.push([key, value]);
+    
+    if (!writeTimer) {
+      writeTimer = setTimeout(flushWriteQueue, WRITE_BATCH_DELAY);
+    }
+    
     return true;
   } catch (error) {
     secureLog.error('AsyncStorage setItem 실패');
@@ -127,3 +175,41 @@ export const safeMultiSet = async (keyValuePairs: [string, string][]): Promise<b
     return false;
   }
 };
+
+/**
+ * 안전한 multiRemove
+ */
+export const safeMultiRemove = async (keys: string[]): Promise<boolean> => {
+  await ensureReady();
+  try {
+    await AsyncStorage.multiRemove(keys);
+    return true;
+  } catch (error) {
+    secureLog.error('AsyncStorage multiRemove 실패');
+    return false;
+  }
+};
+
+/**
+ * 모든 키 가져오기
+ */
+export const safeGetAllKeys = async (): Promise<readonly string[]> => {
+  await ensureReady();
+  try {
+    return await AsyncStorage.getAllKeys();
+  } catch (error) {
+    secureLog.error('AsyncStorage getAllKeys 실패');
+    return [];
+  }
+};
+
+/**
+ * 배치 쓰기 강제 실행 (앱 종료 시 등)
+ */
+export const flushPendingWrites = async (): Promise<void> => {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+  }
+  await flushWriteQueue();
+};
+

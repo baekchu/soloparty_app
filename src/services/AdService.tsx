@@ -106,22 +106,54 @@ const AD_CONFIG = {
   },
 };
 
+// ==================== 보안 설정 ====================
+// 광고 시청 검증을 위한 토큰 생성 (서버 검증용 - 나중에 서버 연동 시 사용)
+const generateAdToken = (): string => {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).slice(2, 10);
+  return `ad_${timestamp}_${random}`;
+};
+
+// 광고 시청 기록 (조작 방지)
+let adWatchHistory: { token: string; timestamp: number }[] = [];
+const MAX_AD_HISTORY = 20;
+
+const recordAdWatch = (token: string): void => {
+  adWatchHistory.unshift({ token, timestamp: Date.now() });
+  adWatchHistory = adWatchHistory.slice(0, MAX_AD_HISTORY);
+};
+
+const isValidAdWatch = (token: string): boolean => {
+  // 중복 토큰 방지
+  return !adWatchHistory.some(record => record.token === token);
+};
+
 // ==================== 플레이스홀더 Hook ====================
 // 네이티브 설정 전까지 크래시 없이 동작
 
 export const useRewardedAd = (onRewardEarned?: (amount: number) => void) => {
   const [loaded] = useState(false);
   const [loading] = useState(false);
+  const adTokenRef = useRef<string | null>(null);
 
   const showAd = useCallback(() => {
+    // 보안: 광고 토큰 생성
+    const token = generateAdToken();
+    adTokenRef.current = token;
+    
     Alert.alert(
       '광고 준비 중',
       '광고 시스템이 아직 설정되지 않았습니다.\n개발 중인 기능입니다.',
       [{ text: '확인' }]
     );
+    
+    // 실제 광고 연동 시:
+    // 1. 광고 시청 시작 시 토큰 생성
+    // 2. 광고 완료 시 토큰 검증
+    // 3. 서버에 토큰 전송하여 이중 검증 (선택)
   }, []);
 
-  return { showAd, loaded, loading };
+  return { showAd, loaded, loading, adToken: adTokenRef.current };
 };
 
 export const useInterstitialAd = () => {
@@ -133,13 +165,13 @@ export const useInterstitialAd = () => {
   }, []);
 
   const showAdOnNavigation = useCallback(async (probability: number = AD_CONFIG.interstitialProbability) => {
-    // 광고 간격 확인
+    // 광고 간격 확인 (최소 1분)
     const now = Date.now();
     if (now - lastAdTimeRef.current < AD_CONFIG.minAdInterval) {
       return;
     }
     
-    // 확률 기반 표시
+    // 확률 기반 표시 (암호학적 랜덤 권장 - 나중에 적용)
     if (Math.random() < probability) {
       lastAdTimeRef.current = now;
       // 비활성화 상태
