@@ -5,12 +5,13 @@
  *   - 포인트 잔액 표시
  *   - 공짜 파티 참여
  *   - 친구 초대
- *   - 광고 보기 (네이티브 빌드 후)
+ *   - 광고 보기로 포인트 적립
+ *   - 포인트는 자동으로 클라우드 동기화 (서버 연동 시)
  * 
  * ========================================================================
  */
 
-import React, { memo, useCallback, useMemo } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -19,7 +20,6 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
-  Dimensions,
 } from 'react-native';
 import { isTablet } from '../utils/responsive';
 
@@ -28,15 +28,21 @@ interface PointsModalProps {
   onClose: () => void;
   points: number;
   onSpendPoints: (amount: number, reason: string) => Promise<boolean>;
+  onWatchAd: () => Promise<{ success: boolean; message: string }>;
   isDark: boolean;
   dailyAdCount?: number;
   maxDailyAds?: number;
+  canWatchAd?: boolean;
 }
 
-const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark, dailyAdCount = 0, maxDailyAds = 10 }: PointsModalProps) => {
+const PointsModal = memo(({ 
+  visible, onClose, points, onSpendPoints, onWatchAd, 
+  isDark, dailyAdCount = 0, maxDailyAds = 10, canWatchAd: canWatchAdProp 
+}: PointsModalProps) => {
   
   const remainingAds = useMemo(() => (maxDailyAds || 10) - (dailyAdCount || 0), [maxDailyAds, dailyAdCount]);
-  const canWatchAd = useMemo(() => remainingAds > 0, [remainingAds]);
+  const canWatchAd = canWatchAdProp ?? remainingAds > 0;
+  const [isProcessing, setIsProcessing] = useState(false);
   
   const handleFreeParty = useCallback(() => {
     if (points >= 50000) {
@@ -73,7 +79,7 @@ const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark, dai
     );
   }, [onClose]);
 
-  const handleWatchAd = useCallback(() => {
+  const handleWatchAd = useCallback(async () => {
     if (!canWatchAd) {
       Alert.alert(
         '🚫 광고 시청 한도 초과',
@@ -83,12 +89,20 @@ const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark, dai
       return;
     }
     
-    Alert.alert(
-      '광고 시청',
-      `남은 광고 시청: ${remainingAds}/${maxDailyAds}회\n(6시간마다 리셋)\n\n광고 시스템은 네이티브 빌드 후 사용 가능합니다.`,
-      [{ text: '확인' }]
-    );
-  }, [canWatchAd, remainingAds, maxDailyAds]);
+    setIsProcessing(true);
+    try {
+      const result = await onWatchAd();
+      if (result.success) {
+        Alert.alert('🎉 적립 완료', result.message, [{ text: '확인' }]);
+      } else {
+        Alert.alert('알림', result.message, [{ text: '확인' }]);
+      }
+    } catch {
+      Alert.alert('오류', '광고 시청 중 오류가 발생했습니다.', [{ text: '확인' }]);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [canWatchAd, maxDailyAds, onWatchAd]);
 
   return (
     <Modal
@@ -196,28 +210,28 @@ const PointsModal = memo(({ visible, onClose, points, onSpendPoints, isDark, dai
                 </Text>
               </TouchableOpacity>
 
-              {/* 광고 보기 (비활성화) */}
+              {/* 광고 보기 */}
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={handleWatchAd}
-                disabled={!canWatchAd}
+                disabled={!canWatchAd || isProcessing}
                 style={[
                   styles.secondaryButton,
                   { 
                     backgroundColor: isDark ? '#1e293b' : '#f8f9fa',
                     borderColor: isDark ? '#334155' : '#e5e7eb',
-                    opacity: canWatchAd ? 1 : 0.4,
+                    opacity: canWatchAd && !isProcessing ? 1 : 0.4,
                   }
                 ]}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.secondaryButtonText, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                    <Text style={[styles.secondaryButtonText, { color: isDark ? '#e2e8f0' : '#475569' }]}>
                       📺 광고 보고 포인트 받기
                     </Text>
-                    <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#475569' : '#cbd5e1' }]}>
+                    <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
                       {canWatchAd 
-                        ? `남은 횟수: ${remainingAds}/${maxDailyAds}회 (6시간마다 리셋)` 
+                        ? `+50P · 남은 횟수: ${remainingAds}/${maxDailyAds}회` 
                         : `6시간 후 다시 시청 가능 (${dailyAdCount}/${maxDailyAds})`
                       }
                     </Text>

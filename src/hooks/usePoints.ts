@@ -23,8 +23,8 @@ import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog, encryptData, decryptData } from '../utils/secureStorage';
 import PointsSecurityService, { 
   SecurePointsData,
-  Transaction,
 } from '../services/PointsSecurityService';
+import PointsAutoSyncService from '../services/PointsAutoSyncService';
 
 // ==================== 상수 정의 ====================
 const INITIAL_POINTS = 2500; // 가입 축하 포인트
@@ -144,9 +144,17 @@ export const usePoints = () => {
         let pointsData = await PointsSecurityService.loadSecurePointsData();
         
         if (!pointsData) {
-          // 신규 사용자 - 초기 데이터 생성
-          pointsData = await PointsSecurityService.createInitialPointsData(INITIAL_POINTS);
-          secureLog.info('🎉 신규 사용자 - 초기 포인트 생성');
+          // 자동 복원 시도 (앱 재설치 등)
+          const restoredBalance = await PointsAutoSyncService.tryAutoRestore();
+          if (restoredBalance !== null && restoredBalance > 0) {
+            // 복원된 잔액으로 데이터 재생성
+            pointsData = await PointsSecurityService.createInitialPointsData(restoredBalance);
+            secureLog.info('🔄 자동 복원 성공 - 포인트:', restoredBalance);
+          } else {
+            // 신규 사용자 - 초기 데이터 생성
+            pointsData = await PointsSecurityService.createInitialPointsData(INITIAL_POINTS);
+            secureLog.info('🎉 신규 사용자 - 초기 포인트 생성');
+          }
         }
         
         // 3. 광고 제한 데이터 로드
@@ -281,13 +289,12 @@ export const usePoints = () => {
       const saved = await PointsSecurityService.saveSecurePointsData(newData);
       if (!saved) return false;
       
+      // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
+      const freshData = await PointsSecurityService.loadSecurePointsData();
+      
       if (isMountedRef.current) {
         setBalance(newBalance);
-        setSecureData({ 
-          ...newData, 
-          integrity_hash: secureData.integrity_hash,
-          updated_at: Date.now(),
-        });
+        if (freshData) setSecureData(freshData);
         setHistory(prev => [{
           id: tx.id,
           amount,
@@ -384,13 +391,12 @@ export const usePoints = () => {
         }),
       ]);
       
+      // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
+      const freshData = await PointsSecurityService.loadSecurePointsData();
+      
       if (isMountedRef.current) {
         setBalance(newBalance);
-        setSecureData({
-          ...newData,
-          integrity_hash: secureData.integrity_hash,
-          updated_at: now,
-        });
+        if (freshData) setSecureData(freshData);
         setAdCount(newAdCount);
         setAdResetTime(currentResetTime);
         setLastAdTimestamp(now);
@@ -435,13 +441,12 @@ export const usePoints = () => {
       const saved = await PointsSecurityService.saveSecurePointsData(newData);
       if (!saved) return false;
       
+      // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
+      const freshData = await PointsSecurityService.loadSecurePointsData();
+      
       if (isMountedRef.current) {
         setBalance(newBalance);
-        setSecureData({
-          ...newData,
-          integrity_hash: secureData.integrity_hash,
-          updated_at: Date.now(),
-        });
+        if (freshData) setSecureData(freshData);
         setHistory(prev => [{
           id: tx.id,
           amount: -amount,
@@ -456,6 +461,20 @@ export const usePoints = () => {
       return false;
     }
   }, [balance, secureData]);
+
+  // ==================== 포인트 자동 동기화 ====================
+  // 포인트 변경 시 자동 백업
+  useEffect(() => {
+    if (!isLoading && balance > 0) {
+      PointsAutoSyncService.autoBackup().catch(() => {});
+    }
+  }, [balance, isLoading]);
+
+  // 앱 시작 시 자동 동기화 시작
+  useEffect(() => {
+    PointsAutoSyncService.startAutoSync();
+    return () => PointsAutoSyncService.stopAutoSync();
+  }, []);
 
   // ==================== 광고 제한 리셋 (테스트용) ====================
   const resetAdLimit = useCallback(async (): Promise<void> => {

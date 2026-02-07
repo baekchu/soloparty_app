@@ -13,8 +13,10 @@ import * as Crypto from 'expo-crypto';
 import { Platform } from 'react-native';
 
 // ==================== 보안 설정 ====================
-const ENCRYPTION_KEY_ITERATIONS = 10000;
-const SALT_LENGTH = 16;
+// 주의: expo-crypto는 비동기 해싱이므로 반복 횟수 조절 (성능 균형)
+const ENCRYPTION_KEY_ITERATIONS = 100;
+const SALT_LENGTH = 32;
+const MAX_ENCRYPT_SIZE = 10_000; // 10KB 이상 데이터 암호화 차단 (DoS 방지)
 
 // __DEV__는 React Native 전역 변수로 자동 제공됨
 // 프로덕션 빌드에서는 false, 개발 중에는 true
@@ -57,6 +59,11 @@ const getDeviceKey = async (): Promise<string> => {
  */
 export const encryptData = async (data: string): Promise<string> => {
   try {
+    if (!data || typeof data !== 'string') return '';
+    if (data.length > MAX_ENCRYPT_SIZE) {
+      secureLog.warn('⚠️ 암호화 대상 크기 초과');
+      return data;
+    }
     const deviceKey = await getDeviceKey();
     const salt = await Crypto.getRandomBytesAsync(SALT_LENGTH);
     const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -101,12 +108,18 @@ export const encryptData = async (data: string): Promise<string> => {
  */
 export const decryptData = async (encrypted: string): Promise<string> => {
   try {
+    if (!encrypted || typeof encrypted !== 'string') return '';
     if (!encrypted.includes(':')) {
       // 이전 버전 base64 데이터 (마이그레이션)
       return encrypted;
     }
     
-    const [saltHex, encryptedHex] = encrypted.split(':');
+    const parts = encrypted.split(':');
+    if (parts.length !== 2) return encrypted;
+    const [saltHex, encryptedHex] = parts;
+    if (!saltHex || !encryptedHex || !/^[0-9a-f]+$/i.test(saltHex) || !/^[0-9a-f]+$/i.test(encryptedHex)) {
+      return encrypted;
+    }
     const deviceKey = await getDeviceKey();
     
     // 키 파생 (암호화와 동일)

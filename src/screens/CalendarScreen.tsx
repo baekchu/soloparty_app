@@ -35,6 +35,10 @@ import { CompositeNavigationProp } from "@react-navigation/native";
 import MonthCalendar from "../components/MonthCalendar";
 import { NotificationPrompt } from "../components/NotificationPrompt";
 import { StartupAdModal } from "../components/StartupAdModal";
+import PointsModal from "../components/PointsModal";
+// [광고 비활성화] 나중에 활성화 시 아래 주석 해제
+// import InFeedAdBanner from "../components/InFeedAdBanner";
+import usePoints from "../hooks/usePoints";
 import { sendNewEventNotification } from "../services/NotificationService";
 import { secureLog } from "../utils/secureStorage";
 
@@ -124,12 +128,23 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
   const [isPanelExpanded, setIsPanelExpanded] = useState(false);
   const [heightUpdateTrigger, setHeightUpdateTrigger] = useState(0);
+  const [showPointsModal, setShowPointsModal] = useState(false);
 
   // ==================== Contexts ====================
   const { theme } = useTheme();
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } =
     useRegion();
   const insets = useSafeAreaInsets();
+
+  // ==================== 포인트 시스템 ====================
+  const {
+    balance: points,
+    adCount: dailyAdCount,
+    canWatchAd,
+    maxAds,
+    watchAdForPoints,
+    spendPoints,
+  } = usePoints();
 
   // ==================== Dimensions (메모이제이션) ====================
   const [dimensions, setDimensions] = useState(() => ({
@@ -737,6 +752,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         flex: 1,
         backgroundColor: isDark ? "#0f172a" : "#ffffff",
         paddingTop: insets.top,
+        paddingBottom: Platform.OS === "android" ? insets.bottom : 0,
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}
@@ -848,10 +864,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
           {/* 오른쪽 영역 - 고정 너비 */}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            {/* 포인트/쿠폰 버튼 */}
-            {/* <TouchableOpacity
+            {/* 포인트/쿠폰 버튼 
+            <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => navigation.navigate('Coupon')}
+              onPress={() => setShowPointsModal(true)}
               style={{
                 paddingHorizontal: 10,
                 paddingVertical: 6,
@@ -871,7 +887,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>
                 {points >= 10000 ? `${Math.floor(points / 1000)}k` : points.toLocaleString()}
               </Text>
-            </TouchableOpacity> */}
+            </TouchableOpacity>*/}
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => navigation.navigate("Settings")}
@@ -1303,14 +1319,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           position: "absolute",
           left: 0,
           right: 0,
-          bottom: Platform.OS === "android" ? insets.bottom : 0,
+          bottom: 0,
           height: panelHeight,
           backgroundColor: isDark ? "#a78bfa" : "#ec4899",
           borderTopLeftRadius: 24,
           borderTopRightRadius: 24,
           paddingHorizontal: 20,
           paddingTop: 12,
-          paddingBottom: Platform.OS === "android" ? 0 : 30,
+          paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 30) : insets.bottom,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: -4 },
           shadowOpacity: 0.15,
@@ -1414,11 +1430,16 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             }}
           >
           {upcomingEvents.length === 0 ? (
-            <Text
-              style={{ color: "#e0e7ff", fontSize: 14, fontStyle: "italic" }}
-            >
-              예정된 일정이 없습니다
-            </Text>
+            <View>
+              <Text
+                style={{ color: "#e0e7ff", fontSize: 14, fontStyle: "italic", marginBottom: 16 }}
+              >
+                예정된 일정이 없습니다
+              </Text>
+              {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
+              <InFeedAdBanner index={0} isDark={isDark} />
+              */}
+            </View>
           ) : (
             (() => {
               // 전체 일정 보기: 날짜별로 그룹화
@@ -1547,8 +1568,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                         }}
                       >
                         {eventsForDate.map((item, eventIndex) => (
+                          <React.Fragment key={`${date}-${item.event.id}-${eventIndex}`}>
                           <View
-                            key={`${date}-${item.event.id}-${eventIndex}`}
                             style={{
                               backgroundColor: "rgba(255, 255, 255, 0.15)",
                               borderRadius: 16,
@@ -1622,6 +1643,17 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                               </Text>
                             </TouchableOpacity>
                           </View>
+                          {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
+                          {eventsForDate.length >= 3
+                            ? (eventIndex + 1) % 3 === 0 && (
+                                <InFeedAdBanner index={eventIndex} isDark={isDark} />
+                              )
+                            : eventIndex === eventsForDate.length - 1 && (
+                                <InFeedAdBanner index={eventIndex} isDark={isDark} />
+                              )
+                          }
+                          */}
+                          </React.Fragment>
                         ))}
                       </View>
                     </View>
@@ -1630,8 +1662,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               } else {
                 // 특정 날짜 선택: 카드 스타일
                 return upcomingEvents.map(({ date, event }, index) => (
+                  <React.Fragment key={`${date}-${event.id}-${index}`}>
                   <View
-                    key={`${date}-${event.id}-${index}`}
                     style={{
                       backgroundColor: "rgba(255, 255, 255, 0.15)",
                       borderRadius: 16,
@@ -1705,6 +1737,17 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                       </Text>
                     </TouchableOpacity>
                   </View>
+                  {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
+                  {upcomingEvents.length >= 3
+                    ? (index + 1) % 3 === 0 && (
+                        <InFeedAdBanner index={index} isDark={isDark} />
+                      )
+                    : index === upcomingEvents.length - 1 && (
+                        <InFeedAdBanner index={index} isDark={isDark} />
+                      )
+                  }
+                  */}
+                  </React.Fragment>
                 ));
               }
             })()
@@ -1716,16 +1759,16 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         <View style={{ height: 20, backgroundColor: "transparent" }} />
       </Animated.View>
 
-      {/* 안드로이드 하단바 배경 */}
+      {/* 안드로이드 네비게이션 바 배경 - 다크모드 대응 */}
       {Platform.OS === "android" && insets.bottom > 0 && (
         <View
           style={{
             position: "absolute",
             left: 0,
             right: 0,
-            bottom: 0,
+            bottom: -insets.bottom,
             height: insets.bottom,
-            backgroundColor: "#ffffff",
+            backgroundColor: isDark ? "#0f172a" : "#ffffff",
           }}
         />
       )}
@@ -1754,6 +1797,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           onClose={() => setShowAdModal(false)}
         />
       )}
+
+      {/* ==================== 포인트 모달 ==================== */}
+      <PointsModal
+        visible={showPointsModal}
+        onClose={() => setShowPointsModal(false)}
+        points={points}
+        onSpendPoints={spendPoints}
+        onWatchAd={watchAdForPoints}
+        isDark={isDark}
+        dailyAdCount={dailyAdCount}
+        maxDailyAds={maxAds}
+        canWatchAd={canWatchAd}
+      />
     </View>
   );
 }

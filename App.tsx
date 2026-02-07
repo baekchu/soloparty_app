@@ -25,6 +25,7 @@ import { RegionProvider } from "./src/contexts/RegionContext";
 
 // Utils
 import { initAsyncStorage } from "./src/utils/asyncStorageManager";
+import { AdManager } from "./src/services/AdService";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -91,6 +92,9 @@ function AppContent() {
     const initApp = async () => {
       try {
         await initAsyncStorage();
+        
+        // 광고 시스템 초기화 (백그라운드)
+        AdManager.initialize().catch(() => {});
         
         // 딥링크 체크 (앱이 꺼져있다가 열릴 때)
         const initialUrl = await Linking.getInitialURL();

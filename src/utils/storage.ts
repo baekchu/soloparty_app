@@ -55,7 +55,12 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
   try {
     const response = await fetch(url, { 
       signal: controller.signal,
-      headers: { 'Cache-Control': 'no-cache' }
+      headers: { 
+        'Cache-Control': 'no-cache',
+        'Accept': 'application/json',
+      },
+      // SSRF 방지: redirect 제한
+      redirect: 'error',
     });
     
     if (!response.ok) {
@@ -73,9 +78,11 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     // 2단계 파싱만 (간소화) - 안전한 파싱 사용
     const parsed = safeJSONParse<EventsByDate>(text, {});
     if (Object.keys(parsed).length > 0) {
+      clearTimeout(timeoutId);
       return parsed;
     }
     // 정제 후 재시도
+    clearTimeout(timeoutId);
     return safeJSONParse<EventsByDate>(cleanJSON(text), {});
   } catch (error: any) {
     if (error.name === 'AbortError') {
@@ -85,6 +92,8 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     }
     clearTimeout(timeoutId);
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
@@ -231,10 +240,11 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
     }
     
     const jsonString = JSON.stringify(events);
-    const sizeInBytes = new Blob([jsonString]).size;
+    // React Native에서 Blob 미지원 → 문자열 길이로 크기 추정 (UTF-8 평균 1~2 bytes/char)
+    const estimatedSize = jsonString.length * 2;
     
     // 1MB 초과 방지
-    if (sizeInBytes > 1024 * 1024) {
+    if (estimatedSize > 1024 * 1024) {
       secureLog.warn('⚠️ 캀시 데이터 크기 초과, 저장 스킵');
       return;
     }

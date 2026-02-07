@@ -19,6 +19,8 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
+// [광고 비활성화] 나중에 활성화 시 아래 주석 해제
+// import InFeedAdBanner from '../components/InFeedAdBanner';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'EventDetail'>;
@@ -35,13 +37,14 @@ const SHARE_CONFIG = {
   title: '솔로파티',
 } as const;
 
-// 보안: URL 검증 함수
+// 보안: URL 검증 함수 (프로토콜 + 도메인 검증)
 const isValidUrl = (url: string): boolean => {
   if (!url || typeof url !== 'string') return false;
   const trimmed = url.trim();
-  // javascript:, data:, vbscript: 등 위험한 프로토콜 차단
-  if (/^(javascript|data|vbscript):/i.test(trimmed)) return false;
-  return /^https?:\/\//i.test(trimmed) || !/^[a-z]+:/i.test(trimmed);
+  // javascript:, data:, vbscript:, file: 등 위험한 프로토콜 차단
+  if (/^(javascript|data|vbscript|file|ftp):/i.test(trimmed)) return false;
+  // http/https만 허용
+  return /^https?:\/\/.+/i.test(trimmed);
 };
 
 // 보안: 텍스트 이스케이프 (XSS 방지)
@@ -149,11 +152,17 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     };
   }, [event.maleCapacity, event.femaleCapacity]);
   
-  // 안전한 URL 생성 (memoized)
+  // 안전한 URL 생성 (memoized) - http/https만 허용
   const safeLink = useMemo(() => {
-    if (!event.link || !isValidUrl(event.link)) return null;
-    const trimmed = event.link.trim();
-    return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+    if (!event.link || !isValidUrl(event.link)) {
+      // http가 없는 경우 https 추가 후 재검증
+      if (event.link && !event.link.startsWith('http')) {
+        const withHttps = `https://${event.link.trim()}`;
+        return isValidUrl(withHttps) ? withHttps : null;
+      }
+      return null;
+    }
+    return event.link.trim();
   }, [event.link]);
   
   // 링크 열기 (보안 강화)
@@ -351,7 +360,9 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             )}
           </View>
         </View>
-        
+          {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
+        <InFeedAdBanner index={0} isDark={isDark} />
+          */}
         {/* 장소 정보 */}
         <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
           <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a', marginBottom: 16 }]}>
@@ -423,7 +434,11 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             <Text style={[styles.linkArrow, { color: isDark ? '#f472b6' : '#ec4899' }]}>→</Text>
           </TouchableOpacity>
         )}
+ {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
+        <InFeedAdBanner index={1} isDark={isDark} />
+ */}
       </ScrollView>
+       
       
       {/* 하단 참가 버튼 */}
       <View style={[styles.bottomBar, { backgroundColor: isDark ? '#1e293b' : '#ffffff', paddingBottom: insets.bottom + 16 }]}>

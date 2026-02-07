@@ -1,23 +1,29 @@
 import React, { Component, ReactNode } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { secureLog } from '../utils/secureStorage';
 
 interface Props {
   children: ReactNode;
+  fallback?: ReactNode;
 }
 
 interface State {
   hasError: boolean;
   error: Error | null;
+  errorCount: number;
 }
+
+// 에러 보고 큐 (네트워크 전송 대비)
+const errorQueue: Array<{ message: string; timestamp: number; platform: string }> = [];
+const MAX_ERROR_QUEUE = 20;
 
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, errorCount: 0 };
   }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
   }
 
@@ -26,9 +32,24 @@ export class ErrorBoundary extends Component<Props, State> {
     secureLog.error('❌ 앱 크래시 감지:', error.message);
     // 개발 환경에서만 상세 정보 출력
     secureLog.info('상세 정보:', errorInfo);
+    
+    // 에러 보고 큐에 추가 (향후 서버 전송용)
+    if (errorQueue.length < MAX_ERROR_QUEUE) {
+      errorQueue.push({
+        message: error.message.slice(0, 200),
+        timestamp: Date.now(),
+        platform: Platform.OS,
+      });
+    }
+    
+    this.setState(prev => ({ errorCount: prev.errorCount + 1 }));
   }
 
   handleReset = () => {
+    // 연속 크래시 방지: 3번 이상 크래시 시 경고
+    if (this.state.errorCount >= 3) {
+      secureLog.warn('⚠️ 반복 크래시 감지 - 앱 재설치 권장');
+    }
     this.setState({ hasError: false, error: null });
   };
 

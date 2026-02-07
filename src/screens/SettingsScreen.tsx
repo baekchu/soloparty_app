@@ -81,6 +81,29 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     navigation.goBack();
   }, [navigation]);
 
+  // 캐시 삭제 핸들러
+  // const handleClearCache = useCallback(() => {
+  //   Alert.alert(
+  //     '캐시 삭제',
+  //     '캐시된 이벤트 데이터를 삭제합니다.\n다음 접속 시 최신 데이터를 다시 불러옵니다.',
+  //     [
+  //       { text: '취소', style: 'cancel' },
+  //       { 
+  //         text: '삭제', 
+  //         style: 'destructive',
+  //         onPress: async () => {
+  //           try {
+  //             await clearCache();
+  //             Alert.alert('완료', '캐시가 삭제되었습니다.');
+  //           } catch {
+  //             Alert.alert('오류', '캐시 삭제에 실패했습니다.');
+  //           }
+  //         },
+  //       },
+  //     ]
+  //   );
+  // }, []);
+
   return (
     <SafeAreaView style={[settingsStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 헤더 */}
@@ -365,6 +388,30 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
             <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
           </TouchableOpacity>
         </View>
+
+        {/* 데이터 관리 */}
+        {/* <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+          <Text style={{
+            fontSize: 18,
+            fontWeight: '700',
+            color: isDark ? '#f8fafc' : '#0f172a',
+            marginBottom: 16,
+          }}>
+            데이터 관리
+          </Text>
+          <TouchableOpacity
+            onPress={handleClearCache}
+            style={settingsStyles.menuItem}
+          >
+            <Text style={{
+              fontSize: 16,
+              color: isDark ? '#f8fafc' : '#0f172a',
+            }}>
+              캐시 삭제
+            </Text>
+            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          </TouchableOpacity>
+        </View> */}
 
         {/* 앱 정보 */}
         <View style={[settingsStyles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>

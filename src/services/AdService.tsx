@@ -1,205 +1,387 @@
 /**
- * ==================== 광고 시스템 (AdMob) ====================
+ * ==================== 광고 시스템 (프로덕션 최적화 v2) ====================
  * 
- * ⚠️ 현재 비활성화 상태 - 네이티브 설정 후 활성화 필요
+ * 사용자 증가 시 즉시 활성화 가능한 광고 시스템
  * 
- * === 광고 유형 ===
- * 1. Rewarded Ad (보상형 광고) ⭐ 권장 - 최고 단가
- *    - 특징: 전체 시청 필수 (건너뛰기 불가)
- *    - eCPM: $10-$20 (업계 최고 단가)
- *    - 예상 수익/회: ₩15-75 (한국 기준, $0.01-$0.05)
- *    - 사용자 보상: 50P/회 (6시간당 최대 10회)
- *    - 위치: 포인트 화면
+ * === 광고 유형 & 수익 구조 ===
  * 
- * 2. Banner Ad (배너 광고)
- *    - eCPM: $0.50-$2
- *    - 예상 수익/천회 노출: ₩750-3,000
- *    - 위치: 화면 하단 (슬롯 준비됨)
+ * 1. Rewarded Ad (보상형 광고) ⭐ 핵심 수익원
+ *    - eCPM: $10-$20 (한국 기준)
+ *    - 사용자 보상: 50P/회, 6시간당 최대 10회
+ *    - 전략: 사용자가 자발적으로 시청 → 만족도 유지
  * 
- * 3. Interstitial Ad (전면 광고)
+ * 2. Interstitial Ad (전면 광고) - 2단계 수익원
  *    - eCPM: $5-$15
- *    - 예상 수익/회: ₩7.5-22.5 ($0.005-$0.015)
- *    - 위치: 화면 전환 시 (30% 확률)
+ *    - 빈도: 화면 전환 시 25% 확률, 최소 2분 간격
+ *    - 전략: 피로감 최소화, 점진적 빈도 조절
  * 
- * 4. App Open Ad (앱 시작 광고)
+ * 3. Banner Ad (배너 광고) - 안정적 기본 수익
+ *    - eCPM: $0.50-$2
+ *    - 위치: 하단 고정 배너
+ *    - 전략: 항상 노출, 앱 경험 방해 최소화
+ * 
+ * 4. App Open Ad (앱 오픈 광고) - 보조 수익
  *    - eCPM: $10-$20
- *    - 위치: 앱 시작 시
+ *    - 빈도: 백그라운드 → 포그라운드 시 (30초+ 대기 후)
  * 
- * === 수익 최적화 전략 ===
- * - 보상형 광고 우선: 사용자가 자발적으로 시청하며 단가가 가장 높음
- * - 6시간당 10개 제한: 과도한 시청 방지 + 광고주 품질 유지
- * - 광고 간 간격: 최소 1분 이상 (사용자 경험 유지)
+ * === 활성화 단계 ===
+ * Phase 0: 광고 비활성화 (초기 - 사용자 기반 확보)
+ * Phase 1: Banner 만 (사용자 1000명+)
+ * Phase 2: Banner + Interstitial (사용자 5000명+)
+ * Phase 3: 전체 활성화 (사용자 10000명+)
  * 
  * === 활성화 방법 ===
- * 
- * 1. AdMob 계정 생성: https://admob.google.com
- * 
- * 2. 앱 등록 및 광고 단위 ID 발급:
- *    - Android 앱 등록 → 앱 ID 발급
- *    - iOS 앱 등록 → 앱 ID 발급
- *    - 각 광고 유형별 단위 ID 발급
- * 
- * 3. 패키지 설치:
- *    npm install react-native-google-mobile-ads
- * 
- * 4. app.json에 플러그인 추가:
- *    {
- *      "expo": {
- *        "plugins": [
- *          [
- *            "react-native-google-mobile-ads",
- *            {
- *              "androidAppId": "ca-app-pub-xxxxx~xxxxx",
- *              "iosAppId": "ca-app-pub-xxxxx~xxxxx"
- *            }
- *          ]
- *        ]
- *      }
- *    }
- * 
- * 5. 네이티브 빌드 생성:
- *    npx expo prebuild
- *    eas build --platform android --profile production
- * 
- * 6. 이 파일의 주석 해제 및 CalendarScreen의 AD_CONFIG.showBanner = true 설정
- * 
- * === 권장 광고 전략 ===
- * - 출시 후 1-2개월: 광고 없이 사용자 기반 확보
- * - 이후: Banner Ad만 추가 (사용자 경험 유지)
- * - 사용자 증가 시: Interstitial Ad 추가 (화면 전환 30% 확률)
- * - 선택적: Rewarded Ad (포인트 시스템과 연동)
- * 
- * === 테스트 광고 ID (개발용) ===
- * Banner: ca-app-pub-3940256099942544/6300978111
- * Interstitial: ca-app-pub-3940256099942544/1033173712
- * Rewarded: ca-app-pub-3940256099942544/5224354917
+ * 1. npm install react-native-google-mobile-ads
+ * 2. app.json plugins에 추가
+ * 3. AD_CONFIG.disableAll = false, phase = 원하는 단계
+ * 4. unitIds를 실제 AdMob 광고 단위 ID로 교체
+ * 5. eas build --platform all --profile production
  * 
  * ========================================================================
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { Alert, AppState, AppStateStatus } from 'react-native';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { Alert, AppState, AppStateStatus, Platform } from 'react-native';
+import * as Crypto from 'expo-crypto';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 
-// ==================== 광고 설정 상수 ====================
-const AD_CONFIG = {
-  // 테스트 모드 (개발 중 true, 배포 시 false)
+// ==================== 광고 설정 (원격 제어 대비) ====================
+export const AD_CONFIG = {
+  /** true면 모든 광고 비활성화 (초기 단계) */
+  disableAll: true,
+  
+  /** 개발 모드 여부 */
   testMode: __DEV__,
   
-  // 전면 광고 확률 (0.0 ~ 1.0)
-  interstitialProbability: 0.3,
+  /** 활성화 단계: 0=비활성, 1=배너만, 2=배너+전면, 3=전체 */
+  phase: 0 as 0 | 1 | 2 | 3,
   
-  // 광고 간 최소 간격 (밀리초)
-  minAdInterval: 60000, // 1분
+  // === 전면 광고 설정 ===
+  interstitial: {
+    /** 표시 확률 (0.0 ~ 1.0) */
+    probability: 0.25,
+    /** 최소 간격 (밀리초) - 2분 */
+    minInterval: 120_000,
+    /** 세션당 최대 횟수 */
+    maxPerSession: 5,
+    /** 앱 시작 후 첫 광고까지 대기 (밀리초) - 3분 */
+    coldStartDelay: 180_000,
+  },
   
-  // 광고 단위 ID (배포 전 실제 ID로 교체)
-  bannerId: {
-    android: 'ca-app-pub-3940256099942544/6300978111',
-    ios: 'ca-app-pub-3940256099942544/2934735716',
+  // === 보상형 광고 설정 ===
+  rewarded: {
+    /** 시청당 포인트 */
+    pointsPerWatch: 50,
+    /** 기간당 최대 시청 횟수 */
+    maxPerPeriod: 10,
+    /** 리셋 간격 (밀리초) - 6시간 */
+    resetInterval: 6 * 60 * 60 * 1000,
+    /** 최소 시청 간격 (밀리초) - 30초 */
+    minInterval: 30_000,
   },
-  interstitialId: {
-    android: 'ca-app-pub-3940256099942544/1033173712',
-    ios: 'ca-app-pub-3940256099942544/4411468910',
+  
+  // === 배너 광고 설정 ===
+  banner: {
+    /** 새로고침 간격 (초) */
+    refreshInterval: 60,
+    /** 위치 */
+    position: 'bottom' as const,
   },
-  rewardedId: {
-    android: 'ca-app-pub-3940256099942544/5224354917',
-    ios: 'ca-app-pub-3940256099942544/1712485313',
+  
+  // === 앱 오픈 광고 설정 ===
+  appOpen: {
+    /** 백그라운드 최소 대기 시간 (밀리초) - 30초 */
+    minBackgroundTime: 30_000,
+    /** 세션당 최대 횟수 */
+    maxPerSession: 3,
+  },
+  
+  // === 광고 단위 ID ===
+  // 프로덕션 배포 전 실제 ID로 교체 필수
+  unitIds: {
+    banner: {
+      android: __DEV__ ? 'ca-app-pub-3940256099942544/6300978111' : 'ca-app-pub-REAL/BANNER',
+      ios: __DEV__ ? 'ca-app-pub-3940256099942544/2934735716' : 'ca-app-pub-REAL/BANNER',
+    },
+    interstitial: {
+      android: __DEV__ ? 'ca-app-pub-3940256099942544/1033173712' : 'ca-app-pub-REAL/INTERSTITIAL',
+      ios: __DEV__ ? 'ca-app-pub-3940256099942544/4411468910' : 'ca-app-pub-REAL/INTERSTITIAL',
+    },
+    rewarded: {
+      android: __DEV__ ? 'ca-app-pub-3940256099942544/5224354917' : 'ca-app-pub-REAL/REWARDED',
+      ios: __DEV__ ? 'ca-app-pub-3940256099942544/1712485313' : 'ca-app-pub-REAL/REWARDED',
+    },
+    appOpen: {
+      android: __DEV__ ? 'ca-app-pub-3940256099942544/9257395921' : 'ca-app-pub-REAL/APP_OPEN',
+      ios: __DEV__ ? 'ca-app-pub-3940256099942544/5575463023' : 'ca-app-pub-REAL/APP_OPEN',
+    },
   },
 };
 
-// ==================== 보안 설정 ====================
-// 광고 시청 검증을 위한 토큰 생성 (서버 검증용 - 나중에 서버 연동 시 사용)
-const generateAdToken = (): string => {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).slice(2, 10);
-  return `ad_${timestamp}_${random}`;
+// ==================== 보안: 광고 시청 검증 ====================
+const AD_VERIFICATION_KEY = '@sp_ad_verify_v2';
+
+interface AdVerificationRecord {
+  token: string;
+  type: 'rewarded' | 'interstitial' | 'appOpen';
+  timestamp: number;
+  verified: boolean;
+}
+
+/** 암호학적으로 안전한 광고 토큰 생성 */
+const generateSecureAdToken = async (): Promise<string> => {
+  try {
+    const bytes = await Crypto.getRandomBytesAsync(16);
+    const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `ad_${Date.now()}_${hex}`;
+  } catch {
+    return `ad_${Date.now()}_${Math.random().toString(36).slice(2, 18)}`;
+  }
 };
 
-// 광고 시청 기록 (조작 방지)
-let adWatchHistory: { token: string; timestamp: number }[] = [];
-const MAX_AD_HISTORY = 20;
+/** 광고 시청 기록 (조작 방지) */
+class AdVerificationStore {
+  private static records: AdVerificationRecord[] = [];
+  private static readonly MAX_RECORDS = 50;
+  
+  static async record(type: AdVerificationRecord['type']): Promise<string> {
+    const token = await generateSecureAdToken();
+    
+    this.records.unshift({ token, type, timestamp: Date.now(), verified: false });
+    
+    if (this.records.length > this.MAX_RECORDS) {
+      this.records = this.records.slice(0, this.MAX_RECORDS);
+    }
+    
+    this.persistAsync().catch(() => {});
+    return token;
+  }
+  
+  static verify(token: string): boolean {
+    const record = this.records.find(r => r.token === token);
+    if (!record || record.verified) return false;
+    if (Date.now() - record.timestamp > 5 * 60 * 1000) return false;
+    record.verified = true;
+    return true;
+  }
+  
+  /** 중복 시청 방지 */
+  static isDuplicate(type: string, windowMs: number = 10_000): boolean {
+    const now = Date.now();
+    return this.records.some(r => r.type === type && now - r.timestamp < windowMs);
+  }
+  
+  private static async persistAsync(): Promise<void> {
+    try {
+      await safeSetItem(AD_VERIFICATION_KEY, JSON.stringify(this.records.slice(0, 20)), false);
+    } catch { /* 무시 */ }
+  }
+  
+  static async loadFromStorage(): Promise<void> {
+    try {
+      const raw = await safeGetItem(AD_VERIFICATION_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.records = parsed.slice(0, this.MAX_RECORDS);
+        }
+      }
+    } catch { /* 무시 */ }
+  }
+}
 
-const recordAdWatch = (token: string): void => {
-  adWatchHistory.unshift({ token, timestamp: Date.now() });
-  adWatchHistory = adWatchHistory.slice(0, MAX_AD_HISTORY);
+AdVerificationStore.loadFromStorage().catch(() => {});
+
+// ==================== 세션 추적 ====================
+class AdSessionTracker {
+  static sessionStart = Date.now();
+  static interstitialCount = 0;
+  static appOpenCount = 0;
+  static lastInterstitialTime = 0;
+  static lastBackgroundTime = 0;
+  
+  static resetSession(): void {
+    this.sessionStart = Date.now();
+    this.interstitialCount = 0;
+    this.appOpenCount = 0;
+    this.lastInterstitialTime = 0;
+  }
+  
+  static canShowInterstitial(): { allowed: boolean; reason?: string } {
+    if (AD_CONFIG.disableAll || AD_CONFIG.phase < 2) {
+      return { allowed: false, reason: '광고 비활성화' };
+    }
+    const now = Date.now();
+    if (now - this.sessionStart < AD_CONFIG.interstitial.coldStartDelay) {
+      return { allowed: false, reason: '앱 시작 대기' };
+    }
+    if (now - this.lastInterstitialTime < AD_CONFIG.interstitial.minInterval) {
+      return { allowed: false, reason: '최소 간격' };
+    }
+    if (this.interstitialCount >= AD_CONFIG.interstitial.maxPerSession) {
+      return { allowed: false, reason: '세션 초과' };
+    }
+    return { allowed: true };
+  }
+  
+  static recordInterstitial(): void {
+    this.interstitialCount++;
+    this.lastInterstitialTime = Date.now();
+  }
+  
+  static canShowAppOpen(bgDuration: number): { allowed: boolean } {
+    if (AD_CONFIG.disableAll || AD_CONFIG.phase < 3) return { allowed: false };
+    if (bgDuration < AD_CONFIG.appOpen.minBackgroundTime) return { allowed: false };
+    if (this.appOpenCount >= AD_CONFIG.appOpen.maxPerSession) return { allowed: false };
+    return { allowed: true };
+  }
+  
+  static recordAppOpen(): void { this.appOpenCount++; }
+  static setBackgroundTime(): void { this.lastBackgroundTime = Date.now(); }
+  static getBackgroundDuration(): number {
+    return this.lastBackgroundTime === 0 ? 0 : Date.now() - this.lastBackgroundTime;
+  }
+}
+
+// ==================== 광고 유닛 ID 헬퍼 ====================
+export const getAdUnitId = (type: keyof typeof AD_CONFIG.unitIds): string => {
+  const platform = Platform.OS === 'ios' ? 'ios' : 'android';
+  return AD_CONFIG.unitIds[type][platform];
 };
 
-const isValidAdWatch = (token: string): boolean => {
-  // 중복 토큰 방지
-  return !adWatchHistory.some(record => record.token === token);
-};
-
-// ==================== 플레이스홀더 Hook ====================
-// 네이티브 설정 전까지 크래시 없이 동작
-
+// ==================== Hook: 보상형 광고 ====================
 export const useRewardedAd = (onRewardEarned?: (amount: number) => void) => {
-  const [loaded] = useState(false);
-  const [loading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
   const adTokenRef = useRef<string | null>(null);
 
-  const showAd = useCallback(() => {
-    // 보안: 광고 토큰 생성
-    const token = generateAdToken();
+  const showAd = useCallback(async (): Promise<{ success: boolean; token: string | null }> => {
+    if (AD_CONFIG.disableAll) {
+      if (__DEV__) {
+        Alert.alert(
+          '💡 광고 시스템',
+          '광고가 비활성화 상태입니다.\nAdService.tsx에서 AD_CONFIG.disableAll = false로 변경하세요.',
+          [{ text: '확인' }]
+        );
+      }
+      return { success: false, token: null };
+    }
+    
+    if (AdVerificationStore.isDuplicate('rewarded', AD_CONFIG.rewarded.minInterval)) {
+      return { success: false, token: null };
+    }
+    
+    const token = await AdVerificationStore.record('rewarded');
     adTokenRef.current = token;
     
-    Alert.alert(
-      '광고 준비 중',
-      '광고 시스템이 아직 설정되지 않았습니다.\n개발 중인 기능입니다.',
-      [{ text: '확인' }]
-    );
+    // === 실제 광고 SDK 연동 시 이 주석을 해제하세요 ===
+    // try {
+    //   setLoading(true);
+    //   const { RewardedAd, RewardedAdEventType } = require('react-native-google-mobile-ads');
+    //   const ad = RewardedAd.createForAdRequest(getAdUnitId('rewarded'));
+    //   
+    //   return new Promise((resolve) => {
+    //     ad.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => {
+    //       const verified = AdVerificationStore.verify(token);
+    //       if (verified) onRewardEarned?.(AD_CONFIG.rewarded.pointsPerWatch);
+    //       resolve({ success: verified, token });
+    //     });
+    //     ad.addAdEventListener(RewardedAdEventType.CLOSED, () => {
+    //       resolve({ success: false, token: null });
+    //     });
+    //     ad.load();
+    //     ad.show();
+    //   });
+    // } catch { return { success: false, token: null }; }
+    // finally { setLoading(false); }
     
-    // 실제 광고 연동 시:
-    // 1. 광고 시청 시작 시 토큰 생성
-    // 2. 광고 완료 시 토큰 검증
-    // 3. 서버에 토큰 전송하여 이중 검증 (선택)
-  }, []);
+    return { success: false, token };
+  }, [onRewardEarned]);
 
   return { showAd, loaded, loading, adToken: adTokenRef.current };
 };
 
+// ==================== Hook: 전면 광고 ====================
 export const useInterstitialAd = () => {
-  const [loaded] = useState(false);
-  const lastAdTimeRef = useRef<number>(0);
+  const [loaded, setLoaded] = useState(false);
 
-  const showInterstitialAd = useCallback(async () => {
-    // 비활성화 상태 - 네이티브 빌드 후 활성화
-  }, []);
-
-  const showAdOnNavigation = useCallback(async (probability: number = AD_CONFIG.interstitialProbability) => {
-    // 광고 간격 확인 (최소 1분)
-    const now = Date.now();
-    if (now - lastAdTimeRef.current < AD_CONFIG.minAdInterval) {
-      return;
+  const showAdOnNavigation = useCallback(async (): Promise<boolean> => {
+    const check = AdSessionTracker.canShowInterstitial();
+    if (!check.allowed) return false;
+    
+    if (Math.random() >= AD_CONFIG.interstitial.probability) return false;
+    
+    if (AdVerificationStore.isDuplicate('interstitial', AD_CONFIG.interstitial.minInterval)) {
+      return false;
     }
     
-    // 확률 기반 표시 (암호학적 랜덤 권장 - 나중에 적용)
-    if (Math.random() < probability) {
-      lastAdTimeRef.current = now;
-      // 비활성화 상태
-    }
+    await AdVerificationStore.record('interstitial');
+    AdSessionTracker.recordInterstitial();
+    
+    // === 실제 SDK 연동 시 주석 해제 ===
+    // const { InterstitialAd, AdEventType } = require('react-native-google-mobile-ads');
+    // const ad = InterstitialAd.createForAdRequest(getAdUnitId('interstitial'));
+    // return new Promise(resolve => {
+    //   ad.addAdEventListener(AdEventType.CLOSED, () => resolve(true));
+    //   ad.addAdEventListener(AdEventType.ERROR, () => resolve(false));
+    //   ad.load();
+    //   ad.show();
+    // });
+    
+    return false;
+  }, []);
+
+  const showInterstitialAd = useCallback(async (): Promise<boolean> => {
+    const check = AdSessionTracker.canShowInterstitial();
+    if (!check.allowed) return false;
+    await AdVerificationStore.record('interstitial');
+    AdSessionTracker.recordInterstitial();
+    return false;
   }, []);
 
   return { showInterstitialAd, showAdOnNavigation, loaded };
 };
 
+// ==================== Hook: 배너 광고 ====================
 export const useBannerAd = () => {
-  // 배너 광고 상태 관리
-  const [isVisible, setIsVisible] = useState(false);
+  const isEnabled = useMemo(() => !AD_CONFIG.disableAll && AD_CONFIG.phase >= 1, []);
+  const [isVisible, setIsVisible] = useState(isEnabled);
   
-  const showBanner = useCallback(() => setIsVisible(true), []);
+  const showBanner = useCallback(() => { if (isEnabled) setIsVisible(true); }, [isEnabled]);
   const hideBanner = useCallback(() => setIsVisible(false), []);
   
-  return { isVisible, showBanner, hideBanner };
+  const onError = useCallback(() => {
+    setIsVisible(false);
+    setTimeout(() => { if (isEnabled) setIsVisible(true); }, 30_000);
+  }, [isEnabled]);
+  
+  return {
+    isVisible: isVisible && isEnabled,
+    showBanner,
+    hideBanner,
+    onError,
+    unitId: getAdUnitId('banner'),
+    position: AD_CONFIG.banner.position,
+  };
 };
 
-export const useAppStartAd = () => {
-  // 앱 시작 광고 (백그라운드에서 포그라운드로 전환 시)
+// ==================== Hook: 앱 오픈 광고 ====================
+export const useAppOpenAd = () => {
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        // 앱이 포그라운드로 전환됨 - 광고 표시 가능 시점
-        // 네이티브 빌드 후 활성화
+        const bgDuration = AdSessionTracker.getBackgroundDuration();
+        const check = AdSessionTracker.canShowAppOpen(bgDuration);
+        
+        if (check.allowed && !AdVerificationStore.isDuplicate('appOpen', 60_000)) {
+          await AdVerificationStore.record('appOpen');
+          AdSessionTracker.recordAppOpen();
+          // === 실제 SDK 연동 시 주석 해제 ===
+        }
+      } else if (nextAppState.match(/inactive|background/)) {
+        AdSessionTracker.setBackgroundTime();
       }
       appStateRef.current = nextAppState;
     });
@@ -208,12 +390,42 @@ export const useAppStartAd = () => {
   }, []);
 };
 
-// ==================== 광고 유틸리티 ====================
-export const getAdUnitId = (type: 'banner' | 'interstitial' | 'rewarded', platform: 'android' | 'ios'): string => {
-  const ids = {
-    banner: AD_CONFIG.bannerId,
-    interstitial: AD_CONFIG.interstitialId,
-    rewarded: AD_CONFIG.rewardedId,
-  };
-  return ids[type][platform];
-};
+// ==================== 광고 관리자 (글로벌) ====================
+export class AdManager {
+  private static initialized = false;
+  
+  static async initialize(): Promise<void> {
+    if (this.initialized) return;
+    try {
+      await AdVerificationStore.loadFromStorage();
+      AdSessionTracker.resetSession();
+      this.initialized = true;
+    } catch { /* 무시 */ }
+  }
+  
+  /** 현재 Phase에서 사용 가능한 광고 유형 */
+  static getAvailableAdTypes(): string[] {
+    if (AD_CONFIG.disableAll) return [];
+    const phases: Record<number, string[]> = {
+      0: [], 1: ['banner'], 2: ['banner', 'interstitial'],
+      3: ['banner', 'interstitial', 'rewarded', 'appOpen'],
+    };
+    return phases[AD_CONFIG.phase] || [];
+  }
+  
+  /** 광고 Phase 원격 변경 */
+  static setPhase(phase: 0 | 1 | 2 | 3): void {
+    (AD_CONFIG as any).phase = phase;
+    (AD_CONFIG as any).disableAll = phase === 0;
+  }
+  
+  /** 광고 통계 */
+  static getStats() {
+    return {
+      sessionDuration: Date.now() - AdSessionTracker.sessionStart,
+      interstitialCount: AdSessionTracker.interstitialCount,
+      isEnabled: !AD_CONFIG.disableAll,
+      phase: AD_CONFIG.phase,
+    };
+  }
+}
