@@ -191,6 +191,11 @@ const sanitizeEvent = (event: Event): Event => {
     organizer: cleanString(event.organizer, 100),
     contact: cleanString(event.contact, 100),
     tags: cleanTags(event.tags),
+    // 프로모션 (광고)
+    promoted: event.promoted === true ? true : undefined,
+    promotionPriority: typeof event.promotionPriority === 'number' ? Math.max(0, event.promotionPriority) : undefined,
+    promotionLabel: cleanString(event.promotionLabel, 20),
+    promotionColor: cleanString(event.promotionColor, 20),
   };
 };
 

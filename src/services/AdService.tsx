@@ -190,7 +190,7 @@ class AdVerificationStore {
   }
 }
 
-AdVerificationStore.loadFromStorage().catch(() => {});
+// AdManager.initialize()에서 명시적으로 호출됨 (모듈 로드 시 실행하면 AsyncStorage 초기화 전에 실행될 수 있음)
 
 // ==================== 세션 추적 ====================
 class AdSessionTracker {
@@ -352,7 +352,9 @@ export const useBannerAd = () => {
   
   const onError = useCallback(() => {
     setIsVisible(false);
-    setTimeout(() => { if (isEnabled) setIsVisible(true); }, 30_000);
+    // 30초 후 재시도 (타이머 누수 방지: 컴포넌트 언마운트 시 cleanup)
+    const timer = setTimeout(() => { if (isEnabled) setIsVisible(true); }, 30_000);
+    return () => clearTimeout(timer);
   }, [isEnabled]);
   
   return {

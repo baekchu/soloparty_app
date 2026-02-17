@@ -10,7 +10,7 @@
  */
 
 import * as Notifications from 'expo-notifications';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { secureLog } from '../utils/secureStorage';
@@ -99,7 +99,7 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
  */
 export const getNotificationSettings = async (): Promise<NotificationSettings> => {
   try {
-    const settings = await AsyncStorage.getItem(NOTIFICATION_SETTINGS_KEY);
+    const settings = await safeGetItem(NOTIFICATION_SETTINGS_KEY);
     if (settings) {
       // 보안: 크기 제한
       if (settings.length > 10000) {
@@ -136,7 +136,7 @@ export const getNotificationSettings = async (): Promise<NotificationSettings> =
  */
 export const saveNotificationSettings = async (settings: NotificationSettings): Promise<void> => {
   try {
-    await AsyncStorage.setItem(NOTIFICATION_SETTINGS_KEY, JSON.stringify(settings));
+    await safeSetItem(NOTIFICATION_SETTINGS_KEY, JSON.stringify(settings));
   } catch (error) {
     secureLog.error('알림 설정 저장 실패');
     throw error;

@@ -39,15 +39,42 @@ export const secureLog = {
 };
 
 /**
- * 디바이스 고유 키 생성 (앱 재설치 시 변경됨)
+ * 디바이스 고유 키 생성 
+ * SecureStore에 저장된 고유 시드를 사용하여 기기별 유니크한 키 생성
+ * (앱 재설치 시 변경됨 → 포인트는 PointsAutoSyncService에서 복원)
  */
+let _cachedDeviceKey: string | null = null;
+
 const getDeviceKey = async (): Promise<string> => {
-  const deviceId = `${Platform.OS}-${Platform.Version}`;
-  const digest = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    deviceId
-  );
-  return digest;
+  if (_cachedDeviceKey) return _cachedDeviceKey;
+  
+  try {
+    const SecureStore = require('expo-secure-store');
+    const SEED_KEY = 'sp_enc_seed_v1';
+    
+    let seed = await SecureStore.getItemAsync(SEED_KEY);
+    if (!seed) {
+      // 최초 실행: 고유 랜덤 시드 생성 후 SecureStore에 저장
+      const randomBytes = await Crypto.getRandomBytesAsync(32);
+      seed = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      await SecureStore.setItemAsync(SEED_KEY, seed);
+    }
+    
+    const digest = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      `${Platform.OS}-${seed}`
+    );
+    _cachedDeviceKey = digest;
+    return digest;
+  } catch {
+    // SecureStore 실패 시 폴백 (캐싱)
+    const fallback = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      `${Platform.OS}-${Platform.Version}-fallback`
+    );
+    _cachedDeviceKey = fallback;
+    return fallback;
+  }
 };
 
 /**
@@ -97,9 +124,13 @@ export const encryptData = async (data: string): Promise<string> => {
     // salt + encrypted 결합
     return saltHex + ':' + encryptedHex;
   } catch (error) {
-    secureLog.error('암호화 실패:', error);
-    // 실패 시 원본 반환 (앱 동작 보장)
-    return data;
+    secureLog.error('암호화 실패');
+    // 실패 시에도 최소한의 난독화 (base64) 적용
+    try {
+      return 'plain:' + btoa(encodeURIComponent(data));
+    } catch {
+      return data;
+    }
   }
 };
 
@@ -109,6 +140,16 @@ export const encryptData = async (data: string): Promise<string> => {
 export const decryptData = async (encrypted: string): Promise<string> => {
   try {
     if (!encrypted || typeof encrypted !== 'string') return '';
+    
+    // base64 폴백 데이터 처리
+    if (encrypted.startsWith('plain:')) {
+      try {
+        return decodeURIComponent(atob(encrypted.slice(6)));
+      } catch {
+        return '';
+      }
+    }
+    
     if (!encrypted.includes(':')) {
       // 이전 버전 base64 데이터 (마이그레이션)
       return encrypted;

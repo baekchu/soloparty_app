@@ -40,6 +40,7 @@ interface LocationData {
   latitude: number;
   longitude: number;
   count: number;
+  tags?: string[];
 }
 
 // 표시용 이름 정규화 ("종로구 주소" → "종로", "서울시" → "서울")
@@ -125,7 +126,8 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
         return normalizedLocation.includes(query) ||
                normalizedRegion.includes(query) ||
                loc.name.toLowerCase().includes(query) ||
-               loc.region.toLowerCase().includes(query);
+               loc.region.toLowerCase().includes(query) ||
+               (loc.tags && loc.tags.some((t: string) => t.toLowerCase().includes(query)));
       });
     }
     
@@ -195,16 +197,27 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
             const existing = locationMap.get(locationName)!;
             existing.count++;
             if (event.coordinates?.latitude && event.coordinates?.longitude) {
-              existing.latitude = Number(event.coordinates.latitude) || 37.5665;
-              existing.longitude = Number(event.coordinates.longitude) || 126.9780;
+              const lat = Number(event.coordinates.latitude);
+              const lng = Number(event.coordinates.longitude);
+              existing.latitude = isNaN(lat) ? 37.5665 : lat;
+              existing.longitude = isNaN(lng) ? 126.9780 : lng;
+            }
+            // 태그 병합
+            if (Array.isArray(event.tags)) {
+              const existingTags = existing.tags || [];
+              const newTags = event.tags.filter((t: string) => typeof t === 'string' && !existingTags.includes(t));
+              existing.tags = [...existingTags, ...newTags].slice(0, 20);
             }
           } else if (locationMap.size < MAX_LOCATIONS) {
+            const lat = Number(event.coordinates?.latitude);
+            const lng = Number(event.coordinates?.longitude);
             locationMap.set(locationName, {
               name: locationName,
               region,
-              latitude: Number(event.coordinates?.latitude) || 37.5665,
-              longitude: Number(event.coordinates?.longitude) || 126.9780,
+              latitude: isNaN(lat) ? 37.5665 : lat,
+              longitude: isNaN(lng) ? 126.9780 : lng,
               count: 1,
+              tags: Array.isArray(event.tags) ? event.tags.filter((t: string) => typeof t === 'string').slice(0, 10) : [],
             });
           }
         });
@@ -499,18 +512,18 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           ) : (
             filteredLocations.map((location, index) => (
             <TouchableOpacity
-              key={index}
+              key={`${location.name}_${location.region}`}
               onPress={() => handleSelectLocation(location)}
               style={{
                 backgroundColor: selectedLocation?.name === location.name 
-                  ? (isDark ? '#312e81' : '#ddd6fe')
+                  ? (isDark ? 'rgba(167, 139, 250, 0.15)' : 'rgba(236, 72, 153, 0.08)')
                   : (isDark ? '#1e293b' : '#f9fafb'),
                 padding: 16,
                 borderRadius: 12,
                 marginBottom: 8,
                 borderWidth: selectedLocation?.name === location.name ? 2 : 1,
                 borderColor: selectedLocation?.name === location.name 
-                  ? (isDark ? '#a78bfa' : '#8b5cf6')
+                  ? (isDark ? '#a78bfa' : '#ec4899')
                   : (isDark ? '#334155' : '#e5e7eb'),
               }}
             >

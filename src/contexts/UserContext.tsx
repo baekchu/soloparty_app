@@ -157,7 +157,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (isMountedRef.current) {
           setInviteCode(newInviteCode);
         }
-        secureLog.info('✅ 새 사용자 생성:', maskSensitiveData(storedUserId), '(초대코드: ' + newInviteCode + ')');
+        secureLog.info('✅ 새 사용자 생성:', maskSensitiveData(storedUserId), '(초대코드: ' + maskSensitiveData(newInviteCode) + ')');
       } else {
         // 기존 사용자 데이터 로드 및 검증
         const userDataStr = await safeGetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`);
@@ -183,7 +183,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (isMountedRef.current) {
             setInviteCode(userData.inviteCode);
           }
-          secureLog.info('✅ 기존 사용자 로그인:', maskSensitiveData(storedUserId), '(초대코드: ' + userData.inviteCode + ')');
+          secureLog.info('✅ 기존 사용자 로그인:', maskSensitiveData(storedUserId), '(초대코드: ' + maskSensitiveData(userData.inviteCode) + ')');
         }
       }
 
@@ -193,7 +193,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (error) {
       secureLog.error('❌ 사용자 초기화 실패:', error);
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) setIsLoading(false);
     }
   };
 

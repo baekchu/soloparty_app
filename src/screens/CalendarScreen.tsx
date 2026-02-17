@@ -13,13 +13,13 @@ import {
   Dimensions,
   Animated,
   PanResponder,
-  Linking,
   Alert,
   Platform,
   BackHandler,
   StyleSheet,
   InteractionManager,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { loadEvents } from "../utils/storage";
@@ -36,9 +36,9 @@ import MonthCalendar from "../components/MonthCalendar";
 import { NotificationPrompt } from "../components/NotificationPrompt";
 import { StartupAdModal } from "../components/StartupAdModal";
 import PointsModal from "../components/PointsModal";
-// [광고 비활성화] 나중에 활성화 시 아래 주석 해제
-// import InFeedAdBanner from "../components/InFeedAdBanner";
 import usePoints from "../hooks/usePoints";
+import useBookmarks from "../hooks/useBookmarks";
+import useReminders from "../hooks/useReminders";
 import { sendNewEventNotification } from "../services/NotificationService";
 import { secureLog } from "../utils/secureStorage";
 
@@ -129,6 +129,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [isPanelExpanded, setIsPanelExpanded] = useState(false);
   const [heightUpdateTrigger, setHeightUpdateTrigger] = useState(0);
   const [showPointsModal, setShowPointsModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [panelTab, setPanelTab] = useState<'all' | 'bookmarks'>('all');
 
   // ==================== Contexts ====================
   const { theme } = useTheme();
@@ -139,12 +141,18 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // ==================== 포인트 시스템 ====================
   const {
     balance: points,
+    history: pointsHistory,
     adCount: dailyAdCount,
     canWatchAd,
     maxAds,
     watchAdForPoints,
     spendPoints,
+    addPoints,
   } = usePoints();
+
+  // ==================== 찜/즐겨찾기 & 리마인더 ====================
+  const { bookmarks, isBookmarked, toggleBookmark } = useBookmarks();
+  const { hasReminder, scheduleReminder, cancelReminder } = useReminders();
 
   // ==================== Dimensions (메모이제이션) ====================
   const [dimensions, setDimensions] = useState(() => ({
@@ -169,6 +177,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const isUserScrollingRef = useRef(false);
   const previousEventsRef = useRef<EventsByDate>({});
   const isMountedRef = useRef(true); // 마운트 상태 추적 (메모리 누수 방지)
+  const lastMonthUpdateRef = useRef(0); // 월 변경 throttle
 
   // ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
   // const { showAd: showRewardedAd, loaded: rewardedAdLoaded } = useRewardedAd();
@@ -484,6 +493,20 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     const filterByLocation = (item: { event: any }) =>
       !selectedLocation || item.event.location === selectedLocation;
 
+    const filterBySearch = (item: { event: any }) => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      const e = item.event;
+      return (
+        e.title?.toLowerCase().includes(q) ||
+        e.location?.toLowerCase().includes(q) ||
+        e.region?.toLowerCase().includes(q) ||
+        e.description?.toLowerCase().includes(q) ||
+        e.venue?.toLowerCase().includes(q) ||
+        (e.tags && e.tags.some((t: string) => t.toLowerCase().includes(q)))
+      );
+    };
+
     const sortByTime = (a: { event: any }, b: { event: any }) =>
       (a.event.time || "ZZ:ZZ").localeCompare(b.event.time || "ZZ:ZZ");
 
@@ -495,6 +518,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           .map((event) => ({ date: selectedDate, event }))
           .filter(filterByRegion)
           .filter(filterByLocation)
+          .filter(filterBySearch)
           .sort(sortByTime);
       }
       // 해당 날짜에 일정이 없으면 빈 배열 반환 (전체 일정을 보여주지 않음)
@@ -515,18 +539,58 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       })
       .filter(filterByRegion)
       .filter(filterByLocation)
+      .filter(filterBySearch)
       .sort((a, b) => {
         const dateCompare =
           new Date(a.date).getTime() - new Date(b.date).getTime();
         return dateCompare !== 0 ? dateCompare : sortByTime(a, b);
       });
-  }, [events, selectedDate, selectedRegion, selectedLocation]);
+  }, [events, selectedDate, selectedRegion, selectedLocation, searchQuery]);
 
   // 성능 최적화: upcomingEvents를 메모이제이션
   const upcomingEvents = useMemo(
     () => getUpcomingEvents(),
     [getUpcomingEvents]
   );
+
+  // ==================== 추천 파티 (프로모션 광고 + 일반) ====================
+  const weeklyHotEvents = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(today);
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    const promoted: Array<{ date: string; event: any }> = [];
+    const normal: Array<{ date: string; event: any }> = [];
+
+    for (const [date, eventList] of Object.entries(events)) {
+      const parts = date.split('-');
+      if (parts.length !== 3) continue;
+      const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      if (d >= today && d <= endOfWeek) {
+        for (const ev of eventList) {
+          if (ev.promoted) {
+            promoted.push({ date, event: ev });
+          } else {
+            normal.push({ date, event: ev });
+          }
+        }
+      }
+    }
+
+    // 프로모션: 우선순위(높은 순) > 날짜(가까운 순)
+    promoted.sort((a, b) => {
+      const prioDiff = (b.event.promotionPriority || 0) - (a.event.promotionPriority || 0);
+      return prioDiff !== 0 ? prioDiff : a.date.localeCompare(b.date);
+    });
+    // 일반: 날짜순
+    normal.sort((a, b) => a.date.localeCompare(b.date));
+
+    // 프로모션 우선 표시, 나머지 일반으로 채움 (최대 3개)
+    const result = [...promoted, ...normal].slice(0, 3);
+    return result;
+  }, [events]);
 
   // visibleMonths 중복 제거 (정기 클린업)
   React.useEffect(() => {
@@ -564,7 +628,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           // 새로 추가된 일정이면 알림 전송 (안전하게)
           if (!oldEventIds.has(eventKey)) {
             try {
-              const formattedDate = new Date(date).toLocaleDateString("ko-KR", {
+              const formattedDate = new Date(date + 'T00:00:00').toLocaleDateString("ko-KR", {
                 month: "long",
                 day: "numeric",
               });
@@ -626,6 +690,12 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }, []);
 
   // ==================== 데이터 로드 및 폴링 ====================
+  // 패널 상태를 ref로 추적 (useFocusEffect 의존성 최소화)
+  const isPanelExpandedRef = useRef(isPanelExpanded);
+  const selectedDateRef = useRef(selectedDate);
+  isPanelExpandedRef.current = isPanelExpanded;
+  selectedDateRef.current = selectedDate;
+  
   useFocusEffect(
     useCallback(() => {
       // 마운트 상태 확인
@@ -674,8 +744,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       const backHandler = BackHandler.addEventListener(
         "hardwareBackPress",
         () => {
-          if (isPanelExpanded) {
-            if (selectedDate) {
+          if (isPanelExpandedRef.current) {
+            if (selectedDateRef.current) {
               setSelectedDate(null);
               return true;
             } else {
@@ -700,7 +770,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         }
         backHandler.remove();
       };
-    }, [isPanelExpanded, selectedDate, loadEventsData, checkForNewEvents])
+    }, [loadEventsData, checkForNewEvents, collapsePanel])
   );
 
   // ==================== 로딩 화면 ====================
@@ -864,8 +934,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
           {/* 오른쪽 영역 - 고정 너비 */}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            {/* 포인트/쿠폰 버튼 
-            <TouchableOpacity
+            {/* 포인트/쿠폰 버튼 */}
+            {/* <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => setShowPointsModal(true)}
               style={{
@@ -887,24 +957,25 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>
                 {points >= 10000 ? `${Math.floor(points / 1000)}k` : points.toLocaleString()}
               </Text>
-            </TouchableOpacity>*/}
+            </TouchableOpacity> */}
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => navigation.navigate("Settings")}
               style={{
-                padding: 8,
+                padding: 10,
               }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <View
                 style={{
-                  width: 15,
-                  height: 15,
+                  width: 22,
+                  height: 18,
                   justifyContent: "space-between",
                 }}
               >
                 <View
                   style={{
-                    width: 20,
+                    width: 22,
                     height: 2,
                     backgroundColor: isDark ? "#f8fafc" : "#0f172a",
                     borderRadius: 2,
@@ -912,7 +983,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 />
                 <View
                   style={{
-                    width: 20,
+                    width: 22,
                     height: 2,
                     backgroundColor: isDark ? "#f8fafc" : "#0f172a",
                     borderRadius: 2,
@@ -920,7 +991,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 />
                 <View
                   style={{
-                    width: 20,
+                    width: 22,
                     height: 2,
                     backgroundColor: isDark ? "#f8fafc" : "#0f172a",
                     borderRadius: 2,
@@ -1194,11 +1265,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           const contentHeight = e.nativeEvent.contentSize.height;
           const layoutHeight = e.nativeEvent.layoutMeasurement.height;
 
-          // 사용자가 직접 스크롤할 때만 월 업데이트 (즉시 반응)
+          // 사용자가 직접 스크롤할 때만 월 업데이트 (throttle 적용)
           if (isUserScrollingRef.current) {
-            if (scrollTimeoutRef.current) {
-              clearTimeout(scrollTimeoutRef.current);
-            }
+            const now = Date.now();
+            if (now - lastMonthUpdateRef.current < 100) return; // 100ms throttle
 
             // 즉시 월 계산 및 업데이트
             let accumulatedHeight = 0;
@@ -1223,6 +1293,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               if (newMonth !== currentMonth || newYear !== currentYear) {
                 setCurrentMonth(newMonth);
                 setCurrentYear(newYear);
+                lastMonthUpdateRef.current = now;
               }
             }
           }
@@ -1359,10 +1430,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             flexDirection: "row",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: 35,
+            marginBottom: 8,
           }}
         >
-          <View>
+          <View style={{ flex: 1 }}>
             <Text
               style={{
                 fontSize: 18,
@@ -1372,7 +1443,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               }}
             >
               {selectedDate
-                ? `${new Date(selectedDate).getDate()}일 일정`
+                ? `${new Date(selectedDate + 'T00:00:00').getDate()}일 일정`
                 : "일정"}
             </Text>
             {selectedDate && (
@@ -1414,6 +1485,87 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           )}
         </View>
 
+        {/* 검색바 + 탭 (패널 확장 시에만 표시) */}
+        {isPanelExpanded && (
+          <View style={{ marginBottom: 10 }}>
+            {/* 검색바 */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255, 255, 255, 0.2)',
+              borderRadius: 10,
+              paddingHorizontal: 12,
+              marginBottom: 8,
+            }}>
+              
+              <TextInput
+                style={{
+                  flex: 1,
+                  paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+                  fontSize: 14,
+                  color: '#ffffff',
+                }}
+                placeholder="제목, 장소, 태그 검색..."
+                placeholderTextColor="rgba(255, 255, 255, 0.5)"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {/* 탭: 전체 / 찜 */}
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setPanelTab('all')}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 6,
+                  borderRadius: 16,
+                  backgroundColor: panelTab === 'all' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>
+                  전체
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setPanelTab('bookmarks')}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 6,
+                  borderRadius: 16,
+                  backgroundColor: panelTab === 'bookmarks' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>
+                  ♥ 찜
+                </Text>
+                {bookmarks.length > 0 && (
+                  <View style={{
+                    backgroundColor: 'rgba(255,255,255,0.3)',
+                    borderRadius: 8,
+                    paddingHorizontal: 5,
+                    paddingVertical: 1,
+                  }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#ffffff' }}>
+                      {bookmarks.length}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         <View style={{ flex: 1 }} {...panelContentPanResponder.panHandlers}>
           <ScrollView
             ref={panelScrollRef}
@@ -1429,19 +1581,208 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               isPanelScrollAtTopRef.current = scrollY <= 0;
             }}
           >
-          {upcomingEvents.length === 0 ? (
+          {/* ===== 찜 탭 ===== */}
+          {panelTab === 'bookmarks' ? (
+            bookmarks.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 30 }}>
+                <Text style={{ color: '#e0e7ff',fontSize: 32, marginBottom: 12 }}>♡</Text>
+                <Text style={{ color: '#e0e7ff', fontSize: 14 }}>
+                  찜한 파티가 없습니다
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 4 }}>
+                  파티 상세에서 ♥ 버튼을 눌러보세요
+                </Text>
+              </View>
+            ) : (
+              bookmarks.map((bookmark, index) => {
+                const { event, date } = bookmark;
+                const eventDate = new Date(date);
+                const month = eventDate.getMonth() + 1;
+                const day = eventDate.getDate();
+                const reminderSet = hasReminder(event.id, date);
+                return (
+                  <View
+                    key={`bm-${event.id}-${date}-${index}`}
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                      borderRadius: 16,
+                      padding: 16,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>
+                          {month}/{day} · {event.time || '시간 미정'}
+                        </Text>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }}>
+                          {event.title}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => toggleBookmark(event, date)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={{color: reminderSet ? '#ffffff' : 'rgba(255,255,255,0.6)', fontSize: 18 }}>♥</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {event.location && (
+                      <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 8 }}>
+                        {event.location}
+                      </Text>
+                    )}
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => navigation.navigate('EventDetail', { event, date })}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>
+                          자세히 보기
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          if (!event.id) return;
+                          if (reminderSet) {
+                            await cancelReminder(event.id, date);
+                            Alert.alert('알림 해제', '해당 파티 알림이 해제되었습니다.');
+                          } else {
+                            const result = await scheduleReminder(event, date);
+                            Alert.alert(
+                              result.success ? '🔔 알림 등록' : '알림',
+                              result.message
+                            );
+                          }
+                        }}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          backgroundColor: reminderSet ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>
+                          {reminderSet ? '🔔 알림 취소' : '🔔 알림'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })
+            )
+          ) : (
+          /* ===== 전체 일정 탭 ===== */
+          upcomingEvents.length === 0 ? (
             <View>
               <Text
                 style={{ color: "#e0e7ff", fontSize: 14, fontStyle: "italic", marginBottom: 16 }}
               >
                 예정된 일정이 없습니다
               </Text>
-              {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
-              <InFeedAdBanner index={0} isDark={isDark} />
-              */}
             </View>
           ) : (
             (() => {
+              // 이번 주 HOT 파티 섹션 (프로모션 광고 모델)
+              const hotSection = weeklyHotEvents.length > 0 && !selectedDate && !searchQuery.trim() ? (
+                <View key="hot-section" style={{ marginBottom: 20 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 16 }}>🔥</Text>
+                      <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '800' }}>
+                        이번 주 추천 파티
+                      </Text>
+                    </View>
+                  </View>
+                  {weeklyHotEvents.map((item, idx) => {
+                    const parts = item.date.split('-');
+                    const evDate = parts.length === 3 ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])) : new Date();
+                    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+                    const dayName = dayNames[evDate.getDay()];
+                    const month = evDate.getMonth() + 1;
+                    const day = evDate.getDate();
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    evDate.setHours(0, 0, 0, 0);
+                    const diffDays = Math.round((evDate.getTime() - today.getTime()) / 86400000);
+                    const dDayStr = diffDays === 0 ? '오늘!' : diffDays === 1 ? '내일' : `D-${diffDays}`;
+                    const dDayColor = diffDays === 0 ? '#ef4444' : diffDays <= 2 ? '#f59e0b' : '#22c55e';
+                    const isPromoted = item.event.promoted === true;
+                    const promoLabel = item.event.promotionLabel || 'AD';
+                    const promoColor = item.event.promotionColor || '#f59e0b';
+                    const borderColor = isPromoted ? promoColor : dDayColor;
+
+                    return (
+                      <TouchableOpacity
+                        key={`hot-${item.event.id || idx}-${item.date}`}
+                        activeOpacity={0.8}
+                        onPress={() => navigation.navigate('EventDetail', { event: item.event, date: item.date })}
+                        style={{
+                          backgroundColor: isPromoted ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.15)',
+                          borderRadius: 16,
+                          padding: 14,
+                          marginBottom: 8,
+                          borderLeftWidth: 3,
+                          borderLeftColor: borderColor,
+                        }}
+                      >
+                        {/* 프로모션 뱃지 */}
+                        {isPromoted && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                            <View style={{
+                              backgroundColor: promoColor,
+                              paddingHorizontal: 8,
+                              paddingVertical: 2,
+                              borderRadius: 6,
+                            }}>
+                              <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: '800' }}>
+                                {promoLabel}
+                              </Text>
+                            </View>
+                            {item.event.organizer && (
+                              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
+                                {item.event.organizer}
+                              </Text>
+                            )}
+                          </View>
+                        )}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }} numberOfLines={1}>
+                              {item.event.title}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 }}>
+                              {month}/{day}({dayName}) · {item.event.time || '시간 미정'}
+                              {item.event.location ? ` · ${item.event.location}` : ''}
+                            </Text>
+                            {isPromoted && item.event.price !== undefined && (
+                              <Text style={{ fontSize: 12, color: '#f59e0b', marginTop: 2, fontWeight: '600' }}>
+                                {item.event.price === 0 ? '무료' : `${item.event.price.toLocaleString()}원`}
+                              </Text>
+                            )}
+                          </View>
+                          <View style={{
+                            backgroundColor: dDayColor,
+                            paddingHorizontal: 10,
+                            paddingVertical: 4,
+                            borderRadius: 10,
+                            marginLeft: 8,
+                          }}>
+                            <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '800' }}>
+                              {dDayStr}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : null;
+
               // 전체 일정 보기: 날짜별로 그룹화
               if (!selectedDate) {
                 const groupedByDate: {
@@ -1456,7 +1797,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
                 const dates = Object.keys(groupedByDate);
 
-                return dates.map((date, dateIndex) => {
+                const dateElements = dates.map((date, dateIndex) => {
                   const eventsForDate = groupedByDate[date];
                   const eventDate = new Date(date);
                   const day = eventDate.getDate();
@@ -1498,7 +1839,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                             width: 44,
                             height: 44,
                             borderRadius: 22,
-                            backgroundColor: "#fff",
+                            backgroundColor: isDark ? "#334155" : "#ffffff",
                             justifyContent: "center",
                             alignItems: "center",
                             zIndex: 1,
@@ -1659,6 +2000,13 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                     </View>
                   );
                 });
+                return (
+                  <>
+                    {/* hotSection - 추후 유료 광고 모델 활성화 시 복원 */}
+                    {/* {hotSection} */}
+                    {dateElements}
+                  </>
+                );
               } else {
                 // 특정 날짜 선택: 카드 스타일
                 return upcomingEvents.map(({ date, event }, index) => (
@@ -1751,6 +2099,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 ));
               }
             })()
+          )
           )}
           </ScrollView>
         </View>
@@ -1805,10 +2154,12 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         points={points}
         onSpendPoints={spendPoints}
         onWatchAd={watchAdForPoints}
+        onAddPoints={addPoints}
         isDark={isDark}
         dailyAdCount={dailyAdCount}
         maxDailyAds={maxAds}
         canWatchAd={canWatchAd}
+        history={pointsHistory}
       />
     </View>
   );

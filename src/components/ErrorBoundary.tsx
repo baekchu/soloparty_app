@@ -1,5 +1,5 @@
 import React, { Component, ReactNode } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Appearance } from 'react-native';
 import { secureLog } from '../utils/secureStorage';
 
 interface Props {
@@ -55,17 +55,18 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      const isDark = Appearance.getColorScheme() === 'dark';
       return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#fce7f3' }]}>
           <View style={styles.content}>
             <Text style={styles.emoji}>😢</Text>
-            <Text style={styles.title}>앱 로딩 중 문제가 발생했습니다</Text>
-            <Text style={styles.message}>
+            <Text style={[styles.title, { color: isDark ? '#f8fafc' : '#0f172a' }]}>앱 로딩 중 문제가 발생했습니다</Text>
+            <Text style={[styles.message, { color: isDark ? '#94a3b8' : '#64748b' }]}>
               일시적인 오류일 수 있습니다.{'\n'}
               아래 버튼을 눌러 다시 시도해주세요.
             </Text>
             <TouchableOpacity 
-              style={styles.button}
+              style={[styles.button, { backgroundColor: isDark ? '#a78bfa' : '#ec4899' }]}
               onPress={this.handleReset}
             >
               <Text style={styles.buttonText}>다시 시도</Text>

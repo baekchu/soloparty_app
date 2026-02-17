@@ -212,16 +212,7 @@ export const useCoupons = () => {
         };
       }
 
-      // 포인트 차감
-      const pointsDeducted = await spendPoints(POINTS_PER_COUPON, '쿠폰 교환');
-      if (!pointsDeducted) {
-        return {
-          success: false,
-          message: '포인트 차감에 실패했습니다. 다시 시도해주세요.',
-        };
-      }
-
-      // 새 쿠폰 생성
+      // 새 쿠폰 생성 (포인트 차감 전에 먼저 준비)
       const couponInfo = COUPON_TYPES[couponType];
       const newCoupon: Coupon = {
         id: generateCouponId(),
@@ -243,17 +234,41 @@ export const useCoupons = () => {
         timestamp: Date.now(),
       };
 
-      // 상태 업데이트
-      const newCoupons = [newCoupon, ...coupons].slice(0, MAX_COUPONS * 2); // 사용한 쿠폰 포함
+      // 상태 업데이트 (저장 먼저 → 포인트 차감 후)
+      const newCoupons = [newCoupon, ...coupons].slice(0, MAX_COUPONS * 2);
       const newHistory = [newHistoryItem, ...history].slice(0, MAX_HISTORY);
       const newTotalExchanged = totalExchanged + 1;
 
-      await saveCouponsData({
+      // 쿠폰 데이터 먼저 저장 (포인트 차감 실패 시 쿠폰은 이미 저장됨 → 롤백 가능)
+      const couponSaved = await saveCouponsData({
         coupons: newCoupons,
         history: newHistory,
         totalExchanged: newTotalExchanged,
         totalUsed,
       });
+
+      if (!couponSaved) {
+        return {
+          success: false,
+          message: '쿠폰 저장에 실패했습니다. 다시 시도해주세요.',
+        };
+      }
+
+      // 포인트 차감 (쿠폰 저장 완료 후)
+      const pointsDeducted = await spendPoints(POINTS_PER_COUPON, '쿠폰 교환');
+      if (!pointsDeducted) {
+        // 포인트 차감 실패 → 쿠폰 롤백
+        await saveCouponsData({
+          coupons,
+          history,
+          totalExchanged,
+          totalUsed,
+        });
+        return {
+          success: false,
+          message: '포인트 차감에 실패했습니다. 다시 시도해주세요.',
+        };
+      }
 
       if (isMountedRef.current) {
         setCoupons(newCoupons);

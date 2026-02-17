@@ -2,11 +2,9 @@ import React, { useMemo } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, Image } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
-interface SplashScreenProps {
-  onLoadComplete?: () => void;
-}
+interface SplashScreenProps {}
 
-export default function SplashScreen({ onLoadComplete }: SplashScreenProps) {
+export default function SplashScreen({}: SplashScreenProps) {
   const { theme } = useTheme();
   const isDark = useMemo(() => theme === 'dark', [theme]);
 
@@ -88,9 +86,6 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 100,
     height: 100,
-  },
-  logoEmoji: {
-    fontSize: 60,
   },
   appName: {
     fontSize: 36,

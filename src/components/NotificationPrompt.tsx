@@ -8,7 +8,7 @@
  */
 
 import React, { useEffect, useRef } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { requestNotificationPermission, saveNotificationSettings, getNotificationSettings } from '../services/NotificationService';
 
 const FIRST_LAUNCH_KEY = '@solo_party_first_launch';
@@ -30,7 +30,7 @@ export const NotificationPrompt: React.FC<NotificationPromptProps> = ({ onClose 
       hasRequestedRef.current = true;
       
       try {
-        const hasLaunched = await AsyncStorage.getItem(FIRST_LAUNCH_KEY);
+        const hasLaunched = await safeGetItem(FIRST_LAUNCH_KEY);
         
         if (!hasLaunched) {
           // 첫 실행 시 시스템 네이티브 알림 권한 요청
@@ -38,7 +38,7 @@ export const NotificationPrompt: React.FC<NotificationPromptProps> = ({ onClose 
           const granted = await requestNotificationPermission();
           
           // 첫 실행 플래그 저장
-          await AsyncStorage.setItem(FIRST_LAUNCH_KEY, 'true');
+          await safeSetItem(FIRST_LAUNCH_KEY, 'true');
           
           // 권한 허용 시 설정 저장
           if (granted) {

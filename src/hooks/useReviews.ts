@@ -1,0 +1,439 @@
+/**
+ * 파티 후기 & 체크인 시스템 (v2)
+ *
+ * 체크인 검증 흐름:
+ * 1. 시간대 검증: 이벤트 시작 2시간 전 ~ 종료 후 3시간까지만 체크인 가능
+ *    (시간 미정이면 당일 06:00~23:59)
+ * 2. GPS 근접 검증: 이벤트에 좌표가 있으면 반경 2km 이내에서만 체크인
+ *    (좌표 없으면 시간대 검증만)
+ * 3. 1회 제한: 이미 체크인한 이벤트는 재체크인 불가
+ *
+ * 후기 작성 조건:
+ * - 체크인 완료된 이벤트만 작성 가능
+ * - 이벤트당 후기 1개만
+ * - 별점(1~5) + 한줄평(최대 100자)
+ *
+ * 모듈 레벨 공유 → 여러 화면에서 동기화
+ */
+
+import { useState, useCallback, useEffect, useRef } from 'react';
+import * as Location from 'expo-location';
+import { Platform, Alert } from 'react-native';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
+import { Event } from '../types';
+
+// ==================== 상수 ====================
+const CHECKINS_KEY = '@event_checkins_v2';
+const REVIEWS_KEY = '@event_reviews_v2';
+const MAX_REVIEWS = 200;
+const CHECKIN_RADIUS_KM = 2; // GPS 체크인 반경 (km)
+const CHECKIN_BEFORE_HOURS = 2; // 이벤트 시작 전 허용 시간
+const CHECKIN_AFTER_HOURS = 3; // 이벤트 종료 후 허용 시간
+
+// ==================== 타입 ====================
+export interface EventCheckIn {
+  eventId: string;
+  eventTitle: string;
+  date: string;
+  checkedInAt: number;
+  location?: { latitude: number; longitude: number };
+  verifiedBy: ('time' | 'gps')[]; // 어떤 검증을 통과했는지
+}
+
+export interface EventReview {
+  eventId: string;
+  eventTitle: string;
+  date: string;
+  rating: number; // 1-5
+  comment: string;
+  createdAt: number;
+}
+
+// ==================== 유틸 ====================
+function parseLocalDate(dateStr: string): Date | null {
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return null;
+  const d = new Date(
+    parseInt(parts[0], 10),
+    parseInt(parts[1], 10) - 1,
+    parseInt(parts[2], 10),
+  );
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function parseEventTime(dateStr: string, timeStr?: string): { start: Date; end: Date } | null {
+  const d = parseLocalDate(dateStr);
+  if (!d) return null;
+
+  if (!timeStr) {
+    // 시간 미정: 당일 06:00 ~ 23:59
+    const start = new Date(d);
+    start.setHours(6, 0, 0, 0);
+    const end = new Date(d);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  let hours = 18, minutes = 0;
+
+  // "19:00", "19:30"
+  const match24 = timeStr.match(/(\d{1,2}):(\d{2})/);
+  if (match24) {
+    hours = parseInt(match24[1], 10);
+    minutes = parseInt(match24[2], 10);
+  } else {
+    // "오후 7시 30분", "오전 11시", "7시"
+    const matchKor = timeStr.match(/(?:(?:오전|오후)\s*)?(\d{1,2})시(?:\s*(\d{1,2})분)?/);
+    if (matchKor) {
+      hours = parseInt(matchKor[1], 10);
+      if (timeStr.includes('오후') && hours < 12) hours += 12;
+      if (timeStr.includes('오전') && hours === 12) hours = 0;
+      minutes = matchKor[2] ? parseInt(matchKor[2], 10) : 0;
+    }
+  }
+
+  const start = new Date(d);
+  start.setHours(hours, minutes, 0, 0);
+  const end = new Date(start.getTime() + 2 * 3600000); // 기본 2시간 이벤트
+  return { start, end };
+}
+
+function getDistanceKm(
+  lat1: number, lon1: number,
+  lat2: number, lon2: number,
+): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function isToday(dateStr: string): boolean {
+  const d = parseLocalDate(dateStr);
+  if (!d) return false;
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+}
+
+function isPast(dateStr: string): boolean {
+  const d = parseLocalDate(dateStr);
+  if (!d) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime() < today.getTime();
+}
+
+// ==================== 모듈 레벨 공유 상태 ====================
+let _checkIns: EventCheckIn[] = [];
+let _reviews: EventReview[] = [];
+let _loaded = false;
+let _loading = false;
+const _listeners = new Set<() => void>();
+
+function _notify() {
+  _listeners.forEach(fn => fn());
+}
+
+async function _loadFromStorage(): Promise<void> {
+  if (_loaded || _loading) return;
+  _loading = true;
+  try {
+    // 체크인 로드
+    const storedCheckIns = await safeGetItem(CHECKINS_KEY);
+    if (storedCheckIns && storedCheckIns.length < 200000) {
+      try {
+        const parsed = JSON.parse(storedCheckIns);
+        if (Array.isArray(parsed)) {
+          const cutoff = Date.now() - 30 * 86400000;
+          _checkIns = parsed.filter(
+            (c: EventCheckIn) => c?.eventId && c?.date && c.checkedInAt > cutoff,
+          );
+          if (_checkIns.length < parsed.length) {
+            await safeSetItem(CHECKINS_KEY, JSON.stringify(_checkIns));
+          }
+        }
+      } catch { /* 파싱 실패 */ }
+    }
+
+    // 후기 로드
+    const storedReviews = await safeGetItem(REVIEWS_KEY);
+    if (storedReviews && storedReviews.length < 500000) {
+      try {
+        const parsed = JSON.parse(storedReviews);
+        if (Array.isArray(parsed)) {
+          _reviews = parsed.filter(
+            (r: EventReview) => r?.eventId && r?.date && r?.rating,
+          );
+        }
+      } catch { /* 파싱 실패 */ }
+    }
+  } catch { /* 전체 로드 실패 */ }
+  _loaded = true;
+  _loading = false;
+  _notify();
+}
+
+async function _saveCheckIns(): Promise<void> {
+  try { await safeSetItem(CHECKINS_KEY, JSON.stringify(_checkIns)); } catch {}
+}
+
+async function _saveReviews(): Promise<void> {
+  try { await safeSetItem(REVIEWS_KEY, JSON.stringify(_reviews)); } catch {}
+}
+
+// ==================== 훅 ====================
+export default function useReviews() {
+  const [, forceUpdate] = useState(0);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    const listener = () => {
+      if (isMountedRef.current) forceUpdate(n => n + 1);
+    };
+    _listeners.add(listener);
+
+    if (!_loaded && !_loading) {
+      _loadFromStorage();
+    } else if (_loaded) {
+      forceUpdate(n => n + 1);
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      _listeners.delete(listener);
+    };
+  }, []);
+
+  // ==================== 체크인 ====================
+
+  /** 체크인 가능 여부 (버튼 표시용) */
+  const canCheckIn = useCallback((eventId: string | undefined, date: string): boolean => {
+    if (!eventId) return false;
+    if (_checkIns.some(c => c.eventId === eventId && c.date === date)) return false;
+    // 당일만 (시간대 검증은 실제 체크인 시 수행)
+    return isToday(date);
+  }, []);
+
+  /** 체크인 완료 여부 */
+  const isCheckedIn = useCallback((eventId: string | undefined, date: string): boolean => {
+    if (!eventId) return false;
+    return _checkIns.some(c => c.eventId === eventId && c.date === date);
+  }, []);
+
+  /** 체크인 실행 (시간대 + GPS 검증) */
+  const doCheckIn = useCallback(async (
+    event: Event,
+    date: string,
+  ): Promise<{ success: boolean; message: string }> => {
+    if (!event.id) {
+      return { success: false, message: '이벤트 정보가 올바르지 않습니다.' };
+    }
+
+    // 데이터 로드 전 체크인 방지
+    if (!_loaded) {
+      return { success: false, message: '데이터를 불러오는 중입니다. 잠시 후 다시 시도해주세요.' };
+    }
+
+    // 이미 체크인
+    if (_checkIns.some(c => c.eventId === event.id && c.date === date)) {
+      return { success: false, message: '이미 체크인했습니다.' };
+    }
+
+    // 당일 확인
+    if (!isToday(date)) {
+      if (isPast(date)) {
+        return { success: false, message: '이미 지난 이벤트는 체크인할 수 없습니다.' };
+      }
+      return { success: false, message: '파티 당일에만 체크인할 수 있습니다.' };
+    }
+
+    const verifiedBy: ('time' | 'gps')[] = [];
+    const now = new Date();
+
+    // ---- 시간대 검증 ----
+    const eventTime = parseEventTime(date, event.time);
+    if (eventTime) {
+      const allowStart = new Date(eventTime.start.getTime() - CHECKIN_BEFORE_HOURS * 3600000);
+      const allowEnd = new Date(eventTime.end.getTime() + CHECKIN_AFTER_HOURS * 3600000);
+
+      if (now < allowStart) {
+        const hoursUntil = Math.ceil((allowStart.getTime() - now.getTime()) / 3600000);
+        return {
+          success: false,
+          message: `아직 체크인할 수 없습니다.\n파티 시작 ${CHECKIN_BEFORE_HOURS}시간 전부터 가능합니다.\n(약 ${hoursUntil}시간 후)`,
+        };
+      }
+      if (now > allowEnd) {
+        return { success: false, message: '체크인 시간이 지났습니다.' };
+      }
+      verifiedBy.push('time');
+    }
+
+    // ---- GPS 근접 검증 (좌표가 있는 이벤트만) ----
+    let userLocation: { latitude: number; longitude: number } | undefined;
+
+    if (event.coordinates?.latitude && event.coordinates?.longitude) {
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        let permGranted = status === 'granted';
+
+        if (!permGranted) {
+          const { status: newStatus } = await Location.requestForegroundPermissionsAsync();
+          permGranted = newStatus === 'granted';
+        }
+
+        if (permGranted) {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          userLocation = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+
+          const dist = getDistanceKm(
+            loc.coords.latitude, loc.coords.longitude,
+            event.coordinates.latitude, event.coordinates.longitude,
+          );
+
+          if (dist > CHECKIN_RADIUS_KM) {
+            return {
+              success: false,
+              message: `파티 장소 근처에서 체크인해주세요.\n현재 약 ${dist.toFixed(1)}km 떨어져 있습니다.\n(${CHECKIN_RADIUS_KM}km 이내 필요)`,
+            };
+          }
+          verifiedBy.push('gps');
+        }
+        // 위치 권한 거부 시 시간대 검증만으로 진행
+      } catch {
+        // GPS 오류 시 시간대 검증만으로 진행
+      }
+    }
+
+    // 최소 1가지 검증 통과 필요
+    if (verifiedBy.length === 0 && eventTime) {
+      // parseEventTime은 성공했는데 verifiedBy에 'time'이 없을 수 없음
+      // 방어 코드
+      verifiedBy.push('time');
+    }
+
+    // 체크인 저장
+    const newCheckIn: EventCheckIn = {
+      eventId: event.id,
+      eventTitle: event.title,
+      date,
+      checkedInAt: Date.now(),
+      location: userLocation,
+      verifiedBy,
+    };
+
+    _checkIns = [..._checkIns, newCheckIn];
+    _notify();
+    await _saveCheckIns();
+
+    const verifyMsg = verifiedBy.includes('gps')
+      ? '📍 위치 인증 완료!'
+      : '⏰ 시간대 인증 완료!';
+    return {
+      success: true,
+      message: `체크인 완료! ${verifyMsg}\n파티가 끝나면 후기를 남겨주세요 🎉`,
+    };
+  }, []);
+
+  // ==================== 후기 ====================
+
+  /** 후기 작성 가능 여부 */
+  const canWriteReview = useCallback((eventId: string | undefined, date: string): boolean => {
+    if (!eventId) return false;
+    if (!_checkIns.some(c => c.eventId === eventId && c.date === date)) return false;
+    if (_reviews.some(r => r.eventId === eventId && r.date === date)) return false;
+    return true;
+  }, []);
+
+  /** 후기 존재 여부 */
+  const hasReview = useCallback((eventId: string | undefined, date: string): boolean => {
+    if (!eventId) return false;
+    return _reviews.some(r => r.eventId === eventId && r.date === date);
+  }, []);
+
+  /** 후기 가져오기 */
+  const getReview = useCallback((eventId: string | undefined, date: string): EventReview | null => {
+    if (!eventId) return null;
+    return _reviews.find(r => r.eventId === eventId && r.date === date) ?? null;
+  }, []);
+
+  /** 후기 작성 */
+  const submitReview = useCallback(async (
+    event: Event,
+    date: string,
+    rating: number,
+    comment: string,
+  ): Promise<{ success: boolean; message: string }> => {
+    if (!event.id) {
+      return { success: false, message: '이벤트 정보가 올바르지 않습니다.' };
+    }
+
+    if (!_checkIns.some(c => c.eventId === event.id && c.date === date)) {
+      return { success: false, message: '체크인을 먼저 해주세요.\n파티 당일에 체크인할 수 있습니다.' };
+    }
+
+    if (_reviews.some(r => r.eventId === event.id && r.date === date)) {
+      return { success: false, message: '이미 후기를 작성했습니다.' };
+    }
+
+    if (rating < 1 || rating > 5 || !Number.isInteger(rating)) {
+      return { success: false, message: '별점은 1~5 사이 정수여야 합니다.' };
+    }
+    const trimmedComment = comment.trim().slice(0, 100);
+    if (trimmedComment.length === 0) {
+      return { success: false, message: '한줄평을 입력해주세요.' };
+    }
+
+    // 최대 초과 시 가장 오래된 제거
+    if (_reviews.length >= MAX_REVIEWS) {
+      const sorted = [..._reviews].sort((a, b) => a.createdAt - b.createdAt);
+      sorted.shift();
+      _reviews = sorted;
+    }
+
+    const newReview: EventReview = {
+      eventId: event.id,
+      eventTitle: event.title,
+      date,
+      rating,
+      comment: trimmedComment,
+      createdAt: Date.now(),
+    };
+
+    _reviews = [..._reviews, newReview];
+    _notify();
+    await _saveReviews();
+
+    return { success: true, message: '후기가 등록되었습니다! 감사합니다 ✨' };
+  }, []);
+
+  /** 모든 후기 (최신순) */
+  const getAllReviews = useCallback((): EventReview[] => {
+    return [..._reviews].sort((a, b) => b.createdAt - a.createdAt);
+  }, []);
+
+  return {
+    checkIns: [..._checkIns],
+    reviews: [..._reviews],
+    isLoaded: _loaded,
+    canCheckIn,
+    isCheckedIn,
+    doCheckIn,
+    canWriteReview,
+    hasReview,
+    getReview,
+    submitReview,
+    getAllReviews,
+  };
+}

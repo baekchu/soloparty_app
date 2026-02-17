@@ -24,6 +24,11 @@ export interface Event {
   venue?: string;             // 장소명 (예: "카페 OOO")
   address?: string;           // 상세 주소
   tags?: string[];            // 태그 (예: ["소개팅", "미팅"])
+  // 프로모션 (광고)
+  promoted?: boolean;         // 프로모션(홍보) 이벤트 여부
+  promotionPriority?: number; // 홍보 우선순위 (높을수록 상단, 기본 0)
+  promotionLabel?: string;    // 홍보 라벨 (예: "HOT", "추천", "인기")
+  promotionColor?: string;    // 홍보 뱃지 색상 (예: "#ef4444")
 }
 
 export interface EventsByDate {

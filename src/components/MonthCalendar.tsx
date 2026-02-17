@@ -92,11 +92,11 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const daysInMonth = useMemo(() => getDaysInMonth(year, month), [year, month]);
   const firstDay = useMemo(() => getFirstDayOfMonth(year, month), [year, month]);
   
-  // 오늘 날짜 계산 (useMemo로 최적화 - 컴포넌트 리렌더링 시에만 갱신)
-  const todayString = useMemo(() => {
+  // 오늘 날짜 계산 (매 렌더링 시 갱신 — 자정 이후에도 정확하게 표시)
+  const todayString = (() => {
     const today = new Date();
     return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  }, []);
+  })();
 
   const renderDay = useCallback((day: number | null, weekIndex: number, dayIndex: number, isOtherMonth: boolean = false) => {
     if (!day || isOtherMonth) {
@@ -154,7 +154,8 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 dateString,
                 filteredEvents,
                 dayEvents,
-                idx
+                idx,
+                isDark
               );
               const eventHeight = Math.max(Math.min(dimensions.cellHeight / 6, 14), 11); // 셀 높이에 비례, 최소 11, 최대 14
               return (
@@ -170,7 +171,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 >
                   <Text 
                     style={{ 
-                      color: isDark ? '#1f2937' : '#374151',
+                      color: isDark ? '#ffffff' : '#374151',
                       fontSize: dimensions.cellWidth < 50 ? 7 : Math.min(8, eventHeight * 0.6),
                       fontWeight: '700',
                       letterSpacing: -0.2,
@@ -234,7 +235,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     }
 
     return weeks;
-  }, [daysInMonth, firstDay]);
+  }, [daysInMonth, firstDay, year, month]);
 
   const weeks = useMemo(() => renderWeeks(), [renderWeeks]);
 

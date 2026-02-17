@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+﻿import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -37,41 +37,52 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
   const handleSave = useCallback(async () => {
    
     if (!selectedDate) {
-      Alert.alert('알림', '날짜를 선택해주세요');
+      Alert.alert('알림', '날짜를 선택해주세요.');
       return;
     }
     if (!title.trim()) {
-      Alert.alert('알림', '이벤트 제목을 입력해주세요');
+      Alert.alert('알림', '이벤트 제목을 입력해주세요.');
       return;
     }
 
-    const newEvent = {
-      id: Date.now().toString(),
-      title: title.trim(),
-      time: time.trim(),
-      location: location.trim(),
-      description: description.trim(),
-      link: link.trim() || undefined,
-      coordinates: coordinates || undefined,
-    };
-
-    const events = await loadEvents();
-    if (!events[selectedDate]) {
-      events[selectedDate] = [];
+    // URL 유효성 검증
+    const trimmedLink = link.trim();
+    if (trimmedLink && !/^https?:\/\/.+/i.test(trimmedLink)) {
+      Alert.alert('알림', '링크는 http:// 또는 https://로 시작해야 합니다.');
+      return;
     }
-    events[selectedDate].push(newEvent);
-    
-    await saveEvents(events);
-    
-    Alert.alert('성공', '이벤트가 추가되었습니다', [
-      { text: '확인', onPress: () => navigation.goBack() }
-    ]);
+
+    try {
+      const newEvent = {
+        id: `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        title: title.trim(),
+        time: time.trim(),
+        location: location.trim(),
+        description: description.trim(),
+        link: trimmedLink || undefined,
+        coordinates: coordinates || undefined,
+      };
+
+      const events = await loadEvents();
+      if (!events[selectedDate]) {
+        events[selectedDate] = [];
+      }
+      events[selectedDate].push(newEvent);
+      
+      await saveEvents(events);
+      
+      Alert.alert('알림', '이벤트가 성공적으로 저장되었습니다.', [
+        { text: '확인', onPress: () => navigation.goBack() }
+      ]);
+    } catch {
+      Alert.alert('오류', '이벤트 저장에 실패했습니다. 다시 시도해주세요.');
+    }
   }, [selectedDate, title, time, location, description, link, coordinates, navigation]);
 
   const isDark = theme === 'dark';
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#030712' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       {/* 헤더 */}
       <View style={{ 
         paddingTop: 12, 
@@ -100,15 +111,15 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
         showsVerticalScrollIndicator={false}
       >
         <View style={{ paddingHorizontal: getResponsivePadding(), paddingTop: 16, paddingBottom: 24 }}>
-        <View style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 16, backgroundColor: isDark ? '#111827' : '#f9fafb' }}>
+        <View style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
           <View style={{ padding: 16 }}>
             <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 12, color: isDark ? '#d1d5db' : '#374151' }}>
               📅 날짜 선택
             </Text>
             <Calendar
               theme={{
-                backgroundColor: isDark ? '#111827' : '#ffffff',
-                calendarBackground: isDark ? '#111827' : '#ffffff',
+                backgroundColor: isDark ? '#1e293b' : '#ffffff',
+                calendarBackground: isDark ? '#1e293b' : '#ffffff',
                 textSectionTitleColor: isDark ? '#d1d5db' : '#4b5563',
                 selectedDayBackgroundColor: '#10b981',
                 selectedDayTextColor: '#ffffff',
@@ -130,14 +141,14 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
             {selectedDate && (
               <View style={{ marginTop: 12, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: isDark ? 'rgba(6, 95, 70, 0.2)' : '#d1fae5' }}>
                 <Text style={{ fontSize: 14, fontWeight: '600', color: isDark ? '#34d399' : '#059669' }}>
-                  ✓ {format(new Date(selectedDate), 'yyyy년 M월 d일')}
+                  ✅ {format(new Date(selectedDate), 'yyyy년 M월 d일')}
                 </Text>
               </View>
             )}
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#111827' : '#f9fafb' }}>
+        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
           <View style={{ padding: 16 }}>
             <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
               이벤트 제목 *
@@ -158,7 +169,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#111827' : '#f9fafb' }}>
+        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
           <View style={{ padding: 16 }}>
             <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
               🕐 시간
@@ -179,7 +190,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#111827' : '#f9fafb' }}>
+        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
           <View style={{ padding: 16 }}>
             <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
               📍 장소
@@ -214,7 +225,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
                 justifyContent: 'center',
               }}
             >
-              <Text style={{ fontSize: 16, color: isDark ? '#60a5fa' : '#3b82f6', marginRight: 8 }}>🗺️</Text>
+              <Text style={{ fontSize: 16, color: isDark ? '#60a5fa' : '#3b82f6', marginRight: 8 }}>📌</Text>
               <Text style={{ fontSize: 14, fontWeight: '600', color: isDark ? '#60a5fa' : '#3b82f6' }}>
                 {coordinates ? '위치가 설정되었습니다' : '지도에서 위치 선택'}
               </Text>
@@ -222,14 +233,14 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
             {coordinates && (
               <View style={{ marginTop: 8, padding: 8, borderRadius: 8, backgroundColor: isDark ? 'rgba(59, 130, 246, 0.1)' : '#dbeafe' }}>
                 <Text style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#1e40af' }}>
-                  📌 {coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}
+                  📍 {coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}
                 </Text>
               </View>
             )}
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#111827' : '#f9fafb' }}>
+        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
           <View style={{ padding: 16 }}>
             <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
               🔗 링크
@@ -252,7 +263,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 24, backgroundColor: isDark ? '#111827' : '#f9fafb' }}>
+        <View style={{ borderRadius: 16, marginBottom: 24, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
           <View style={{ padding: 16 }}>
             <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
               📝 설명

@@ -40,7 +40,7 @@ import { RootStackParamList } from '../types';
 const SECTION_PADDING = 20;
 
 interface CouponScreenProps {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Reward'>;
+  navigation: NativeStackNavigationProp<RootStackParamList, 'Coupon'>;
 }
 
 export default function CouponScreen({ navigation }: CouponScreenProps) {
@@ -132,6 +132,10 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
       // 보상형 광고 표시 (전체 시청 필수, 건너뛰기 불가)
       showRewardedAd();
       // 실제로는 광고가 완료되면 useRewardedAd 콜백에서 처리됨
+      // 타임아웃: 60초 후에도 완료되지 않으면 자동 해제
+      setTimeout(() => {
+        setIsWatchingAd(false);
+      }, 60000);
     } catch (error) {
       Alert.alert('오류', '광고 로드 중 오류가 발생했습니다.');
       setIsWatchingAd(false);
@@ -159,14 +163,19 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
           text: '교환하기',
           onPress: async () => {
             setIsExchanging(true);
-            const result = await exchangePointsForCoupon(balance, spendPoints, 'free_event');
-            setIsExchanging(false);
-            
-            Alert.alert(
-              result.success ? '🎉 교환 완료!' : '교환 실패',
-              result.message,
-              [{ text: '확인' }]
-            );
+            try {
+              const result = await exchangePointsForCoupon(balance, spendPoints, 'free_event');
+              
+              Alert.alert(
+                result.success ? '🎉 교환 완료!' : '교환 실패',
+                result.message,
+                [{ text: '확인' }]
+              );
+            } catch {
+              Alert.alert('오류', '쿠폰 교환 중 오류가 발생했습니다.');
+            } finally {
+              setIsExchanging(false);
+            }
           },
         },
       ]
@@ -220,7 +229,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
     const now = Date.now();
     const diff = expiresAt - now;
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    return days;
+    return Math.max(0, days); // 음수 방지 (만료된 쿠폰)
   }, []);
 
   // 진행률 계산
@@ -499,6 +508,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         transparent
         animationType="fade"
         onRequestClose={() => setShowCouponModal(false)}
+        statusBarTranslucent
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>

@@ -11,7 +11,7 @@
  * ========================================================================
  */
 
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,20 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
+  Share,
+  Platform,
 } from 'react-native';
+import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { isTablet } from '../utils/responsive';
+
+const STORE_LINKS = {
+  ios: 'https://apps.apple.com/us/app/%EC%86%94%EB%A1%9C%ED%8C%8C%ED%8B%B0/id6757147307',
+  android: 'https://play.google.com/store/apps/details?id=com.soloparty.dating',
+} as const;
+
+const SHARE_REWARD_POINTS = 50;
+const MAX_DAILY_SHARES = 3;
+const SHARE_COUNT_KEY = '@daily_share_count';
 
 interface PointsModalProps {
   visible: boolean;
@@ -29,33 +41,59 @@ interface PointsModalProps {
   points: number;
   onSpendPoints: (amount: number, reason: string) => Promise<boolean>;
   onWatchAd: () => Promise<{ success: boolean; message: string }>;
+  onAddPoints?: (amount: number, reason: string) => Promise<boolean>;
   isDark: boolean;
   dailyAdCount?: number;
   maxDailyAds?: number;
   canWatchAd?: boolean;
+  /** 포인트 히스토리 (최근 내역) */
+  history?: Array<{ id: string; amount: number; reason: string; timestamp: number }>;
 }
 
 const PointsModal = memo(({ 
-  visible, onClose, points, onSpendPoints, onWatchAd, 
-  isDark, dailyAdCount = 0, maxDailyAds = 10, canWatchAd: canWatchAdProp 
+  visible, onClose, points, onSpendPoints, onWatchAd, onAddPoints,
+  isDark, dailyAdCount = 0, maxDailyAds = 10, canWatchAd: canWatchAdProp,
+  history = [],
 }: PointsModalProps) => {
   
   const remainingAds = useMemo(() => (maxDailyAds || 10) - (dailyAdCount || 0), [maxDailyAds, dailyAdCount]);
   const canWatchAd = canWatchAdProp ?? remainingAds > 0;
   const [isProcessing, setIsProcessing] = useState(false);
+  const [dailyShareCount, setDailyShareCount] = useState(0);
+  const remainingShares = MAX_DAILY_SHARES - dailyShareCount;
+  const canShare = remainingShares > 0;
+
+  // 일일 공유 횟수 로드
+  useEffect(() => {
+    if (!visible) return;
+    (async () => {
+      try {
+        const stored = await safeGetItem(SHARE_COUNT_KEY);
+        if (stored) {
+          const { count, date } = JSON.parse(stored);
+          const today = new Date().toISOString().slice(0, 10);
+          setDailyShareCount(date === today ? count : 0);
+        }
+      } catch { /* ignore */ }
+    })();
+  }, [visible]);
   
   const handleFreeParty = useCallback(() => {
     if (points >= 50000) {
       Alert.alert(
-        '🎉 참여 완료',
-        '50,000P가 차감되었습니다!\n파티에 참여하세요!',
+        '🎉 파티 참여',
+        '50,000P를 사용하여 파티에 참여하시겠습니까?',
         [
+          { text: '취소', style: 'cancel' },
           {
-            text: '확인',
+            text: '참여하기',
             onPress: async () => {
               const success = await onSpendPoints(50000, '솔로파티 무료 참여');
               if (success) {
+                Alert.alert('✅ 참여 완료', '50,000P가 차감되었습니다!\n파티에 참여하세요!');
                 onClose();
+              } else {
+                Alert.alert('오류', '포인트 차감에 실패했습니다. 다시 시도해주세요.');
               }
             }
           }
@@ -70,14 +108,49 @@ const PointsModal = memo(({
     }
   }, [points, onSpendPoints, onClose]);
 
-  const handleInviteFriend = useCallback(() => {
-    onClose();
-    Alert.alert(
-      '👥 친구 초대',
-      '친구 1명 초대 시 500P 적립!\n(친구 초대 기능은 곧 출시됩니다)',
-      [{ text: '확인' }]
-    );
-  }, [onClose]);
+  const handleShareApp = useCallback(async () => {
+    if (!canShare) {
+      Alert.alert(
+        '📢 오늘 공유 완료',
+        `오늘은 이미 ${MAX_DAILY_SHARES}번 공유했어요.\n내일 다시 공유하면 포인트를 받을 수 있어요!`,
+        [{ text: '확인' }]
+      );
+      return;
+    }
+
+    try {
+      const storeLink = Platform.OS === 'ios' ? STORE_LINKS.ios : STORE_LINKS.android;
+      const message = `🎉 솔로파티에서 소개팅 파티를 찾아보세요!\n\n솔로들을 위한 파티 일정을 한눈에 확인하고 참여할 수 있어요.\n\n지금 다운로드하세요 👇\n${storeLink}`;
+
+      const result = await Share.share({
+        message,
+        title: '솔로파티 - 소개팅 파티 캘린더',
+      });
+
+      if (result.action === Share.sharedAction) {
+        // 공유 횟수 카운트 저장
+        const newCount = dailyShareCount + 1;
+        const today = new Date().toISOString().slice(0, 10);
+        await safeSetItem(SHARE_COUNT_KEY, JSON.stringify({ count: newCount, date: today }));
+        setDailyShareCount(newCount);
+
+        if (onAddPoints) {
+          const success = await onAddPoints(SHARE_REWARD_POINTS, '앱 공유 보상');
+          if (success) {
+            Alert.alert(
+              '🎉 공유 완료!',
+              `친구에게 공유되었습니다!\n${SHARE_REWARD_POINTS}P가 적립되었어요!\n(오늘 남은 횟수: ${MAX_DAILY_SHARES - newCount}회)`,
+              [{ text: '확인' }]
+            );
+          }
+        } else {
+          Alert.alert('📤 공유 완료', '친구에게 공유되었습니다!', [{ text: '확인' }]);
+        }
+      }
+    } catch {
+      // 공유 취소 시 무시
+    }
+  }, [canShare, dailyShareCount, onAddPoints]);
 
   const handleWatchAd = useCallback(async () => {
     if (!canWatchAd) {
@@ -190,23 +263,27 @@ const PointsModal = memo(({
                 </Text>
               </TouchableOpacity>
 
-              {/* 친구 초대 */}
+              {/* 앱 공유하기 */}
               <TouchableOpacity
                 activeOpacity={0.7}
-                onPress={handleInviteFriend}
+                onPress={handleShareApp}
                 style={[
                   styles.secondaryButton,
                   { 
                     backgroundColor: isDark ? '#334155' : '#f1f5f9',
                     borderColor: isDark ? '#475569' : '#e2e8f0',
+                    opacity: canShare ? 1 : 0.4,
                   }
                 ]}
               >
                 <Text style={[styles.secondaryButtonText, { color: isDark ? '#e2e8f0' : '#475569' }]}>
-                  👥 친구 초대하기
+                  📤 앱 공유하기
                 </Text>
                 <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
-                  +500P/명
+                  {canShare
+                    ? `+${SHARE_REWARD_POINTS}P · 남은 횟수: ${remainingShares}/${MAX_DAILY_SHARES}회`
+                    : `오늘 공유 완료 (${dailyShareCount}/${MAX_DAILY_SHARES})`
+                  }
                 </Text>
               </TouchableOpacity>
 
@@ -248,22 +325,35 @@ const PointsModal = memo(({
               <Text style={[styles.historyTitle, { color: isDark ? '#cbd5e1' : '#64748b' }]}>
                 최근 내역
               </Text>
-              <View style={[
-                styles.historyItem,
-                { backgroundColor: isDark ? '#334155' : '#f8f9fa' }
-              ]}>
-                <View>
-                  <Text style={[styles.historyReason, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
-                    테스트 포인트
-                  </Text>
-                  <Text style={[styles.historyDate, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
-                    2025-12-20
+              {history.length > 0 ? (
+                history.slice(0, 5).map((item) => (
+                  <View key={item.id} style={[
+                    styles.historyItem,
+                    { backgroundColor: isDark ? '#334155' : '#f8f9fa' }
+                  ]}>
+                    <View>
+                      <Text style={[styles.historyReason, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                        {item.reason}
+                      </Text>
+                      <Text style={[styles.historyDate, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
+                        {new Date(item.timestamp).toLocaleDateString('ko-KR')}
+                      </Text>
+                    </View>
+                    <Text style={[styles.historyAmount, { color: item.amount >= 0 ? '#10b981' : '#ef4444' }]}>
+                      {item.amount >= 0 ? '+' : ''}{item.amount.toLocaleString()}P
+                    </Text>
+                  </View>
+                ))
+              ) : (
+                <View style={[
+                  styles.historyItem,
+                  { backgroundColor: isDark ? '#334155' : '#f8f9fa' }
+                ]}>
+                  <Text style={[styles.historyReason, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
+                    아직 내역이 없습니다
                   </Text>
                 </View>
-                <Text style={[styles.historyAmount, { color: '#10b981' }]}>
-                  +2,500P
-                </Text>
-              </View>
+              )}
             </View>
           </ScrollView>
         </TouchableOpacity>

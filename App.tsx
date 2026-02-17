@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { NavigationContainer, NavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { View, Text, Linking } from "react-native";
+import { View, Text, Linking, Appearance } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { RootStackParamList, Event } from "./src/types";
 
@@ -26,16 +26,18 @@ import { RegionProvider } from "./src/contexts/RegionContext";
 // Utils
 import { initAsyncStorage } from "./src/utils/asyncStorageManager";
 import { AdManager } from "./src/services/AdService";
+import { secureLog } from "./src/utils/secureStorage";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 // 에러 화면
 function ErrorScreen({ message }: { message: string }) {
+  const isDark = Appearance.getColorScheme() === 'dark';
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: '#fce7f3' }}>
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: isDark ? '#0f172a' : '#fce7f3' }}>
       <Text style={{ fontSize: 40, marginBottom: 20 }}>😢</Text>
-      <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0f172a', marginBottom: 10 }}>앱 오류</Text>
-      <Text style={{ fontSize: 14, color: '#666', textAlign: 'center' }}>{message}</Text>
+      <Text style={{ fontSize: 18, fontWeight: 'bold', color: isDark ? '#f8fafc' : '#0f172a', marginBottom: 10 }}>앱 오류</Text>
+      <Text style={{ fontSize: 14, color: isDark ? '#94a3b8' : '#666', textAlign: 'center' }}>{message}</Text>
     </View>
   );
 }
@@ -76,11 +78,15 @@ function AppContent() {
         const [, eventId, date] = match;
         // 날짜 유효성 검증
         if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          setPendingDeepLink({ eventId, date });
+          // eventId 살균화 (영숫자, 하이픈, 언더스코어만 허용, 최대 100자)
+          const sanitizedEventId = eventId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+          if (sanitizedEventId.length > 0) {
+            setPendingDeepLink({ eventId: sanitizedEventId, date });
+          }
         }
       }
     } catch (err) {
-      console.warn('딥링크 파싱 실패:', err);
+      secureLog.warn('딥링크 파싱 실패');
     }
   }, []);
 
@@ -109,10 +115,9 @@ function AppContent() {
           setIsReady(true);
         }
       } catch (err) {
-        console.error('앱 초기화 실패:', err);
+        secureLog.error('앱 초기화 실패');
         if (mounted) {
-          // 초기화 실패해도 앱 계속 진행
-          setIsReady(true);
+          setError('앱을 시작하는 중 오류가 발생했습니다.\n앱을 다시 실행해주세요.');
         }
       }
     };

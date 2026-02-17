@@ -1,17 +1,15 @@
-import React, { useMemo, useCallback } from 'react';
+﻿import React, { useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch, Alert, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Constants from 'expo-constants';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../hooks/useNotifications';
-import { usePoints } from '../hooks/usePoints';
-import { useCoupons } from '../hooks/useCoupons';
-import { clearCache } from '../utils/storage';
 // import { PointsMigrationService } from '../services/PointsMigrationService'; // 로그인 기능 추가 시 활성화
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 
 // ==================== 상수 정의 ====================
-const APP_VERSION = '1.0.0';
+const APP_VERSION = Constants.expoConfig?.version ?? '1.0.3';
 const APP_NAME = 'Solo Party';
 const SECTION_PADDING = 20;
 
@@ -30,9 +28,9 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     toggleEventReminders 
   } = useNotifications();
 
-  // 포인트 & 쿠폰 정보
-  const { balance: points } = usePoints();
-  const { availableCoupons } = useCoupons();
+  // 포인트 & 쿠폰 정보 (로그인 기능 추가 시 활성화)
+  // const { balance: points } = usePoints();
+  // const { availableCoupons } = useCoupons();
 
   // 마이그레이션 상태 (로그인 기능 추가 시 활성화)
   // const [migrationStatus, setMigrationStatus] = useState<{
@@ -55,7 +53,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
       if (!success) {
         Alert.alert(
           '알림 권한 필요',
-          '알림을 받으려면 설정에서 알림 권한을 허용해주세요.',
+          '알림을 받으시려면 설정에서 알림 권한을 허용해주세요.',
           [{ text: '확인' }]
         );
       }
@@ -108,7 +106,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     <SafeAreaView style={[settingsStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 헤더 */}
       <View style={[settingsStyles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
-        <TouchableOpacity onPress={goBack} style={settingsStyles.backButton}>
+        <TouchableOpacity onPress={goBack} style={settingsStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Text style={[settingsStyles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
         <Text style={[settingsStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
@@ -144,7 +142,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
             <Switch
               value={isDark}
               onValueChange={toggleTheme}
-              trackColor={{ false: '#d1d5db', true: '#a78bfa' }}
+              trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
               thumbColor={isDark ? '#ec4899' : '#f3f4f6'}
             />
           </View>
@@ -181,13 +179,13 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 fontSize: 13,
                 color: isDark ? '#94a3b8' : '#64748b',
               }}>
-                {notificationSettings.enabled ? '알림이 활성화되었습니다' : '알림을 받으려면 활성화하세요'}
+                {notificationSettings.enabled ? '알림이 활성화되었습니다' : '알림을 받으시려면 활성화하세요'}
               </Text>
             </View>
             <Switch
               value={notificationSettings.enabled}
               onValueChange={handleNotificationToggle}
-              trackColor={{ false: '#d1d5db', true: '#a78bfa' }}
+              trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
               thumbColor={notificationSettings.enabled ? '#ec4899' : '#f3f4f6'}
             />
           </View>
@@ -228,7 +226,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 <Switch
                   value={notificationSettings.newEventAlerts}
                   onValueChange={toggleNewEventAlerts}
-                  trackColor={{ false: '#d1d5db', true: '#a78bfa' }}
+                  trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
                   thumbColor={notificationSettings.newEventAlerts ? '#ec4899' : '#f3f4f6'}
                 />
               </View>
@@ -258,20 +256,21 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 <Switch
                   value={notificationSettings.eventReminders}
                   onValueChange={toggleEventReminders}
-                  trackColor={{ false: '#d1d5db', true: '#a78bfa' }}
+                  trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
                   thumbColor={notificationSettings.eventReminders ? '#ec4899' : '#f3f4f6'}
                 />
               </View>
-
-            
             </>
           )}
         </View>
 
         {/* 위치 설정 */}
         <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <TouchableOpacity onPress={navigateToLocationPicker}>
-            <View>
+          <TouchableOpacity 
+            onPress={navigateToLocationPicker}
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <View style={{ flex: 1 }}>
               <Text style={{
                 fontSize: 18,
                 fontWeight: '700',
@@ -287,14 +286,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 지도에서 기본 위치 선택
               </Text>
             </View>
-            <View style={{
-              position: 'absolute',
-              right: 0,
-              top: '50%',
-              transform: [{ translateY: -12 }],
-            }}>
-              <Text style={{ fontSize: 24, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
-            </View>
+            <Text style={{ fontSize: 24, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
           </TouchableOpacity>
         </View>
 
@@ -311,7 +303,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 color: isDark ? '#f8fafc' : '#0f172a',
                 marginBottom: 4,
               }}>
-                🎟️ 포인트 & 쿠폰
+                💎 포인트 & 쿠폰
               </Text>
               <Text style={{
                 fontSize: 14,
@@ -324,7 +316,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           </TouchableOpacity>
         </View> */}
 
-        {/* 약관 및 정책 */}
+        {/* 약관 및 법적정보 */}
         <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
           <Text style={{
             fontSize: 18,
@@ -332,7 +324,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
             color: isDark ? '#f8fafc' : '#0f172a',
             marginBottom: 16,
           }}>
-            약관 및 정책
+            약관 및 법적정보
           </Text>
 
           {/* 이용약관 */}
@@ -421,7 +413,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           <Text style={[settingsStyles.appInfoText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
             {APP_NAME} v{APP_VERSION}{'\n'}
             특별한 만남을 위한 일정 관리{'\n\n'}
-            © 2025 {APP_NAME}. All rights reserved.
+            © 2026 {APP_NAME}. All rights reserved.
           </Text>
         </View>
       </ScrollView>
@@ -462,13 +454,13 @@ const settingsStyles = StyleSheet.create({
   section: {
     margin: SECTION_PADDING,
     padding: SECTION_PADDING,
-    borderRadius: 12,
+    borderRadius: 16,
   },
   sectionHorizontal: {
     marginHorizontal: SECTION_PADDING,
     marginBottom: SECTION_PADDING,
     padding: SECTION_PADDING,
-    borderRadius: 12,
+    borderRadius: 16,
   },
   sectionTitle: {
     fontSize: 18,

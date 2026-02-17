@@ -85,25 +85,21 @@ export const useNotifications = () => {
 
   // 새 일정 알림 토글 (async 불필요 - 상태 업데이트만 수행)
   const toggleNewEventAlerts = useCallback((enabled: boolean) => {
-    setSettings(prev => {
-      const newSettings = { ...prev, newEventAlerts: enabled };
-      saveNotificationSettings(newSettings).catch(() => {
-        secureLog.error('새 일정 알림 설정 저장 실패');
-      });
-      return newSettings;
+    const newSettings = { ...settings, newEventAlerts: enabled };
+    setSettings(newSettings);
+    saveNotificationSettings(newSettings).catch(() => {
+      secureLog.error('새 일정 알림 설정 저장 실패');
     });
-  }, []);
+  }, [settings]);
 
   // 일정 리마인더 토글 (async 불필요)
   const toggleEventReminders = useCallback((enabled: boolean) => {
-    setSettings(prev => {
-      const newSettings = { ...prev, eventReminders: enabled };
-      saveNotificationSettings(newSettings).catch(() => {
-        secureLog.error('리마인더 설정 저장 실패');
-      });
-      return newSettings;
+    const newSettings = { ...settings, eventReminders: enabled };
+    setSettings(newSettings);
+    saveNotificationSettings(newSettings).catch(() => {
+      secureLog.error('리마인더 설정 저장 실패');
     });
-  }, []);
+  }, [settings]);
 
   // 권한 요청
   const requestPermission = useCallback(async () => {

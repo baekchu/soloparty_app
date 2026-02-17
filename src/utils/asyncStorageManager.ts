@@ -32,8 +32,8 @@ export const initAsyncStorage = async (): Promise<void> => {
     try {
       secureLog.info('🔧 AsyncStorage 초기화 시작...');
       
-      // 300ms 대기 (네이티브 모듈 완전 로드 - 더 단축)
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // 100ms 대기 (네이티브 모듈 완전 로드)
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // 테스트 쓰기/읽기
       await AsyncStorage.setItem('@storage_init_test', 'ok');

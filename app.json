@@ -22,7 +22,8 @@
       "infoPlist": {
             "ITSAppUsesNonExemptEncryption": false,
             "NSPhotoLibraryUsageDescription": "이 앱은 사진 라이브러리에 접근하지 않습니다. 이 권한 요청은 사용된 SDK의 기술적 요구사항입니다.",
-            "NSUserNotificationsUsageDescription": "새로운 파티 등록 및 매칭 알림을 받기 위해 알림 권한이 필요합니다."
+            "NSUserNotificationsUsageDescription": "새로운 파티 등록 및 매칭 알림을 받기 위해 알림 권한이 필요합니다.",
+            "NSLocationWhenInUseUsageDescription": "파티 체크인 인증을 위해 위치 정보가 필요합니다. 파티 장소 근처에서만 체크인이 가능합니다."
       },
       "associatedDomains": ["applinks:soloparty.app"]
     },
@@ -38,7 +39,9 @@
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
-        "POST_NOTIFICATIONS"
+        "POST_NOTIFICATIONS",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
       ],
       "enableProguardInReleaseBuilds": false,
       "enableShrinkResourcesInReleaseBuilds": false,

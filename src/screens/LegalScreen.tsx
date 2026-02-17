@@ -33,10 +33,10 @@ const TERMS_OF_SERVICE = `Solo Party 이용약관
 
 제5조 (이용자의 의무)
 1. 이용자는 다음 행위를 하여서는 안 됩니다:
-   • 타인의 정보 도용
-   • 서비스의 정보 변경
-   • 서비스를 통해 얻은 정보를 무단으로 복제·유통
-   • 불법적이거나 부적절한 콘텐츠 게시
+   - 타인의 정보 도용
+   - 서비스의 정보 변경
+   - 서비스를 통해 얻은 정보를 무단으로 복제·유통
+   - 불법적이거나 부적절한 콘텐츠 게시
 
 제6조 (포인트 시스템)
 1. 포인트는 서비스 내에서만 사용 가능합니다.
@@ -51,7 +51,7 @@ const TERMS_OF_SERVICE = `Solo Party 이용약관
 1. 본 약관의 해석 및 적용은 대한민국 법률에 따릅니다.
 2. 분쟁 발생 시 회사 소재지 관할 법원을 전속 관할법원으로 합니다.
 
-© 2025 Solo Party. All rights reserved.`;
+\u00A9 2025-2026 Solo Party. All rights reserved.`;
 
 const PRIVACY_POLICY = `Solo Party 개인정보처리방침
 
@@ -59,57 +59,57 @@ const PRIVACY_POLICY = `Solo Party 개인정보처리방침
 
 1. 수집하는 개인정보
 Solo Party는 다음과 같은 개인정보를 수집합니다:
-• 필수: 사용자 ID (자동 생성, 익명)
-• 선택: 파티 참가 기록, 포인트 내역
+- 필수: 사용자 ID (자동 생성, 익명)
+- 선택: 파티 참가 기록, 포인트 내역
 
 2. 개인정보의 수집 및 이용 목적
-• 파티 매칭 서비스 제공
-• 포인트 시스템 운영
-• 서비스 개선 및 통계 분석
+- 파티 매칭 서비스 제공
+- 포인트 시스템 운영
+- 서비스 개선 및 통계 분석
 
 3. 개인정보의 보유 및 이용 기간
-• 회원 탈퇴 시까지 보유
-• 앱 삭제 시 모든 데이터 자동 삭제
+- 회원 탈퇴 시까지 보유
+- 앱 삭제 시 모든 데이터 자동 삭제
 
 4. 개인정보의 제3자 제공
 Solo Party는 사용자의 개인정보를 제3자에게 제공하지 않습니다.
 
 5. 개인정보 보호
-• AES-256 암호화
-• SHA-256 해시 검증
-• 로컬 저장 (서버 전송 없음)
+- AES-256 암호화
+- SHA-256 해시 검증
+- 로컬 저장 (서버 전송 없음)
 
 6. 이용자의 권리
-• 개인정보 열람, 수정, 삭제 요청 권리
-• 앱 내 설정에서 직접 관리 가능
+- 개인정보 열람, 수정, 삭제 요청 권리
+- 앱 내 설정에서 직접 관리 가능
 
 7. 개인정보 보호책임자
-• 이메일: support@soloparty.com
-• 전화: 문의 사항은 이메일로 연락 주시기 바랍니다.
+- 이메일: support@soloparty.com
+- 전화: 문의 사항은 이메일로 연락 주시기 바랍니다.
 
 8. 개인정보처리방침 변경
 본 방침은 법령 및 정책 변경에 따라 변경될 수 있습니다.
 
-© 2025 Solo Party. All rights reserved.`;
+\u00A9 2025-2026 Solo Party. All rights reserved.`;
 
 const COPYRIGHT_INFO = `Solo Party 저작권 정보
 
-© 2025 Solo Party. All rights reserved.
+\u00A9 2025-2026 Solo Party. All rights reserved.
 
 1. 저작권
 본 앱의 모든 콘텐츠(디자인, 텍스트, 이미지, 아이콘 등)는 저작권법에 의해 보호됩니다.
 
 2. 사용 제한
-• 앱의 콘텐츠를 무단으로 복제, 배포, 전송할 수 없습니다.
-• 상업적 목적으로 사용할 수 없습니다.
-• 저작권자의 허락 없이 2차 저작물을 제작할 수 없습니다.
+- 앱의 콘텐츠를 무단으로 복제, 배포, 전송할 수 없습니다.
+- 상업적 목적으로 사용할 수 없습니다.
+- 저작권자의 허락 없이 2차 저작물을 제작할 수 없습니다.
 
 3. 오픈소스 라이선스
 본 앱은 다음 오픈소스 라이브러리를 사용합니다:
-• React Native (MIT License)
-• Expo (MIT License)
-• React Navigation (MIT License)
-• NativeWind (MIT License)
+- React Native (MIT License)
+- Expo (MIT License)
+- React Navigation (MIT License)
+- NativeWind (MIT License)
 
 4. 상표권
 "Solo Party" 명칭 및 로고는 등록상표이며 무단 사용을 금지합니다.
@@ -120,7 +120,7 @@ const COPYRIGHT_INFO = `Solo Party 저작권 정보
 6. 문의사항
 저작권 관련 문의: support@soloparty.com
 
-© 2025 Solo Party. All rights reserved.`;
+\u00A9 2025-2026 Solo Party. All rights reserved.`;
 
 export default function LegalScreen({ navigation, route }: LegalScreenProps) {
   const { theme } = useTheme();
@@ -149,8 +149,8 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
     <SafeAreaView style={[legalStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 헤더 */}
       <View style={[legalStyles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
-        <TouchableOpacity onPress={goBack} style={legalStyles.backButton}>
-          <Text style={[legalStyles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
+        <TouchableOpacity onPress={goBack} style={legalStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Text style={[legalStyles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>{'<'}</Text>
         </TouchableOpacity>
         <Text style={[legalStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
           {content.title}
@@ -159,8 +159,8 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
       </View>
 
       {/* 내용 */}
-      <ScrollView 
-        style={legalStyles.scrollView} 
+      <ScrollView
+        style={legalStyles.scrollView}
         contentContainerStyle={{ padding: 20, paddingBottom: Math.max(20, insets.bottom) }}
         showsVerticalScrollIndicator={false}
       >
@@ -192,7 +192,8 @@ const legalStyles = StyleSheet.create({
     padding: 8,
   },
   backButtonText: {
-    fontSize: 24,
+    fontSize: 20,
+    fontWeight: '600',
   },
   headerTitle: {
     fontSize: 20,
@@ -205,7 +206,7 @@ const legalStyles = StyleSheet.create({
     flex: 1,
   },
   contentBox: {
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 20,
   },
   contentText: {

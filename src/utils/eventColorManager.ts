@@ -7,7 +7,10 @@ const COLOR_MAP_KEY = '@event_color_map';
 class EventColorManager {
   private static colorMap: { [eventId: string]: string } = {};
   private static isInitialized = false;
+  private static saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private static isDirty = false;
 
+  // 라이트 모드용 파스텔 색상
   private static EVENT_COLORS = [
     '#fce7f3', // 부드러운 핑크
     '#ddd6fe', // 라벤더
@@ -29,6 +32,30 @@ class EventColorManager {
     '#c4b5fd', // 인디고
     '#a5f3fc', // 시안
     '#d9f99d', // 라임
+  ];
+
+  // 다크 모드용 진한 색상 (흰색 텍스트가 잘 보이도록)
+  private static DARK_EVENT_COLORS = [
+    '#9d174d', // 진한 핑크
+    '#5b21b6', // 진한 라벤더
+    '#1e40af', // 진한 하늘색
+    '#065f46', // 진한 민트
+    '#92400e', // 진한 노랑
+    '#c2410c', // 진한 피치
+    '#b91c1c', // 진한 코랄
+    '#4338ca', // 진한 퍼플
+    '#be185d', // 진한 핫핑크
+    '#047857', // 진한 에메랄드
+    '#b45309', // 진한 앰버
+    '#e11d48', // 진한 로즈
+    '#7c3aed', // 진한 바이올렛
+    '#0369a1', // 진한 스카이블루
+    '#a16207', // 진한 레몬
+    '#ea580c', // 진한 오렌지
+    '#a21caf', // 진한 푸시아
+    '#4f46e5', // 진한 인디고
+    '#0e7490', // 진한 시안
+    '#4d7c0f', // 진한 라임
   ];
 
   static async initialize() {
@@ -88,10 +115,22 @@ class EventColorManager {
     dateString: string,
     allEvents: { [date: string]: any[] },
     dayEvents: any[], 
-    currentIndex: number
+    currentIndex: number,
+    isDark: boolean = false,
   ): string {
-    // 이미 색상이 할당되어 있으면 그대로 반환
+    // 자동 초기화 (최초 호출 시)
+    if (!this.isInitialized) {
+      this.initialize().catch(() => {});
+    }
+    
+    // 이미 색상이 할당되어 있으면 다크모드 변환 후 반환
     if (this.colorMap[eventId]) {
+      if (isDark) {
+        const lightIdx = this.EVENT_COLORS.indexOf(this.colorMap[eventId]);
+        if (lightIdx >= 0) {
+          return this.DARK_EVENT_COLORS[lightIdx];
+        }
+      }
       return this.colorMap[eventId];
     }
 
@@ -114,7 +153,7 @@ class EventColorManager {
     const prevDateString = formatDate(prevDate);
     const nextDateString = formatDate(nextDate);
 
-    // 사용된 색상 수집 (당일 + 전날 + 다음날)
+    // 사용된 색상 수집 (당일 + 전날 + 다음날) — 항상 라이트 색상 기준
     const usedColors = new Set<string>();
     
     // 당일의 이전 이벤트들
@@ -141,27 +180,40 @@ class EventColorManager {
       }
     }
 
-    // 사용되지 않은 색상 찾기
+    // 사용되지 않은 색상 찾기 (항상 라이트 색상으로 저장)
     let selectedColor: string;
     const availableColors = this.EVENT_COLORS.filter(c => !usedColors.has(c));
     
     if (availableColors.length > 0) {
-      // 해시를 이용해 일관된 색상 선택
       const hash = (eventId || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
       selectedColor = availableColors[hash % availableColors.length];
     } else {
-      // 모든 색상이 사용 중이면 해시로 선택 (극히 드문 경우)
       const hash = (eventId || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
       selectedColor = this.EVENT_COLORS[hash % this.EVENT_COLORS.length];
     }
 
-    // 색상 저장 (즉시 저장하여 손실 방지)
+    // 라이트 색상을 colorMap에 저장
     this.colorMap[eventId] = selectedColor;
     
-    // 즉시 저장 (비동기이지만 백그라운드에서 실행)
-    this.saveColorMap().catch(() => {
-      // 색상 저장 실패는 치명적이지 않음
-    });
+    // debounce된 저장 (렌더 중 과도한 AsyncStorage 쓰기 방지)
+    this.isDirty = true;
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(() => {
+        this.saveTimer = null;
+        if (this.isDirty) {
+          this.isDirty = false;
+          this.saveColorMap().catch(() => {});
+        }
+      }, 500);
+    }
+
+    // 다크모드이면 대응하는 다크 색상 반환
+    if (isDark) {
+      const lightIdx = this.EVENT_COLORS.indexOf(selectedColor);
+      if (lightIdx >= 0) {
+        return this.DARK_EVENT_COLORS[lightIdx];
+      }
+    }
 
     return selectedColor;
   }
