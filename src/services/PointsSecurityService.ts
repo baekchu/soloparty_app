@@ -113,7 +113,8 @@ const sha256 = async (data: string): Promise<string> => {
  */
 const generateUniqueId = (): string => {
   const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 10);
+  const bytes = Crypto.getRandomBytes(8);
+  const randomPart = Array.from(bytes).map(b => b.toString(36)).join('').substring(0, 10);
   return `${timestamp}_${randomPart}`;
 };
 
@@ -147,6 +148,9 @@ const withRetry = async <T>(
 };
 
 // ==================== 기기 ID 관리 ====================
+// 세션 내 임시 ID 캐시 (SecureStore 실패 시 동일 ID 재사용)
+let _cachedTempDeviceId: string | null = null;
+
 /**
  * 기기 고유 ID 가져오기 (없으면 생성)
  */
@@ -155,10 +159,11 @@ export const getDeviceId = async (): Promise<string> => {
     let deviceId = await SecureStore.getItemAsync(SECURE_KEYS.DEVICE_ID);
     
     if (!deviceId) {
-      // 새 기기 ID 생성
+      // 새 기기 ID 생성 (암호학적으로 안전한 랜덤)
       const timestamp = Date.now().toString(36);
       const platform = Platform.OS;
-      const random = Math.random().toString(36).substring(2, 15);
+      const randomBytes = Crypto.getRandomBytes(16);
+      const random = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
       deviceId = `${platform}_${timestamp}_${random}`;
       
       await SecureStore.setItemAsync(SECURE_KEYS.DEVICE_ID, deviceId);
@@ -167,9 +172,14 @@ export const getDeviceId = async (): Promise<string> => {
     
     return deviceId;
   } catch (error) {
-    // SecureStore 실패 시 임시 ID 생성
+    // SecureStore 실패 시 세션 내 캐시된 임시 ID 사용
     secureLog.warn('⚠️ SecureStore 접근 실패, 임시 ID 사용');
-    return `temp_${Platform.OS}_${Date.now()}`;
+    if (!_cachedTempDeviceId) {
+      const randomBytes = Crypto.getRandomBytes(8);
+      const random = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      _cachedTempDeviceId = `temp_${Platform.OS}_${random}`;
+    }
+    return _cachedTempDeviceId;
   }
 };
 
@@ -218,11 +228,22 @@ const saveTransactionChain = async (chain: Transaction[]): Promise<void> => {
     const trimmedChain = chain.slice(-SECURITY_CONFIG.TX_CHAIN_LENGTH);
     const encrypted = await encryptData(JSON.stringify(trimmedChain));
     
-    // 이중 저장
-    await Promise.all([
-      SecureStore.setItemAsync(SECURE_KEYS.TRANSACTION_CHAIN, encrypted),
+    // SecureStore 2KB 제한 대응: 해시만 저장 (무결성 검증용)
+    // AsyncStorage에 전체 암호화 체인 저장
+    const chainHash = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      encrypted
+    );
+    
+    const results = await Promise.allSettled([
+      SecureStore.setItemAsync(SECURE_KEYS.TRANSACTION_CHAIN, chainHash),
       safeSetItem(ASYNC_KEYS.TX_LOG, encrypted),
     ]);
+    
+    // AsyncStorage 저장 실패는 치명적 — 경고 로그
+    if (results[1].status === 'rejected') {
+      secureLog.error('트랜잭션 체인 AsyncStorage 저장 실패');
+    }
   } catch (error) {
     secureLog.error('트랜잭션 체인 저장 실패');
   }
@@ -588,15 +609,24 @@ export const createInitialPointsData = async (initialPoints: number = 2500): Pro
  */
 export const loadAdWatchHistory = async (): Promise<AdWatchRecord[]> => {
   try {
+    // 1. SecureStore에서 먼저 시도
     const data = await SecureStore.getItemAsync(SECURE_KEYS.AD_HISTORY_BACKUP);
     if (data) {
       const decrypted = await decryptData(data);
       return JSON.parse(decrypted);
     }
-    return [];
   } catch {
-    return [];
+    // SecureStore 실패 시 AsyncStorage 폴백
   }
+  try {
+    const asyncData = await safeGetItem(ASYNC_KEYS.AD_LIMIT);
+    if (asyncData) {
+      // AD_LIMIT 키에 광고 히스토리가 있는지 확인 (폴백용)
+      const parsed = JSON.parse(asyncData);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* 무시 */ }
+  return [];
 };
 
 /**
@@ -604,10 +634,25 @@ export const loadAdWatchHistory = async (): Promise<AdWatchRecord[]> => {
  */
 export const saveAdWatchHistory = async (records: AdWatchRecord[]): Promise<void> => {
   try {
-    // 최근 100개만 유지
-    const trimmed = records.slice(-100);
+    // 최근 50개만 유지 (SecureStore 2KB 제한 대응 — 100개에서 축소)
+    const trimmed = records.slice(-50);
     const encrypted = await encryptData(JSON.stringify(trimmed));
-    await SecureStore.setItemAsync(SECURE_KEYS.AD_HISTORY_BACKUP, encrypted);
+    
+    // SecureStore 2KB 제한 확인: 초과 시 더 적은 레코드만 저장
+    if (encrypted.length <= 2048) {
+      await SecureStore.setItemAsync(SECURE_KEYS.AD_HISTORY_BACKUP, encrypted);
+    } else {
+      // 2KB 초과 시 최근 20개만 SecureStore에 저장
+      const smallerTrimmed = records.slice(-20);
+      const smallerEncrypted = await encryptData(JSON.stringify(smallerTrimmed));
+      if (smallerEncrypted.length <= 2048) {
+        await SecureStore.setItemAsync(SECURE_KEYS.AD_HISTORY_BACKUP, smallerEncrypted);
+      }
+      secureLog.warn('⚠️ 광고 기록 SecureStore 2KB 초과 — 축소 저장');
+    }
+    
+    // AsyncStorage에도 전체 기록 백업 (크기 제한 없음)
+    await safeSetItem(ASYNC_KEYS.AD_LIMIT + '_history', JSON.stringify(trimmed));
   } catch {
     // 저장 실패는 무시
   }
@@ -649,14 +694,14 @@ export const validateAdWatchPattern = async (lastAdTimestamp: number): Promise<{
   
   // 2. 시간당 광고 수 검사
   const oneHourAgo = now - 60 * 60 * 1000;
-  const hourlyAds = records.filter(r => r.timestamp > oneHourAgo).length;
-  if (hourlyAds >= SECURITY_CONFIG.MAX_HOURLY_ADS) {
+  const recentHourlyRecords = records.filter(r => r.timestamp > oneHourAgo);
+  if (recentHourlyRecords.length >= SECURITY_CONFIG.MAX_HOURLY_ADS) {
+    // 시간순 정렬된 최근 기록 중 가장 오래된 것 기준으로 쿨다운 계산
+    const oldestRecent = recentHourlyRecords.reduce((min, r) => r.timestamp < min.timestamp ? r : min, recentHourlyRecords[0]);
     return {
       allowed: false,
       reason: '시간당 광고 한도 초과',
-      cooldown_ms: records[records.length - SECURITY_CONFIG.MAX_HOURLY_ADS]?.timestamp 
-        ? (records[records.length - SECURITY_CONFIG.MAX_HOURLY_ADS].timestamp + 60 * 60 * 1000) - now 
-        : 60 * 60 * 1000,
+      cooldown_ms: Math.max(0, (oldestRecent.timestamp + 60 * 60 * 1000) - now),
     };
   }
   
@@ -796,7 +841,9 @@ export const resetDailyStats = async (currentData: SecurePointsData): Promise<Se
   await saveSecurePointsData(updatedData);
   await updateMasterHash(updatedData);
   
-  return { ...updatedData, integrity_hash: currentData.integrity_hash, updated_at: Date.now() };
+  // 저장된 최신 데이터를 다시 로드하여 정확한 integrity_hash 반환
+  const saved = await loadSecurePointsData();
+  return saved ?? { ...updatedData, integrity_hash: '', updated_at: Date.now() };
 };
 
 // ==================== 내보내기 ====================

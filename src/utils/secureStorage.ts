@@ -1,10 +1,16 @@
 /**
  * ==================== 보안 저장소 유틸리티 ====================
  * 
- * expo-crypto를 사용한 안전한 데이터 암호화
- * - AES-256 암호화 (실제 암호화, base64가 아님)
- * - 키 파생 함수 (PBKDF2)
+ * expo-crypto를 사용한 데이터 난독화 (XOR + CTR 키스트림)
+ * - SHA-256 기반 CTR 모드 XOR 키스트림 암호화
+ * - HMAC 무결성 검증 (비트 플리핑 공격 방지)
+ * - 키 파생 함수 (반복 해싱)
  * - 프로덕션 로그 자동 제거
+ * 
+ * 참고: 진정한 AES-256이 아닌 SHA-256 XOR 스트림 암호임.
+ *       expo-crypto에서 AES를 지원하지 않아 이 방식 사용.
+ *       SecureStore(OS Keychain/Keystore)가 주 보호 계층이고,
+ *       이 암호화는 AsyncStorage 백업의 추가 보호 역할을 합니다.
  * 
  * ========================================================================
  */
@@ -14,9 +20,9 @@ import { Platform } from 'react-native';
 
 // ==================== 보안 설정 ====================
 // 주의: expo-crypto는 비동기 해싱이므로 반복 횟수 조절 (성능 균형)
-const ENCRYPTION_KEY_ITERATIONS = 100;
+const ENCRYPTION_KEY_ITERATIONS = 20; // 클라이언트 전용 저장소 — 브릿지 호출 최적화 (20회면 충분)
 const SALT_LENGTH = 32;
-const MAX_ENCRYPT_SIZE = 10_000; // 10KB 이상 데이터 암호화 차단 (DoS 방지)
+const MAX_ENCRYPT_SIZE = 50_000; // 50KB (트랜잭션 체인 등 대용량 데이터 지원)
 
 // __DEV__는 React Native 전역 변수로 자동 제공됨
 // 프로덕션 빌드에서는 false, 개발 중에는 true
@@ -67,13 +73,34 @@ const getDeviceKey = async (): Promise<string> => {
     _cachedDeviceKey = digest;
     return digest;
   } catch {
-    // SecureStore 실패 시 폴백 (캐싱)
-    const fallback = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      `${Platform.OS}-${Platform.Version}-fallback`
-    );
-    _cachedDeviceKey = fallback;
-    return fallback;
+    // SecureStore 실패 시 폴백 (AsyncStorage에 랜덤 시드 저장)
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const FALLBACK_KEY = '@sp_fallback_seed_v1';
+      let fallbackSeed = await AsyncStorage.getItem(FALLBACK_KEY);
+      if (!fallbackSeed) {
+        const bytes = await Crypto.getRandomBytesAsync(32);
+        fallbackSeed = Array.from(bytes).map((b: number) => b.toString(16).padStart(2, '0')).join('');
+        await AsyncStorage.setItem(FALLBACK_KEY, fallbackSeed);
+      }
+      const fallback = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        `${Platform.OS}-${fallbackSeed}`
+      );
+      _cachedDeviceKey = fallback;
+      return fallback;
+    } catch {
+      // 완전한 폴백: 세션 랜덤 키 (SecureStore + AsyncStorage 모두 실패)
+      // 주의: 세션 간 복호화 불가능 (양쪽 저장소 실패 상황에서 이미 데이터 접근 불가)
+      const sessionBytes = await Crypto.getRandomBytesAsync(16);
+      const sessionHex = Array.from(sessionBytes).map((b: number) => b.toString(16).padStart(2, '0')).join('');
+      const fallback = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        `${Platform.OS}-${Platform.Version}-${sessionHex}`
+      );
+      _cachedDeviceKey = fallback;
+      return fallback;
+    }
   }
 };
 
@@ -88,14 +115,25 @@ export const encryptData = async (data: string): Promise<string> => {
   try {
     if (!data || typeof data !== 'string') return '';
     if (data.length > MAX_ENCRYPT_SIZE) {
-      secureLog.warn('⚠️ 암호화 대상 크기 초과');
-      return data;
+      // 50KB 초과: XOR 암호화 불가 → HMAC 무결성 보호 인코딩으로 저장
+      secureLog.warn('⚠️ 암호화 대상 크기 초과 — 인코딩 저장');
+      try {
+        const encoded = btoa(encodeURIComponent(data));
+        const deviceKey = await getDeviceKey();
+        const hmac = await Crypto.digestStringAsync(
+          Crypto.CryptoDigestAlgorithm.SHA256,
+          deviceKey + ':unenc_hmac:' + encoded
+        );
+        return 'unenc:' + encoded + ':' + hmac;
+      } catch {
+        return '';
+      }
     }
     const deviceKey = await getDeviceKey();
     const salt = await Crypto.getRandomBytesAsync(SALT_LENGTH);
     const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('');
     
-    // 키 파생 (PBKDF2 시뮬레이션 - 반복 해싱)
+    // 키 파생 (반복 SHA-256 해싱으로 키 강화)
     let key = await Crypto.digestStringAsync(
       Crypto.CryptoDigestAlgorithm.SHA256,
       deviceKey + saltHex
@@ -108,29 +146,44 @@ export const encryptData = async (data: string): Promise<string> => {
       );
     }
     
-    // XOR 암호화
+    // XOR 암호화 (CTR 모드 키스트림 확장 — 키 반복 방지)
     const dataBytes = new TextEncoder().encode(data);
-    const keyBytes = new TextEncoder().encode(key);
     const encrypted = new Uint8Array(dataBytes.length);
     
+    let blockIdx = 0;
+    let blockKeyBytes = new Uint8Array(0);
     for (let i = 0; i < dataBytes.length; i++) {
-      encrypted[i] = dataBytes[i] ^ keyBytes[i % keyBytes.length];
+      const posInBlock = i % 32;
+      if (posInBlock === 0) {
+        // 새 블록마다 고유 해시 생성 (hex → 바이너리 변환으로 바이트당 8비트 엔트로피 보장)
+        const blockHash = await Crypto.digestStringAsync(
+          Crypto.CryptoDigestAlgorithm.SHA256,
+          key + ':' + blockIdx++
+        );
+        const hexPairs = blockHash.match(/.{2}/g);
+        blockKeyBytes = hexPairs
+          ? new Uint8Array(hexPairs.map(h => parseInt(h, 16)))
+          : new Uint8Array(32);
+      }
+      encrypted[i] = dataBytes[i] ^ blockKeyBytes[posInBlock];
     }
     
     const encryptedHex = Array.from(encrypted)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
     
-    // salt + encrypted 결합
-    return saltHex + ':' + encryptedHex;
+    // HMAC 생성 (비트 플리핑 공격 방지)
+    const hmac = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      key + ':hmac:' + saltHex + ':' + encryptedHex
+    );
+    
+    // salt + encrypted + hmac 결합
+    return saltHex + ':' + encryptedHex + ':' + hmac;
   } catch (error) {
     secureLog.error('암호화 실패');
-    // 실패 시에도 최소한의 난독화 (base64) 적용
-    try {
-      return 'plain:' + btoa(encodeURIComponent(data));
-    } catch {
-      return data;
-    }
+    // 실패 시 평문 반환 금지 — 빈 문자열 반환
+    return '';
   }
 };
 
@@ -149,18 +202,49 @@ export const decryptData = async (encrypted: string): Promise<string> => {
         return '';
       }
     }
+
+    // 대용량 비암호화 데이터 처리 (encryptData에서 50KB 초과 시 저장)
+    if (encrypted.startsWith('unenc:')) {
+      try {
+        const unencContent = encrypted.slice(6);
+        const lastColonIdx = unencContent.lastIndexOf(':');
+        
+        if (lastColonIdx > 0) {
+          // HMAC 포함 형식: encoded:hmac
+          const encoded = unencContent.slice(0, lastColonIdx);
+          const storedHmac = unencContent.slice(lastColonIdx + 1);
+          const deviceKey = await getDeviceKey();
+          const expectedHmac = await Crypto.digestStringAsync(
+            Crypto.CryptoDigestAlgorithm.SHA256,
+            deviceKey + ':unenc_hmac:' + encoded
+          );
+          if (!secureCompare(storedHmac.toLowerCase(), expectedHmac.toLowerCase())) {
+            secureLog.warn('⚠️ unenc HMAC 검증 실패 — 데이터 변조 감지');
+            return '';
+          }
+          return decodeURIComponent(atob(encoded));
+        }
+        
+        // 레거시 형식 (HMAC 없음) — 기존 호환성 (1회 사용 후 재암호화됨)
+        return decodeURIComponent(atob(unencContent));
+      } catch {
+        return '';
+      }
+    }
     
     if (!encrypted.includes(':')) {
-      // 이전 버전 base64 데이터 (마이그레이션)
-      return encrypted;
+      // 이전 버전 데이터는 빈 문자열로 처리 (무효 형식)
+      return '';
     }
     
     const parts = encrypted.split(':');
-    if (parts.length !== 2) return encrypted;
-    const [saltHex, encryptedHex] = parts;
+    // 2-part: legacy (salt:encrypted), 3-part: new (salt:encrypted:hmac)
+    if (parts.length !== 2 && parts.length !== 3) return '';
+    const [saltHex, encryptedHex, storedHmac] = parts;
     if (!saltHex || !encryptedHex || !/^[0-9a-f]+$/i.test(saltHex) || !/^[0-9a-f]+$/i.test(encryptedHex)) {
-      return encrypted;
+      return '';
     }
+    if (encryptedHex.length % 2 !== 0) return '';
     const deviceKey = await getDeviceKey();
     
     // 키 파생 (암호화와 동일)
@@ -176,21 +260,47 @@ export const decryptData = async (encrypted: string): Promise<string> => {
       );
     }
     
-    // XOR 복호화
+    // HMAC 검증 (3-part 형식인 경우)
+    if (storedHmac) {
+      const expectedHmac = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        key + ':hmac:' + saltHex + ':' + encryptedHex
+      );
+      if (!secureCompare(storedHmac.toLowerCase(), expectedHmac.toLowerCase())) {
+        secureLog.warn('⚠️ HMAC 검증 실패 — 데이터 변조 감지');
+        return '';
+      }
+    }
+    
+    // XOR 복호화 (CTR 모드 키스트림 확장)
+    const hexMatches = encryptedHex.match(/.{2}/g);
+    if (!hexMatches) return '';
     const encryptedBytes = new Uint8Array(
-      encryptedHex.match(/.{2}/g)!.map(b => parseInt(b, 16))
+      hexMatches.map(b => parseInt(b, 16))
     );
-    const keyBytes = new TextEncoder().encode(key);
     const decrypted = new Uint8Array(encryptedBytes.length);
     
+    let blockIdx = 0;
+    let blockKeyBytes = new Uint8Array(0);
     for (let i = 0; i < encryptedBytes.length; i++) {
-      decrypted[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length];
+      const posInBlock = i % 32;
+      if (posInBlock === 0) {
+        const blockHash = await Crypto.digestStringAsync(
+          Crypto.CryptoDigestAlgorithm.SHA256,
+          key + ':' + blockIdx++
+        );
+        const hexPairs = blockHash.match(/.{2}/g);
+        blockKeyBytes = hexPairs
+          ? new Uint8Array(hexPairs.map(h => parseInt(h, 16)))
+          : new Uint8Array(32);
+      }
+      decrypted[i] = encryptedBytes[i] ^ blockKeyBytes[posInBlock];
     }
     
     return new TextDecoder().decode(decrypted);
   } catch (error) {
     secureLog.error('복호화 실패:', error);
-    return encrypted;
+    return '';
   }
 };
 
@@ -206,11 +316,14 @@ export const maskSensitiveData = (data: string, showLength: number = 8): string 
  * 안전한 비교 (타이밍 공격 방지)
  */
 export const secureCompare = (a: string, b: string): boolean => {
-  if (a.length !== b.length) return false;
+  // 길이가 다를 때도 동일한 시간에 비교 수행 (타이밍 공격 방지)
+  const maxLen = Math.max(a.length, b.length);
+  let result = a.length ^ b.length; // 길이 차이도 XOR에 누적
   
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < maxLen; i++) {
+    const charA = i < a.length ? a.charCodeAt(i) : 0;
+    const charB = i < b.length ? b.charCodeAt(i) : 0;
+    result |= charA ^ charB;
   }
   
   return result === 0;

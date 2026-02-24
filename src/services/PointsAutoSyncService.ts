@@ -22,7 +22,7 @@
 
 import * as SecureStore from 'expo-secure-store';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
-import { secureLog } from '../utils/secureStorage';
+import { secureLog, encryptData, decryptData } from '../utils/secureStorage';
 import PointsSecurityService, { SecurePointsData } from './PointsSecurityService';
 
 // ==================== 설정 ====================
@@ -138,12 +138,23 @@ class PointsAutoSyncService {
 
       const dataStr = JSON.stringify(backupData);
 
-      // 이중 백업: SecureStore + AsyncStorage
-      await Promise.all([
+      // 암호화 (HMAC 포함) — AsyncStorage 백업 무결성 보호
+      let encryptedDataStr: string | null;
+      try {
+        encryptedDataStr = await encryptData(dataStr);
+      } catch {
+        encryptedDataStr = null; // 암호화 실패 시 AsyncStorage 백업 건너뛰기 (평문 저장 금지)
+      }
+
+      // 이중 백업: SecureStore (평문, OS 보호) + AsyncStorage (암호화 성공 시만)
+      const backupPromises: Promise<unknown>[] = [
         SecureStore.setItemAsync(SYNC_CONFIG.SECURE_BACKUP_KEY, dataStr).catch(() => {}),
-        safeSetItem(SYNC_CONFIG.LOCAL_BACKUP_KEY, dataStr),
         safeSetItem(SYNC_CONFIG.LAST_SYNC_KEY, String(now)),
-      ]);
+      ];
+      if (encryptedDataStr) {
+        backupPromises.push(safeSetItem(SYNC_CONFIG.LOCAL_BACKUP_KEY, encryptedDataStr));
+      }
+      await Promise.all(backupPromises);
 
       this.lastBackupTime = now;
 
@@ -164,12 +175,27 @@ class PointsAutoSyncService {
    */
   static async tryAutoRestore(): Promise<number | null> {
     try {
-      // 1. SecureStore에서 백업 확인
+      // 1. SecureStore에서 백업 확인 (평문 — OS가 보호)
       let backupStr = await SecureStore.getItemAsync(SYNC_CONFIG.SECURE_BACKUP_KEY).catch(() => null);
       
-      // 2. AsyncStorage 폴백
+      // 2. AsyncStorage 폴백 (암호화 + HMAC 검증)
       if (!backupStr) {
-        backupStr = await safeGetItem(SYNC_CONFIG.LOCAL_BACKUP_KEY);
+        const encryptedStr = await safeGetItem(SYNC_CONFIG.LOCAL_BACKUP_KEY);
+        if (encryptedStr) {
+          try {
+            // 암호화된 데이터 → 복호화 (HMAC 검증 포함)
+            backupStr = await decryptData(encryptedStr);
+          } catch {
+            // 복호화 실패 = 변조되었거나 레거시 평문 데이터
+            // 레거시 호환: JSON 파싱 시도
+            try {
+              JSON.parse(encryptedStr);
+              backupStr = encryptedStr; // 유효한 JSON이면 레거시 평문
+            } catch {
+              backupStr = null; // 완전히 손상된 데이터
+            }
+          }
+        }
       }
 
       // 3. 향후 클라우드에서 복원

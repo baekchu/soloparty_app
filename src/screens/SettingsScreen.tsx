@@ -1,9 +1,10 @@
-﻿import React, { useMemo, useCallback } from 'react';
+﻿import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch, Alert, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../hooks/useNotifications';
+import { clearCache } from '../utils/storage';
 // import { PointsMigrationService } from '../services/PointsMigrationService'; // 로그인 기능 추가 시 활성화
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -18,8 +19,7 @@ interface SettingsScreenProps {
 }
 
 export default function SettingsScreen({ navigation }: SettingsScreenProps) {
-  const { theme, toggleTheme } = useTheme();
-  const isDark = useMemo(() => theme === 'dark', [theme]);
+  const { theme, toggleTheme, isDark, colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { 
     settings: notificationSettings, 
@@ -80,36 +80,36 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   }, [navigation]);
 
   // 캐시 삭제 핸들러
-  // const handleClearCache = useCallback(() => {
-  //   Alert.alert(
-  //     '캐시 삭제',
-  //     '캐시된 이벤트 데이터를 삭제합니다.\n다음 접속 시 최신 데이터를 다시 불러옵니다.',
-  //     [
-  //       { text: '취소', style: 'cancel' },
-  //       { 
-  //         text: '삭제', 
-  //         style: 'destructive',
-  //         onPress: async () => {
-  //           try {
-  //             await clearCache();
-  //             Alert.alert('완료', '캐시가 삭제되었습니다.');
-  //           } catch {
-  //             Alert.alert('오류', '캐시 삭제에 실패했습니다.');
-  //           }
-  //         },
-  //       },
-  //     ]
-  //   );
-  // }, []);
+  const handleClearCache = useCallback(() => {
+    Alert.alert(
+      '캐시 삭제',
+      '캐시된 이벤트 데이터를 삭제합니다.\n다음 접속 시 최신 데이터를 다시 불러옵니다.\n\n(찜, 알림 등 개인 데이터는 유지됩니다)',
+      [
+        { text: '취소', style: 'cancel' },
+        { 
+          text: '삭제', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearCache();
+              Alert.alert('완료', '캐시가 삭제되었습니다.\n앱을 재시작하면 최신 데이터를 불러옵니다.');
+            } catch {
+              Alert.alert('오류', '캐시 삭제에 실패했습니다.');
+            }
+          },
+        },
+      ]
+    );
+  }, []);
 
   return (
-    <SafeAreaView style={[settingsStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+    <SafeAreaView style={[settingsStyles.container, { backgroundColor: colors.bg }]}>
       {/* 헤더 */}
-      <View style={[settingsStyles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
+      <View style={[settingsStyles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={goBack} style={settingsStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Text style={[settingsStyles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
+          <Text style={[settingsStyles.backButtonText, { color: colors.text }]}>‹</Text>
         </TouchableOpacity>
-        <Text style={[settingsStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <Text style={[settingsStyles.headerTitle, { color: colors.text }]}>
           설정
         </Text>
         <View style={settingsStyles.headerSpacer} />
@@ -121,71 +121,45 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         showsVerticalScrollIndicator={false}
       >
         {/* 다크모드 설정 */}
-        <View style={[settingsStyles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+        <View style={[settingsStyles.section, { backgroundColor: colors.card }]}>
           <View style={settingsStyles.settingRow}>
             <View>
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: isDark ? '#f8fafc' : '#0f172a',
-                marginBottom: 4,
-              }}>
+              <Text style={[settingsStyles.sectionTitle, { color: colors.text, marginBottom: 4 }]}>
                 다크 모드
               </Text>
-              <Text style={{
-                fontSize: 14,
-                color: isDark ? '#94a3b8' : '#64748b',
-              }}>
+              <Text style={[settingsStyles.descText, { color: colors.subtext }]}>
                 {isDark ? '어두운 테마 사용 중' : '밝은 테마 사용 중'}
               </Text>
             </View>
             <Switch
               value={isDark}
               onValueChange={toggleTheme}
-              trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
+              trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
               thumbColor={isDark ? '#ec4899' : '#f3f4f6'}
             />
           </View>
         </View>
 
         {/* 알림 설정 */}
-        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={{
-            fontSize: 18,
-            fontWeight: '700',
-            color: isDark ? '#f8fafc' : '#0f172a',
-            marginBottom: 16,
-          }}>
+        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
+          <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
             알림 설정
           </Text>
 
           {/* 알림 활성화 */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: 16,
-          }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{
-                fontSize: 16,
-                fontWeight: '600',
-                color: isDark ? '#f8fafc' : '#0f172a',
-                marginBottom: 4,
-              }}>
+          <View style={settingsStyles.settingRowMb}>
+            <View style={settingsStyles.flex1}>
+              <Text style={[settingsStyles.itemTitle, { color: colors.text }]}>
                 알림 받기
               </Text>
-              <Text style={{
-                fontSize: 13,
-                color: isDark ? '#94a3b8' : '#64748b',
-              }}>
+              <Text style={[settingsStyles.itemDesc, { color: colors.subtext }]}>
                 {notificationSettings.enabled ? '알림이 활성화되었습니다' : '알림을 받으시려면 활성화하세요'}
               </Text>
             </View>
             <Switch
               value={notificationSettings.enabled}
               onValueChange={handleNotificationToggle}
-              trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
+              trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
               thumbColor={notificationSettings.enabled ? '#ec4899' : '#f3f4f6'}
             />
           </View>
@@ -193,70 +167,40 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           {/* 세부 알림 설정 (알림이 활성화된 경우에만 표시) */}
           {notificationSettings.enabled && (
             <>
-              {/* 구분선 */}
-              <View style={{
-                height: 1,
-                backgroundColor: isDark ? '#334155' : '#e5e7eb',
-                marginBottom: 16,
-              }} />
+              <View style={[settingsStyles.thinDivider, { backgroundColor: colors.border }]} />
 
               {/* 새 일정 알림 */}
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 16,
-              }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: isDark ? '#f8fafc' : '#0f172a',
-                    marginBottom: 4,
-                  }}>
+              <View style={settingsStyles.settingRowMb}>
+                <View style={settingsStyles.flex1}>
+                  <Text style={[settingsStyles.itemTitle, { color: colors.text }]}>
                     새 일정 알림
                   </Text>
-                  <Text style={{
-                    fontSize: 13,
-                    color: isDark ? '#94a3b8' : '#64748b',
-                  }}>
+                  <Text style={[settingsStyles.itemDesc, { color: colors.subtext }]}>
                     새로운 파티가 등록되면 알려드려요
                   </Text>
                 </View>
                 <Switch
                   value={notificationSettings.newEventAlerts}
                   onValueChange={toggleNewEventAlerts}
-                  trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
+                  trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
                   thumbColor={notificationSettings.newEventAlerts ? '#ec4899' : '#f3f4f6'}
                 />
               </View>
 
               {/* 일정 리마인더 */}
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: isDark ? '#f8fafc' : '#0f172a',
-                    marginBottom: 4,
-                  }}>
+              <View style={settingsStyles.settingRow}>
+                <View style={settingsStyles.flex1}>
+                  <Text style={[settingsStyles.itemTitle, { color: colors.text }]}>
                     일정 리마인더
                   </Text>
-                  <Text style={{
-                    fontSize: 13,
-                    color: isDark ? '#94a3b8' : '#64748b',
-                  }}>
+                  <Text style={[settingsStyles.itemDesc, { color: colors.subtext }]}>
                     파티 1시간 전에 알려드려요
                   </Text>
                 </View>
                 <Switch
                   value={notificationSettings.eventReminders}
                   onValueChange={toggleEventReminders}
-                  trackColor={{ false: isDark ? '#4b5563' : '#d1d5db', true: '#a78bfa' }}
+                  trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
                   thumbColor={notificationSettings.eventReminders ? '#ec4899' : '#f3f4f6'}
                 />
               </View>
@@ -265,152 +209,66 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         </View>
 
         {/* 위치 설정 */}
-        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
           <TouchableOpacity 
             onPress={navigateToLocationPicker}
-            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+            style={settingsStyles.settingRow}
           >
-            <View style={{ flex: 1 }}>
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: isDark ? '#f8fafc' : '#0f172a',
-                marginBottom: 4,
-              }}>
+            <View style={settingsStyles.flex1}>
+              <Text style={[settingsStyles.sectionTitle, { color: colors.text, marginBottom: 4 }]}>
                 위치 설정
               </Text>
-              <Text style={{
-                fontSize: 14,
-                color: isDark ? '#94a3b8' : '#64748b',
-              }}>
+              <Text style={[settingsStyles.descText, { color: colors.subtext }]}>
                 지도에서 기본 위치 선택
               </Text>
             </View>
-            <Text style={{ fontSize: 24, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+            <Text style={[settingsStyles.arrowText, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 포인트 & 쿠폰 */}
-        {/* <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <TouchableOpacity 
-            onPress={navigateToCoupon}
-            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: isDark ? '#f8fafc' : '#0f172a',
-                marginBottom: 4,
-              }}>
-                💎 포인트 & 쿠폰
-              </Text>
-              <Text style={{
-                fontSize: 14,
-                color: isDark ? '#94a3b8' : '#64748b',
-              }}>
-                {points.toLocaleString()}P · 쿠폰 {availableCoupons.length}장
-              </Text>
-            </View>
-            <Text style={{ fontSize: 24, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
-          </TouchableOpacity>
-        </View> */}
-
         {/* 약관 및 법적정보 */}
-        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={{
-            fontSize: 18,
-            fontWeight: '700',
-            color: isDark ? '#f8fafc' : '#0f172a',
-            marginBottom: 16,
-          }}>
+        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
+          <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
             약관 및 법적정보
           </Text>
 
-          {/* 이용약관 */}
-          <TouchableOpacity
-            onPress={() => navigateToLegal('terms')}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 12,
-            }}
-          >
-            <Text style={{
-              fontSize: 16,
-              color: isDark ? '#f8fafc' : '#0f172a',
-            }}>
-              이용약관
-            </Text>
-            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          <TouchableOpacity onPress={() => navigateToLegal('terms')} style={settingsStyles.menuItem}>
+            <Text style={[settingsStyles.menuText, { color: colors.text }]}>이용약관</Text>
+            <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
 
-          {/* 구분선 */}
-          <View style={[settingsStyles.divider, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]} />
+          <View style={[settingsStyles.divider, { backgroundColor: colors.border }]} />
 
-          {/* 개인정보처리방침 */}
-          <TouchableOpacity
-            onPress={() => navigateToLegal('privacy')}
-            style={settingsStyles.menuItem}
-          >
-            <Text style={{
-              fontSize: 16,
-              color: isDark ? '#f8fafc' : '#0f172a',
-            }}>
-              개인정보처리방침
-            </Text>
-            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          <TouchableOpacity onPress={() => navigateToLegal('privacy')} style={settingsStyles.menuItem}>
+            <Text style={[settingsStyles.menuText, { color: colors.text }]}>개인정보처리방침</Text>
+            <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
 
-          {/* 구분선 */}
-          <View style={[settingsStyles.divider, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]} />
+          <View style={[settingsStyles.divider, { backgroundColor: colors.border }]} />
 
-          {/* 저작권 정보 */}
-          <TouchableOpacity
-            onPress={() => navigateToLegal('copyright')}
-            style={settingsStyles.menuItem}
-          >
-            <Text style={{
-              fontSize: 16,
-              color: isDark ? '#f8fafc' : '#0f172a',
-            }}>
-              저작권 정보
-            </Text>
-            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          <TouchableOpacity onPress={() => navigateToLegal('copyright')} style={settingsStyles.menuItem}>
+            <Text style={[settingsStyles.menuText, { color: colors.text }]}>저작권 정보</Text>
+            <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
         </View>
 
         {/* 데이터 관리 */}
-        {/* <View style={[settingsStyles.sectionHorizontal, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={{
-            fontSize: 18,
-            fontWeight: '700',
-            color: isDark ? '#f8fafc' : '#0f172a',
-            marginBottom: 16,
-          }}>
+        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
+          <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
             데이터 관리
           </Text>
-          <TouchableOpacity
-            onPress={handleClearCache}
-            style={settingsStyles.menuItem}
-          >
-            <Text style={{
-              fontSize: 16,
-              color: isDark ? '#f8fafc' : '#0f172a',
-            }}>
-              캐시 삭제
-            </Text>
-            <Text style={{ fontSize: 20, color: isDark ? '#94a3b8' : '#64748b' }}>›</Text>
+          <TouchableOpacity onPress={handleClearCache} style={settingsStyles.menuItem}>
+            <Text style={[settingsStyles.menuText, { color: colors.text }]}>캐시 삭제</Text>
+            <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
-        </View> */}
+        </View>
 
         {/* 앱 정보 */}
-        <View style={[settingsStyles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={[settingsStyles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <View style={[settingsStyles.section, { backgroundColor: colors.card }]}>
+          <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
             앱 정보
           </Text>
-          <Text style={[settingsStyles.appInfoText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+          <Text style={[settingsStyles.appInfoText, { color: colors.subtext }]}>
             {APP_NAME} v{APP_VERSION}{'\n'}
             특별한 만남을 위한 일정 관리{'\n\n'}
             © 2026 {APP_NAME}. All rights reserved.
@@ -472,6 +330,30 @@ const settingsStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  settingRowMb: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  flex1: {
+    flex: 1,
+  },
+  itemTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  itemDesc: {
+    fontSize: 13,
+  },
+  descText: {
+    fontSize: 14,
+  },
+  thinDivider: {
+    height: 1,
+    marginBottom: 16,
+  },
   divider: {
     height: 1,
     marginVertical: 4,
@@ -481,6 +363,15 @@ const settingsStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 12,
+  },
+  menuText: {
+    fontSize: 16,
+  },
+  menuArrow: {
+    fontSize: 20,
+  },
+  arrowText: {
+    fontSize: 24,
   },
   appInfoText: {
     fontSize: 14,

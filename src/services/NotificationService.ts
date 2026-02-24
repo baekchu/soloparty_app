@@ -163,10 +163,8 @@ export const toggleNotifications = async (enabled: boolean): Promise<boolean> =>
       }
     }
 
-    const settings = await getNotificationSettings();
-    settings.enabled = enabled;
-    await saveNotificationSettings(settings);
-    
+    // 설정 저장은 호출측(useNotifications hook)에서 일괄 수행
+    // (이중 저장으로 인한 race condition 방지)
     return true;
   } catch (error) {
     secureLog.error('알림 토글 실패');

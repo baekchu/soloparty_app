@@ -23,6 +23,9 @@ import { useTheme } from '../contexts/ThemeContext';
 import useBookmarks from '../hooks/useBookmarks';
 import useReminders from '../hooks/useReminders';
 import useReviews from '../hooks/useReviews';
+import { useShareInterstitialAd } from '../services/AdService';
+import AdOverlay from '../components/AdOverlay';
+import { HostProfileModal } from '../components/HostProfileModal';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'EventDetail'>;
@@ -49,20 +52,10 @@ const isValidUrl = (url: string): boolean => {
   return /^https?:\/\/.+/i.test(trimmed);
 };
 
-// 보안: 텍스트 이스케이프 (XSS 방지)
-const sanitizeText = (text: string | undefined, maxLen = 500): string => {
-  if (!text) return '';
-  return String(text).replace(/[\u200B-\u200D\uFEFF]/g, '').slice(0, maxLen);
-};
+// 보안: 텍스트 이스케이프 (XSS 방지) — 공유 유틸에서 가져오기
+import { sanitizeText, sanitizeColor } from '../utils/sanitize';
 
-// 보안: 색상 값 검증 (CSS injection 방지)
-const sanitizeColor = (color: string | undefined, fallback: string): string => {
-  if (!color || typeof color !== 'string') return fallback;
-  // #hex 또는 rgb/rgba만 허용
-  if (/^#([0-9a-fA-F]{3,8})$/.test(color.trim())) return color.trim();
-  if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*[\d.]+)?\s*\)$/.test(color.trim())) return color.trim();
-  return fallback;
-};
+// 보안: 색상 값 검증 — 공유 유틸로 이전됨
 
 // 상수: 렌더마다 재생성 방지
 const STAR_ARRAY = [1, 2, 3, 4, 5] as const;
@@ -142,6 +135,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   // 찜/즐겨찾기 & 리마인더
   const { isBookmarked, toggleBookmark } = useBookmarks();
   const { hasReminder, scheduleReminder, cancelReminder } = useReminders();
+  const { isShowing: isAdShowing, skipCountdown, canSkip, showAfterShare, dismiss: dismissAd } = useShareInterstitialAd();
   const bookmarked = isBookmarked(event.id, date);
   const reminderSet = hasReminder(event.id, date);
 
@@ -149,6 +143,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   const {
     canCheckIn, isCheckedIn, doCheckIn,
     canWriteReview, hasReview, getReview, submitReview,
+    getReviewsByOrganizer,
   } = useReviews();
   const checkedIn = isCheckedIn(event.id, date);
   const reviewExists = hasReview(event.id, date);
@@ -160,6 +155,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState('');
   const [showReviewForm, setShowReviewForm] = useState(false);
+  const [showHostProfile, setShowHostProfile] = useState(false);
   const isProcessing = useRef(false); // 중복 탭 방지
   
   // 날짜 포맷팅 (memoized) - UTC 오프셋 방지를 위해 로컬 파싱
@@ -261,7 +257,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     const storeLink = Platform.OS === 'ios' ? STORE_LINKS.ios : STORE_LINKS.android;
     
     try {
-      await Share.share(
+      const result = await Share.share(
         Platform.OS === 'ios'
           ? { url: storeLink }
           : { message: `솔로파티 - 솔로들을 위한 파티 매칭 앱\n${storeLink}`, title: SHARE_CONFIG.title },
@@ -270,8 +266,12 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           subject: SHARE_CONFIG.title,
         }
       );
+      // 공유 완료 후 광고 표시 (15초 후 건너뛰기 가능)
+      if (result.action === Share.sharedAction) {
+        showAfterShare();
+      }
     } catch { /* 공유 취소 무시 */ }
-  }, []);
+  }, [showAfterShare]);
   
   // 참가 신청
   const handleJoin = useCallback(() => {
@@ -284,6 +284,11 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       { text: '이동', onPress: handleOpenLink },
     ]);
   }, [safeLink, handleOpenLink]);
+
+  // 찜 토글 핸들러 (useCallback으로 최적화)
+  const handleToggleBookmark = useCallback(() => {
+    toggleBookmark(event, date);
+  }, [event, date, toggleBookmark]);
 
   // 뒤로가기 핸들러
   const handleGoBack = useCallback(() => navigation.goBack(), [navigation]);
@@ -359,6 +364,21 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     [event.promotionColor]
   );
 
+  // 주최자 리뷰 (memoized)
+  const organizerReviews = useMemo(
+    () => event.organizer ? getReviewsByOrganizer(event.organizer) : [],
+    [event.organizer, getReviewsByOrganizer]
+  );
+
+  // 주최자 프로필 열기
+  const handleOpenHostProfile = useCallback(() => {
+    if (event.organizer) setShowHostProfile(true);
+  }, [event.organizer]);
+
+  const handleCloseHostProfile = useCallback(() => {
+    setShowHostProfile(false);
+  }, []);
+
   return (
     <View style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 헤더 */}
@@ -370,7 +390,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Text style={[styles.backIcon, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={styles.headerActions}>
           {/* 알림 버튼 */}
           <TouchableOpacity
             style={[styles.shareButton, { backgroundColor: reminderSet ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#374151' : '#f1f5f9') }]}
@@ -384,7 +404,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {/* 찜 버튼 */}
           <TouchableOpacity
             style={[styles.shareButton, { backgroundColor: bookmarked ? '#ec4899' : (isDark ? '#374151' : '#f1f5f9') }]}
-            onPress={() => toggleBookmark(event, date)}
+            onPress={handleToggleBookmark}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Text style={[styles.shareIcon, { color: bookmarked ? '#ffffff' : (isDark ? '#f8fafc' : '#374151') }]}>
@@ -418,9 +438,11 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                 </Text>
               </View>
               {event.organizer && (
-                <Text style={[styles.promoOrganizer, { color: isDark ? '#94a3b8' : '#64748b' }]}>
-                  {sanitizeText(event.organizer, 50)}
-                </Text>
+                <TouchableOpacity onPress={handleOpenHostProfile} activeOpacity={0.6}>
+                  <Text style={[styles.promoOrganizer, { color: isDark ? '#a78bfa' : '#ec4899', textDecorationLine: 'underline' }]}>
+                    {sanitizeText(event.organizer, 50)}
+                  </Text>
+                </TouchableOpacity>
               )}
             </View>
           )}
@@ -544,6 +566,74 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           
         </View>
         
+        {/* 주최자 정보 */}
+        {event.organizer && (
+          <TouchableOpacity
+            style={[styles.organizerCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}
+            onPress={handleOpenHostProfile}
+            activeOpacity={0.7}
+          >
+            {/* 상단: 아바타 + 이름 + 화살표 */}
+            <View style={styles.organizerRow}>
+              <View style={[styles.organizerAvatarRing, { borderColor: isDark ? '#a78bfa' : '#ec4899' }]}>
+                <View style={[styles.organizerAvatar, { backgroundColor: isDark ? '#a78bfa' : '#ec4899' }]}>
+                  <Text style={styles.organizerAvatarText}>
+                    {event.organizer.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.organizerInfo}>
+                <View style={styles.organizerNameRow}>
+                  <Text style={[styles.organizerName, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                    {sanitizeText(event.organizer, 50)}
+                  </Text>
+                  <View style={[styles.organizerBadge, { backgroundColor: isDark ? '#2e1f4d' : '#fce7f3' }]}>
+                    <Text style={[styles.organizerBadgeText, { color: isDark ? '#a78bfa' : '#ec4899' }]}>주최자</Text>
+                  </View>
+                </View>
+                {organizerReviews.length > 0 ? (
+                  <View style={styles.organizerMeta}>
+                    <Text style={{ fontSize: 14, color: isDark ? '#fbbf24' : '#f59e0b', fontWeight: '700' }}>
+                      ★ {(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length).toFixed(1)}
+                    </Text>
+                    <Text style={[styles.organizerDot, { color: isDark ? '#475569' : '#cbd5e1' }]}>·</Text>
+                    <Text style={[styles.organizerSub, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+                      리뷰 {organizerReviews.length}개
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.organizerSub, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                    프로필 보기
+                  </Text>
+                )}
+              </View>
+              <View style={[styles.organizerArrowWrap, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }]}>
+                <Text style={[styles.organizerArrow, { color: isDark ? '#64748b' : '#94a3b8' }]}>›</Text>
+              </View>
+            </View>
+
+            {/* 별점 미니 바 (리뷰 있을 때만) */}
+            {organizerReviews.length > 0 && (
+              <View style={[styles.organizerRatingBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)' }]}>
+                <View style={styles.organizerRatingBarInner}>
+                  <View
+                    style={[
+                      styles.organizerRatingBarFill,
+                      {
+                        width: `${(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length / 5) * 100}%`,
+                        backgroundColor: isDark ? '#a78bfa' : '#ec4899',
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={[styles.organizerRatingLabel, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                  {(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length / 5 * 100).toFixed(0)}%
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        )}
+
         {/* 주최자 정보 */}
         {/* {(event.organizer || event.contact) && (
           <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
@@ -731,6 +821,27 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           <Text style={styles.joinButtonText}>참가 신청하기</Text>
         </TouchableOpacity>
       </View>
+
+      {/* 공유 후 광고 오버레이 (15초 후 건너뛰기 가능) */}
+      <AdOverlay
+        visible={isAdShowing}
+        isDark={isDark}
+        skipCountdown={skipCountdown}
+        canSkip={canSkip}
+        onDismiss={dismissAd}
+      />
+
+      {/* 주최자 프로필 모달 */}
+      {event.organizer && (
+        <HostProfileModal
+          visible={showHostProfile}
+          organizer={event.organizer}
+          contact={event.contact}
+          reviews={organizerReviews}
+          isDark={isDark}
+          onClose={handleCloseHostProfile}
+        />
+      )}
     </View>
   );
 }
@@ -772,6 +883,11 @@ const styles = StyleSheet.create({
   shareIcon: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   scrollView: {
     flex: 1,
@@ -1153,5 +1269,111 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  // ==================== 주최자 프로필 카드 스타일 ====================
+  organizerCard: {
+    borderRadius: 20,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  organizerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  organizerAvatarRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  organizerAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  organizerAvatarText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  organizerInfo: {
+    flex: 1,
+  },
+  organizerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 3,
+  },
+  organizerName: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  organizerBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  organizerBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  organizerMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  organizerDot: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  organizerSub: {
+    fontSize: 13,
+  },
+  organizerArrowWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  organizerArrow: {
+    fontSize: 22,
+    fontWeight: '600',
+  },
+  organizerRatingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  organizerRatingBarInner: {
+    flex: 1,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    overflow: 'hidden',
+  },
+  organizerRatingBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  organizerRatingLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    width: 34,
+    textAlign: 'right',
   },
 });

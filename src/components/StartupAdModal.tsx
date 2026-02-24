@@ -33,7 +33,7 @@ import {
   Pressable,
 } from 'react-native';
 import { Image } from 'expo-image';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeGetItem, safeSetItem, safeMultiGet } from '../utils/asyncStorageManager';
 import { env } from '../config/env';
 
 // ==================== 상수 ====================
@@ -109,7 +109,7 @@ class AdConfigLoader {
   private static async fetchWithCache(): Promise<AdConfig> {
     try {
       // 캐시 확인 (병렬 읽기)
-      const [cache, time] = await AsyncStorage.multiGet([
+      const [cache, time] = await safeMultiGet([
         STORAGE_KEYS.CACHE,
         STORAGE_KEYS.CACHE_TIME,
       ]);
@@ -123,6 +123,16 @@ class AdConfigLoader {
           const parsed = safeJsonParse(cachedData, null);
           if (isValidConfig(parsed)) return parsed;
         }
+      }
+      
+      // 보안: URL 프로토콜/도메인 검증 (SSRF 방지)
+      try {
+        const parsedUrl = new URL(GIST_RAW_URL);
+        if (parsedUrl.protocol !== 'https:') throw new Error('Invalid protocol');
+        const allowedHosts = ['gist.githubusercontent.com', 'raw.githubusercontent.com'];
+        if (!allowedHosts.includes(parsedUrl.hostname)) throw new Error('Invalid host');
+      } catch {
+        return DEFAULT_CONFIG;
       }
       
       // 새로 fetch (타임아웃 적용)
@@ -141,11 +151,9 @@ class AdConfigLoader {
         const data = await res.json();
         if (!isValidConfig(data)) throw new Error();
         
-        // 캐시 저장 (병렬 쓰기)
-        AsyncStorage.multiSet([
-          [STORAGE_KEYS.CACHE, JSON.stringify(data)],
-          [STORAGE_KEYS.CACHE_TIME, Date.now().toString()],
-        ]).catch(() => {});
+        // 캐시 저장 (개별 저장 — safeSetItem 사용)
+        safeSetItem(STORAGE_KEYS.CACHE, JSON.stringify(data)).catch(() => {});
+        safeSetItem(STORAGE_KEYS.CACHE_TIME, Date.now().toString()).catch(() => {});
         
         return data;
       } finally {
@@ -212,7 +220,7 @@ export const StartupAdModal = memo<StartupAdModalProps>(({ isDark, onClose }) =>
     const init = async () => {
       try {
         // 1. 숨김 기간 확인 (먼저 체크 - 불필요한 fetch 방지)
-        const hideUntil = await AsyncStorage.getItem(STORAGE_KEYS.HIDE_UNTIL);
+        const hideUntil = await safeGetItem(STORAGE_KEYS.HIDE_UNTIL);
         if (hideUntil && Date.now() < new Date(hideUntil).getTime()) {
           onClose?.();
           return;
@@ -259,7 +267,7 @@ export const StartupAdModal = memo<StartupAdModalProps>(({ isDark, onClose }) =>
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
     
-    AsyncStorage.setItem(STORAGE_KEYS.HIDE_UNTIL, tomorrow.toISOString()).catch(() => {});
+    safeSetItem(STORAGE_KEYS.HIDE_UNTIL, tomorrow.toISOString()).catch(() => {});
     setVisible(false);
     onClose?.();
   }, [onClose]);
@@ -273,6 +281,8 @@ export const StartupAdModal = memo<StartupAdModalProps>(({ isDark, onClose }) =>
   // 광고 클릭
   const handlePress = useCallback(() => {
     if (!config?.linkUrl) return;
+    // https/http만 허용 (intent://, javascript:, file:// 등 차단)
+    if (!/^https?:\/\//i.test(config.linkUrl)) return;
     Linking.openURL(config.linkUrl).catch(() => {});
   }, [config?.linkUrl]);
 

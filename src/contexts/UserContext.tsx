@@ -13,7 +13,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback, useRef } from 'react';
-import { safeGetItem, safeSetItem, safeRemoveItem } from '../utils/asyncStorageManager';
+import { safeGetItem, safeSetItem, safeRemoveItem, safeGetAllKeys } from '../utils/asyncStorageManager';
 import { encryptData, decryptData, secureLog, maskSensitiveData } from '../utils/secureStorage';
 import * as Device from 'expo-device';
 import * as Crypto from 'expo-crypto';
@@ -162,28 +162,40 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // 기존 사용자 데이터 로드 및 검증
         const userDataStr = await safeGetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`);
         if (userDataStr) {
-          const userData: UserData = JSON.parse(userDataStr);
-          
-          // 데이터 무결성 검증
-          const isValid = await verifyDataIntegrity(userData);
-          if (!isValid) {
-            secureLog.warn('⚠️ 데이터 무결성 검증 실패 - 데이터가 변조되었을 수 있습니다');
+          let userData: UserData;
+          try {
+            userData = JSON.parse(userDataStr);
+          } catch {
+            secureLog.warn('⚠️ 사용자 데이터 JSON 파싱 실패 - 새 사용자로 재생성 필요');
+            // JSON 손상 시 해당 키 삭제 후 다음 실행 시 재생성됨
+            await safeRemoveItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`);
+            userData = null as any;
           }
+          if (userData) {
+            // 데이터 무결성 검증
+            const isValid = await verifyDataIntegrity(userData);
+            if (!isValid) {
+              secureLog.warn('⚠️ 데이터 무결성 검증 실패 - 변조 가능 필드 리셋');
+              // 변조 가능 필드를 안전한 값으로 리셋
+              userData.invitedCount = 0;
+              userData.invitedBy = null;
+            }
 
-          // 마지막 활동 시간 업데이트
-          const { dataHash, ...dataWithoutHash } = userData;
-          const updatedDataWithoutHash = {
-            ...dataWithoutHash,
-            lastActiveAt: new Date().toISOString(),
-          };
-          const newHash = await generateDataHash(updatedDataWithoutHash);
-          const updatedData: UserData = { ...updatedDataWithoutHash, dataHash: newHash };
+            // 마지막 활동 시간 업데이트
+            const { dataHash, ...dataWithoutHash } = userData;
+            const updatedDataWithoutHash = {
+              ...dataWithoutHash,
+              lastActiveAt: new Date().toISOString(),
+            };
+            const newHash = await generateDataHash(updatedDataWithoutHash);
+            const updatedData: UserData = { ...updatedDataWithoutHash, dataHash: newHash };
 
-          await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`, JSON.stringify(updatedData));
-          if (isMountedRef.current) {
-            setInviteCode(userData.inviteCode);
+            await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`, JSON.stringify(updatedData));
+            if (isMountedRef.current) {
+              setInviteCode(userData.inviteCode);
+            }
+            secureLog.info('✅ 기존 사용자 로그인:', maskSensitiveData(storedUserId), '(초대코드: ' + maskSensitiveData(userData.inviteCode) + ')');
           }
-          secureLog.info('✅ 기존 사용자 로그인:', maskSensitiveData(storedUserId), '(초대코드: ' + maskSensitiveData(userData.inviteCode) + ')');
         }
       }
 
@@ -209,7 +221,9 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // 데이터 무결성 검증
         const isValid = await verifyDataIntegrity(userData);
         if (!isValid) {
-          secureLog.warn('⚠️ 데이터 무결성 검증 실패');
+          secureLog.warn('⚠️ 데이터 무결성 검증 실패 — 변조 가능성');
+          // 변조된 데이터 반환 방지: null 반환
+          return null;
         }
         
         return userData;
@@ -232,14 +246,19 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       // 초대 코드로 초대한 사람 찾기
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-      const keys = await AsyncStorage.getAllKeys();
+      const keys = await safeGetAllKeys();
       const userKeys = keys.filter(key => key.startsWith(STORAGE_KEYS.USER_PREFIX));
       
       for (const key of userKeys) {
         const dataStr = await safeGetItem(key);
         if (dataStr) {
-          const data: UserData = JSON.parse(dataStr);
+          let data: UserData;
+          try {
+            data = JSON.parse(dataStr);
+          } catch {
+            secureLog.warn('⚠️ 사용자 데이터 파싱 실패, 건너뜀:', key);
+            continue; // 손상된 레코드는 건너뜀
+          }
           if (data.inviteCode === inviterCode && data.userId !== userId) {
             // 초대한 사람 찾음
             const myData = await getUserData();

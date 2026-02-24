@@ -8,11 +8,13 @@
 
 import { Dimensions, Platform } from 'react-native';
 
-// 디바이스 타입 감지
-export const isTablet = () => {
+/**
+ * 디바이스 타입 감지
+ * 매 호출 시 현재 Dimensions를 읽어 회전/분할 화면 대응
+ */
+export const isTablet = (): boolean => {
   const { width, height } = Dimensions.get('window');
   const aspectRatio = height / width;
-  // 태블릿은 일반적으로 화면이 더 크고 비율이 다름
   return (
     (Platform.OS === 'ios' && Platform.isPad) ||
     (width >= 768 && aspectRatio < 1.6)

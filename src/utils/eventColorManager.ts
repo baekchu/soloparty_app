@@ -118,9 +118,11 @@ class EventColorManager {
     currentIndex: number,
     isDark: boolean = false,
   ): string {
-    // 자동 초기화 (최초 호출 시)
+    // 초기화 미완료 시 — 해시 기반 임시 색상 반환 (colorMap에 저장하지 않음)
     if (!this.isInitialized) {
-      this.initialize().catch(() => {});
+      const hash = (eventId || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      const colors = isDark ? this.DARK_EVENT_COLORS : this.EVENT_COLORS;
+      return colors[hash % colors.length];
     }
     
     // 이미 색상이 할당되어 있으면 다크모드 변환 후 반환
@@ -134,8 +136,13 @@ class EventColorManager {
       return this.colorMap[eventId];
     }
 
-    // 현재 날짜 파싱
-    const currentDate = new Date(dateString);
+    // 현재 날짜 파싱 (로컬 시간 기준 — UTC 해석 방지)
+    const parts = dateString.split('-');
+    const currentDate = new Date(
+      parseInt(parts[0], 10),
+      parseInt(parts[1], 10) - 1,
+      parseInt(parts[2], 10)
+    );
     
     // 전날, 다음날 날짜 계산
     const prevDate = new Date(currentDate);
@@ -195,16 +202,44 @@ class EventColorManager {
     // 라이트 색상을 colorMap에 저장
     this.colorMap[eventId] = selectedColor;
     
-    // debounce된 저장 (렌더 중 과도한 AsyncStorage 쓰기 방지)
+    // colorMap 크기 제한 (1000개 초과 시 오래된 항목 정리)
+    const MAX_COLOR_MAP_SIZE = 1000;
+    const mapKeys = Object.keys(this.colorMap);
+    if (mapKeys.length > MAX_COLOR_MAP_SIZE) {
+      // 현재 활성 이벤트ID를 보존하고 나머지 제거
+      const activeIds = new Set<string>();
+      for (const dateEvents of Object.values(allEvents)) {
+        for (const ev of dateEvents) {
+          if (ev.id) activeIds.add(ev.id);
+        }
+      }
+      const newColorMap: Record<string, string> = {};
+      for (const key of mapKeys) {
+        if (activeIds.has(key)) {
+          newColorMap[key] = this.colorMap[key];
+        }
+      }
+      // 활성 이벤트만으로도 부족하면 최근 항목 유지
+      if (Object.keys(newColorMap).length < MAX_COLOR_MAP_SIZE) {
+        this.colorMap = newColorMap;
+      } else {
+        this.colorMap = Object.fromEntries(
+          Object.entries(newColorMap).slice(-MAX_COLOR_MAP_SIZE)
+        );
+      }
+    }
+    
+    // 저장 예약 (render 완료 후 비동기 실행 — React 원칙 준수)
     this.isDirty = true;
     if (!this.saveTimer) {
+      // queueMicrotask 대신 setTimeout(0)으로 render 사이클 이후 실행
       this.saveTimer = setTimeout(() => {
         this.saveTimer = null;
         if (this.isDirty) {
           this.isDirty = false;
           this.saveColorMap().catch(() => {});
         }
-      }, 500);
+      }, 0);
     }
 
     // 다크모드이면 대응하는 다크 색상 반환
@@ -225,3 +260,6 @@ class EventColorManager {
 }
 
 export default EventColorManager;
+
+// 참고: initAsyncStorage() 완료 후 EventColorManager.initialize() 를 명시적으로 호출해야 합니다.
+// 모듈 로드 시 자동 초기화하면 AsyncStorage 준비 전에 실행될 수 있습니다.

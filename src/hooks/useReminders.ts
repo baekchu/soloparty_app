@@ -1,21 +1,24 @@
 /**
- * 이벤트 리마인더 훅 (v2 - 오류 방지 강화)
+ * 이벤트 리마인더 훅 (v3 - 모듈 레벨 공유 상태)
  * - expo-notifications 기반 로컬 알림 예약
+ * - 모듈 레벨 공유 상태 → 모든 화면에서 즉시 동기화
+ * - 저장 직렬화 (race condition 방지)
  * - Expo Go / 네이티브 빌드 양쪽 지원
  * - Android 채널 자동 설정
  * - 타임존 안전한 날짜 파싱
- * - stale closure 방지 (ref 패턴)
+ * - v2→v3 자동 마이그레이션
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { Event } from '../types';
 
 // ==================== 상수 ====================
-const REMINDERS_KEY = '@event_reminders_v2';
+const REMINDERS_KEY = '@event_reminders_v3';
+const LEGACY_REMINDERS_KEY = '@event_reminders_v2';
 const MAX_REMINDERS = 50;
 const isExpoGo = Constants.appOwnership === 'expo';
 
@@ -152,111 +155,222 @@ function formatReminderTime(date: Date): string {
   return `${month}/${day} ${period} ${displayHour}시${minutes > 0 ? ` ${minutes}분` : ''}`;
 }
 
+// ==================== 모듈 레벨 공유 상태 ====================
+let _reminders: EventReminder[] = [];
+let _loaded = false;
+let _loading = false;
+let _loadRetryCount = 0;
+const MAX_LOAD_RETRIES = 3;
+const _listeners = new Set<(reminders: EventReminder[]) => void>();
+
+// 저장 직렬화
+let _isSaving = false;
+let _pendingSave = false;
+let _appStateSubscription: { remove: () => void } | null = null;
+
+// ==================== AppState 백그라운드 저장 ====================
+function _setupAppStateListener() {
+  // Hot Reload 시 이전 리스너 정리 (누수 방지)
+  if (_appStateSubscription) {
+    _appStateSubscription.remove();
+    _appStateSubscription = null;
+  }
+  _appStateSubscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+    if (nextState === 'background' || nextState === 'inactive') {
+      // 앱이 백그라운드로 갈 때 즉시 저장
+      _saveToStorage().catch(() => {});
+    } else if (nextState === 'active' && _loaded) {
+      // 포그라운드 복귀 시 저장소 검증
+      _verifyStoredData().catch(() => {});
+    }
+  });
+}
+
+async function _verifyStoredData(): Promise<void> {
+  try {
+    const stored = await safeGetItem(REMINDERS_KEY);
+    if (!stored && _reminders.length > 0) {
+      await _saveToStorage();
+    }
+  } catch { /* 무시 */ }
+}
+
+function _notify() {
+  _listeners.forEach(fn => fn([..._reminders]));
+}
+
+async function _loadFromStorage(): Promise<void> {
+  if (_loading) return;
+  _loading = true;
+
+  try {
+    ensureNotificationHandler();
+    if (!isExpoGo) {
+      await ensureAndroidChannel();
+    }
+
+    let parsed: EventReminder[] | null = null;
+
+    // 1. v3 키에서 로드
+    try {
+      const stored = await safeGetItem(REMINDERS_KEY);
+      if (stored && stored.length < 200000) {
+        const data = JSON.parse(stored);
+        if (Array.isArray(data)) {
+          parsed = data;
+        }
+      }
+    } catch { /* 무시 */ }
+
+    // 2. v3에 없으면 레거시 v2 키에서 마이그레이션
+    if (!parsed || parsed.length === 0) {
+      try {
+        const legacyStored = await safeGetItem(LEGACY_REMINDERS_KEY);
+        if (legacyStored && legacyStored.length < 200000) {
+          const legacyData = JSON.parse(legacyStored);
+          if (Array.isArray(legacyData) && legacyData.length > 0) {
+            parsed = legacyData;
+            // 마이그레이션 후 레거시 키 정리
+            safeSetItem(LEGACY_REMINDERS_KEY, '[]').catch(() => {});
+          }
+        }
+      } catch { /* 마이그레이션 실패 무시 */ }
+    }
+
+    if (!parsed) {
+      if (_loadRetryCount < MAX_LOAD_RETRIES) {
+        _loadRetryCount++;
+        _loading = false;
+        setTimeout(() => _loadFromStorage(), 500);
+        return;
+      }
+      parsed = [];
+    }
+
+    // 만료된 리마인더 정리
+    const now = Date.now();
+    const valid: EventReminder[] = [];
+    const expiredIds: string[] = [];
+
+    for (const r of parsed) {
+      if (!r?.eventId || !r?.date || !r?.notificationId) continue;
+
+      const eventDate = parseDate(r.date);
+      if (eventDate) {
+        eventDate.setHours(23, 59, 59, 999);
+        if (eventDate.getTime() < now) {
+          expiredIds.push(r.notificationId);
+          continue;
+        }
+      }
+      valid.push(r);
+    }
+
+    // 만료된 알림 조용히 취소
+    if (!isExpoGo) {
+      for (const nid of expiredIds) {
+        try {
+          await Notifications.cancelScheduledNotificationAsync(nid);
+        } catch { /* 무시 */ }
+      }
+    }
+
+    _reminders = valid;
+    _loaded = true;
+    _loadRetryCount = 0;
+
+    // 정리된 데이터 또는 마이그레이션 데이터 저장
+    if (expiredIds.length > 0 || valid.length > 0) {
+      _saveToStorage();
+    }
+
+    // AppState 리스너 설정 (최초 로드 완료 후)
+    _setupAppStateListener();
+  } catch {
+    if (_loadRetryCount < MAX_LOAD_RETRIES) {
+      _loadRetryCount++;
+      _loading = false;
+      setTimeout(() => _loadFromStorage(), 500);
+      return;
+    }
+    _loaded = true;
+  }
+
+  _loading = false;
+  _notify();
+}
+
+async function _saveToStorage(): Promise<void> {
+  if (_isSaving) {
+    _pendingSave = true;
+    return;
+  }
+
+  _isSaving = true;
+
+  try {
+    const snapshot = JSON.stringify(_reminders);
+    const saved = await safeSetItem(REMINDERS_KEY, snapshot);
+
+    // 저장 검증 (read-back)
+    if (saved) {
+      const verification = await safeGetItem(REMINDERS_KEY);
+      if (!verification || verification.length !== snapshot.length) {
+        await safeSetItem(REMINDERS_KEY, snapshot);
+      }
+    } else {
+      await safeSetItem(REMINDERS_KEY, snapshot);
+    }
+  } catch {
+    // 저장 실패 무시
+  } finally {
+    _isSaving = false;
+
+    if (_pendingSave) {
+      _pendingSave = false;
+      _saveToStorage();
+    }
+  }
+}
+
 // ==================== 훅 ====================
 export default function useReminders() {
-  const [reminders, setReminders] = useState<EventReminder[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [reminders, setReminders] = useState<EventReminder[]>([..._reminders]);
   const isMountedRef = useRef(true);
-  // stale closure 방지: ref로 최신 reminders 추적
-  const remindersRef = useRef<EventReminder[]>([]);
-  remindersRef.current = reminders;
 
-  // 초기 로드 (1회)
   useEffect(() => {
     isMountedRef.current = true;
-    ensureNotificationHandler();
 
-    const init = async () => {
-      if (!isExpoGo) {
-        await ensureAndroidChannel();
+    const listener = (updated: EventReminder[]) => {
+      if (isMountedRef.current) {
+        setReminders(updated);
       }
-      await loadRemindersFromStorage();
     };
-    init();
+    _listeners.add(listener);
+
+    if (!_loaded && !_loading) {
+      _loadFromStorage();
+    } else if (_loaded) {
+      setReminders([..._reminders]);
+    }
 
     return () => {
       isMountedRef.current = false;
+      _listeners.delete(listener);
+      
+      // 모든 인스턴스 언마운트 시 AppState 리스너 정리 (메모리 누수 방지)
+      if (_listeners.size === 0 && _appStateSubscription) {
+        _appStateSubscription.remove();
+        _appStateSubscription = null;
+      }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ---- 로드 ----
-  const loadRemindersFromStorage = async () => {
-    try {
-      const stored = await safeGetItem(REMINDERS_KEY);
-      if (!stored || stored.length > 200000) {
-        if (isMountedRef.current) setIsLoaded(true);
-        return;
-      }
-
-      let parsed: any[];
-      try {
-        parsed = JSON.parse(stored);
-      } catch {
-        if (isMountedRef.current) setIsLoaded(true);
-        return;
-      }
-      if (!Array.isArray(parsed)) {
-        if (isMountedRef.current) setIsLoaded(true);
-        return;
-      }
-
-      const now = Date.now();
-      const valid: EventReminder[] = [];
-      const expiredIds: string[] = [];
-
-      for (const r of parsed) {
-        if (!r?.eventId || !r?.date || !r?.notificationId) continue;
-
-        // 이벤트 날짜가 하루 이상 지남 → 만료
-        const eventDate = parseDate(r.date);
-        if (eventDate) {
-          eventDate.setHours(23, 59, 59, 999);
-          if (eventDate.getTime() < now) {
-            expiredIds.push(r.notificationId);
-            continue;
-          }
-        }
-        valid.push(r);
-      }
-
-      // 만료된 알림 조용히 취소
-      if (!isExpoGo) {
-        for (const nid of expiredIds) {
-          try {
-            await Notifications.cancelScheduledNotificationAsync(nid);
-          } catch { /* 무시 */ }
-        }
-      }
-
-      if (isMountedRef.current) {
-        setReminders(valid);
-        remindersRef.current = valid;
-      }
-
-      if (expiredIds.length > 0) {
-        try {
-          await safeSetItem(REMINDERS_KEY, JSON.stringify(valid));
-        } catch { /* 무시 */ }
-      }
-    } catch {
-      // 전체 로드 실패
-    } finally {
-      if (isMountedRef.current) setIsLoaded(true);
-    }
-  };
-
-  // ---- 저장 ----
-  const saveReminders = useCallback(async (updated: EventReminder[]) => {
-    try {
-      await safeSetItem(REMINDERS_KEY, JSON.stringify(updated));
-    } catch { /* 저장 실패 무시 */ }
   }, []);
 
   // ---- 리마인더 확인 ----
   const hasReminder = useCallback((eventId: string | undefined, date: string): boolean => {
     if (!eventId) return false;
-    return remindersRef.current.some(r => r.eventId === eventId && r.date === date);
-  }, [reminders]); // reminders 의존 → 리렌더 트리거용
+    return _reminders.some(r => r.eventId === eventId && r.date === date);
+  }, []); // 모듈 레벨 상태 직접 접근 → deps 불필요 (함수 재생성 방지)
 
   // ---- 알림 등록 ----
   const scheduleReminder = useCallback(async (
@@ -268,7 +382,6 @@ export default function useReminders() {
       return { success: false, message: '이벤트 ID가 없습니다.' };
     }
 
-    // Expo Go 환경 체크
     if (isExpoGo) {
       return {
         success: false,
@@ -276,18 +389,15 @@ export default function useReminders() {
       };
     }
 
-    // ref로 최신 상태 읽기 (stale closure 방지)
-    const current = remindersRef.current;
-
-    if (current.some(r => r.eventId === eventId && r.date === date)) {
+    // 모듈 레벨 상태에서 읽기 (항상 최신)
+    if (_reminders.some(r => r.eventId === eventId && r.date === date)) {
       return { success: false, message: '이미 알림이 등록되어 있습니다.' };
     }
 
-    if (current.length >= MAX_REMINDERS) {
+    if (_reminders.length >= MAX_REMINDERS) {
       return { success: false, message: `최대 ${MAX_REMINDERS}개까지 등록 가능합니다.` };
     }
 
-    // 이벤트 시간 파싱
     const eventDateTime = parseEventDateTime(date, event.time);
     if (!eventDateTime) {
       return { success: false, message: '날짜 정보를 파싱할 수 없습니다.' };
@@ -296,7 +406,6 @@ export default function useReminders() {
     const now = new Date();
     const eventMs = eventDateTime.getTime();
 
-    // 이벤트가 이미 완전히 지남 (1시간 이상)
     if (eventMs < now.getTime() - 3600000) {
       return { success: false, message: '이미 지난 이벤트입니다.' };
     }
@@ -314,7 +423,6 @@ export default function useReminders() {
         if (morning.getTime() > now.getTime()) {
           triggerDate = morning;
         } else {
-          // 아침 9시도 지남 → 5초 후 즉시 알림
           triggerDate = new Date(now.getTime() + 5000);
         }
       } else {
@@ -323,7 +431,6 @@ export default function useReminders() {
     }
 
     try {
-      // 알림 권한 확인/요청
       const { status } = await Notifications.getPermissionsAsync();
       if (status !== 'granted') {
         const { status: newStatus } = await Notifications.requestPermissionsAsync({
@@ -341,10 +448,8 @@ export default function useReminders() {
         }
       }
 
-      // Android 채널 확인
       await ensureAndroidChannel();
 
-      // 알림 예약
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
           title: '🎉 파티가 곧 시작돼요!',
@@ -370,12 +475,9 @@ export default function useReminders() {
         createdAt: Date.now(),
       };
 
-      const updated = [...current, newReminder];
-      if (isMountedRef.current) {
-        setReminders(updated);
-        remindersRef.current = updated;
-      }
-      await saveReminders(updated);
+      _reminders = [..._reminders, newReminder];
+      _notify(); // 모든 인스턴스에 즉시 전파
+      await _saveToStorage(); // 즉시 저장
 
       const timeStr = formatReminderTime(triggerDate);
       return { success: true, message: `${timeStr}에 알림이 울립니다!` };
@@ -386,7 +488,7 @@ export default function useReminders() {
       }
       return { success: false, message: '알림 등록에 실패했습니다.\n다시 시도해주세요.' };
     }
-  }, [saveReminders]); // reminders를 ref로 읽으므로 의존성 불필요
+  }, []);
 
   // ---- 알림 취소 ----
   const cancelReminder = useCallback(async (
@@ -395,11 +497,9 @@ export default function useReminders() {
   ): Promise<boolean> => {
     if (!eventId) return false;
 
-    const current = remindersRef.current;
-    const reminder = current.find(r => r.eventId === eventId && r.date === date);
+    const reminder = _reminders.find(r => r.eventId === eventId && r.date === date);
     if (!reminder) return false;
 
-    // 알림 취소 (이미 발송된 경우 무시)
     if (!isExpoGo) {
       try {
         await Notifications.cancelScheduledNotificationAsync(reminder.notificationId);
@@ -408,18 +508,15 @@ export default function useReminders() {
       }
     }
 
-    const updated = current.filter(r => !(r.eventId === eventId && r.date === date));
-    if (isMountedRef.current) {
-      setReminders(updated);
-      remindersRef.current = updated;
-    }
-    await saveReminders(updated);
+    _reminders = _reminders.filter(r => !(r.eventId === eventId && r.date === date));
+    _notify(); // 모든 인스턴스에 즉시 전파
+    await _saveToStorage(); // 즉시 저장
     return true;
-  }, [saveReminders]);
+  }, []);
 
   return {
     reminders,
-    isLoaded,
+    isLoaded: _loaded,
     hasReminder,
     scheduleReminder,
     cancelReminder,

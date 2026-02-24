@@ -80,11 +80,13 @@ interface MigrationData {
 }
 
 // ==================== 유틸리티 (인라인 최적화) ====================
+/** 결정적 체크섬 (Date.now 제거 — 서버 재검증 가능) */
 const hash = (points: number, count: number): string => {
-  const str = `${points}-${count}-${Date.now()}`;
-  let h = 0;
+  const str = `sp_${points}_${count}_v2`;
+  let h = 0x811c9dc5; // FNV-1a offset basis
   for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) - h + str.charCodeAt(i)) & 0xffffffff;
+    h ^= str.charCodeAt(i);
+    h = (h * 0x01000193) & 0xffffffff; // FNV prime
   }
   return Math.abs(h).toString(36);
 };
@@ -94,7 +96,19 @@ const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const getDeviceId = async (): Promise<string> => {
   const saved = await safeGetItem(KEYS.DEVICE);
   if (saved) return saved;
-  const id = `d_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  // expo-crypto 기반 안전한 디바이스 ID 생성
+  let id: string;
+  try {
+    const { getRandomBytesAsync } = require('expo-crypto');
+    const bytes = await getRandomBytesAsync(8);
+    const hex = Array.from(bytes as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join('');
+    id = `d_${hex}`;
+  } catch {
+    // fallback: timestamp + random 기반 (performance.now 미지원 환경 대응)
+    const ts = Date.now().toString(36);
+    const rand = Math.random().toString(36).slice(2, 10);
+    id = `d_${ts}_${rand}`;
+  }
   await safeSetItem(KEYS.DEVICE, id);
   return id;
 };
@@ -266,6 +280,10 @@ export const PointsMigrationService = {
     // 4. 재시도 로직으로 서버 전송
     for (let attempt = 1; attempt <= CONFIG.RETRIES; attempt++) {
       try {
+        // 10초 타임아웃으로 무한 대기 방지
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
         const res = await fetch(`${CONFIG.API_URL}/api/migrate`, {
           method: 'POST',
           headers: {
@@ -280,7 +298,10 @@ export const PointsMigrationService = {
             coupons: data.coupons,
             timestamp: data.timestamp,
           }),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);

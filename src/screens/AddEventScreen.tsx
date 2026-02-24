@@ -7,9 +7,9 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Crypto from 'expo-crypto';
 import { Calendar, DateData } from 'react-native-calendars';
-import { format } from 'date-fns';
 import { loadEvents, saveEvents } from '../utils/storage';
 import '../utils/calendarLocale';
 import { useTheme } from '../contexts/ThemeContext';
@@ -31,10 +31,13 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
   const [description, setDescription] = useState('');
   const [link, setLink] = useState('');
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
   const handleSave = useCallback(async () => {
+    // 중복 저장 방지
+    if (isSaving) return;
    
     if (!selectedDate) {
       Alert.alert('알림', '날짜를 선택해주세요.');
@@ -52,9 +55,10 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
       return;
     }
 
+    setIsSaving(true);
     try {
       const newEvent = {
-        id: `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        id: Crypto.randomUUID(),
         title: title.trim(),
         time: time.trim(),
         location: location.trim(),
@@ -76,8 +80,10 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
       ]);
     } catch {
       Alert.alert('오류', '이벤트 저장에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setIsSaving(false);
     }
-  }, [selectedDate, title, time, location, description, link, coordinates, navigation]);
+  }, [isSaving, selectedDate, title, time, location, description, link, coordinates, navigation]);
 
   const isDark = theme === 'dark';
 
@@ -141,7 +147,10 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
             {selectedDate && (
               <View style={{ marginTop: 12, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: isDark ? 'rgba(6, 95, 70, 0.2)' : '#d1fae5' }}>
                 <Text style={{ fontSize: 14, fontWeight: '600', color: isDark ? '#34d399' : '#059669' }}>
-                  ✅ {format(new Date(selectedDate), 'yyyy년 M월 d일')}
+                  ✅ {(() => {
+                  const [y, m, d] = selectedDate.split('-').map(Number);
+                  return new Date(y, m - 1, d).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+                })()}
                 </Text>
               </View>
             )}
@@ -165,6 +174,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
               onChangeText={setTitle}
               placeholder="예: 크리스마스 파티"
               placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              maxLength={100}
             />
           </View>
         </View>
@@ -186,6 +196,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
               onChangeText={setTime}
               placeholder="예: 오후 7시"
               placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              maxLength={50}
             />
           </View>
         </View>
@@ -208,6 +219,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
               onChangeText={setLocation}
               placeholder="예: 서울시 강남구"
               placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              maxLength={200}
             />
             <TouchableOpacity
               onPress={() => {
@@ -259,6 +271,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
               placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
               keyboardType="url"
               autoCapitalize="none"
+              maxLength={500}
             />
           </View>
         </View>
@@ -284,6 +297,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
               multiline
               numberOfLines={4}
               textAlignVertical="top"
+              maxLength={2000}
             />
           </View>
         </View>

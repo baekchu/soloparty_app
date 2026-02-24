@@ -2,7 +2,7 @@
   "expo": {
     "name": "솔로파티",
     "slug": "solo-party-dating",
-    "version": "1.0.27",
+    "version": "1.0.28",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -17,7 +17,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.soloparty.dating",
-      "buildNumber": "1.4.0",
+      "buildNumber": "1.5.0",
       "icon": "./assets/adaptive-icon.png",
       "infoPlist": {
             "ITSAppUsesNonExemptEncryption": false,
@@ -33,7 +33,7 @@
         "backgroundColor": "#fce7f3"
       },
       "package": "com.soloparty.dating",
-      "versionCode": 20,
+      "versionCode": 21,
       "minSdkVersion": 23,
       "softwareKeyboardLayoutMode": "pan",
       "permissions": [

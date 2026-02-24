@@ -88,13 +88,9 @@ const generateBackupCode = async (): Promise<string> => {
     return Array.from(bytes)
       .map(b => TRANSFER_CONFIG.CODE_CHARS[b % TRANSFER_CONFIG.CODE_CHARS.length])
       .join('');
-  } catch {
-    // 폴백: Math.random 기반
-    let code = '';
-    for (let i = 0; i < TRANSFER_CONFIG.CODE_LENGTH; i++) {
-      code += TRANSFER_CONFIG.CODE_CHARS[Math.floor(Math.random() * TRANSFER_CONFIG.CODE_CHARS.length)];
-    }
-    return code;
+  } catch (e) {
+    // 안전하지 않은 폴백 차단 — 약한 코드로 포인트 보호 불가
+    throw new Error('안전한 백업 코드를 생성할 수 없습니다. 나중에 다시 시도해주세요.');
   }
 };
 

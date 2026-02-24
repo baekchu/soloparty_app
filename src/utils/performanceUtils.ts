@@ -330,13 +330,28 @@ function deepEqual(a: any, b: any): boolean {
   if (typeof a !== typeof b) return false;
   if (typeof a !== 'object' || a === null || b === null) return false;
   
+  // 배열과 객체를 구분 (배열 ↔ 유사 객체 혼동 방지)
+  const aIsArray = Array.isArray(a);
+  const bIsArray = Array.isArray(b);
+  if (aIsArray !== bIsArray) return false;
+  
+  if (aIsArray) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  
   const keysA = Object.keys(a);
   const keysB = Object.keys(b);
   
   if (keysA.length !== keysB.length) return false;
   
+  // O(n) Set 기반 검색 (기존 includes는 O(n²))
+  const keysBSet = new Set(keysB);
   for (const key of keysA) {
-    if (!keysB.includes(key)) return false;
+    if (!keysBSet.has(key)) return false;
     if (!deepEqual(a[key], b[key])) return false;
   }
   

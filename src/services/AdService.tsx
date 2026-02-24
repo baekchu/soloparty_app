@@ -135,7 +135,12 @@ const generateSecureAdToken = async (): Promise<string> => {
     const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
     return `ad_${Date.now()}_${hex}`;
   } catch {
-    return `ad_${Date.now()}_${Math.random().toString(36).slice(2, 18)}`;
+    // Crypto 실패 시에도 최대한 예측 불가능한 토큰 생성
+    const ts = Date.now().toString(36);
+    const arr = new Uint8Array(8);
+    for (let i = 0; i < arr.length; i++) arr[i] = (Date.now() * (i + 1) + performance.now() * 1000) & 0xff;
+    const hex = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `ad_${ts}_${hex}`;
   }
 };
 
@@ -183,7 +188,16 @@ class AdVerificationStore {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          this.records = parsed.slice(0, this.MAX_RECORDS);
+          // 레코드 타입 검증: 손상된 데이터 필터링
+          this.records = parsed
+            .filter((r: unknown): r is AdVerificationRecord =>
+              r !== null && typeof r === 'object' &&
+              typeof (r as any).token === 'string' &&
+              typeof (r as any).timestamp === 'number' &&
+              typeof (r as any).verified === 'boolean' &&
+              ['rewarded', 'interstitial', 'appOpen'].includes((r as any).type)
+            )
+            .slice(0, this.MAX_RECORDS);
         }
       }
     } catch { /* 무시 */ }
@@ -346,15 +360,23 @@ export const useInterstitialAd = () => {
 export const useBannerAd = () => {
   const isEnabled = useMemo(() => !AD_CONFIG.disableAll && AD_CONFIG.phase >= 1, []);
   const [isVisible, setIsVisible] = useState(isEnabled);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // 컴포넌트 언마운트 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
   
   const showBanner = useCallback(() => { if (isEnabled) setIsVisible(true); }, [isEnabled]);
   const hideBanner = useCallback(() => setIsVisible(false), []);
   
   const onError = useCallback(() => {
     setIsVisible(false);
-    // 30초 후 재시도 (타이머 누수 방지: 컴포넌트 언마운트 시 cleanup)
-    const timer = setTimeout(() => { if (isEnabled) setIsVisible(true); }, 30_000);
-    return () => clearTimeout(timer);
+    // 30초 후 재시도 (타이머 누수 방지: ref로 관리)
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = setTimeout(() => { if (isEnabled) setIsVisible(true); }, 30_000);
   }, [isEnabled]);
   
   return {
@@ -390,6 +412,76 @@ export const useAppOpenAd = () => {
     
     return () => subscription?.remove();
   }, []);
+};
+
+// ==================== Hook: 공유 후 스킵 가능 전면 광고 ====================
+/**
+ * 앱 공유 완료 후 15초 뒤 건너뛸 수 있는 동영상 전면 광고
+ * - 15초 카운트다운 후 "건너뛰기" 버튼 활성화
+ * - 공유 성공 시에만 표시
+ */
+export const useShareInterstitialAd = () => {
+  const [isShowing, setIsShowing] = useState(false);
+  const [skipCountdown, setSkipCountdown] = useState(15);
+  const [canSkip, setCanSkip] = useState(false);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearCountdown = useCallback(() => {
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+  }, []);
+
+  const showAfterShare = useCallback(async (): Promise<void> => {
+    // 중복 차단 (10초 이내 재표시 방지)
+    if (AdVerificationStore.isDuplicate('interstitial', 10_000)) return;
+    await AdVerificationStore.record('interstitial');
+
+    // 기존 카운트다운 인터벌 정리 (누수 방지)
+    clearCountdown();
+    
+    setIsShowing(true);
+    setSkipCountdown(15);
+    setCanSkip(false);
+
+    // 15초 카운트다운
+    let remaining = 15;
+    countdownRef.current = setInterval(() => {
+      remaining -= 1;
+      setSkipCountdown(remaining);
+      if (remaining <= 0) {
+        setCanSkip(true);
+        if (countdownRef.current) {
+          clearInterval(countdownRef.current);
+          countdownRef.current = null;
+        }
+      }
+    }, 1000);
+
+    // === 실제 SDK 연동 시 이 주석을 해제하세요 ===
+    // try {
+    //   const { InterstitialAd, AdEventType } = require('react-native-google-mobile-ads');
+    //   const ad = InterstitialAd.createForAdRequest(getAdUnitId('interstitial'));
+    //   ad.addAdEventListener(AdEventType.CLOSED, () => { dismiss(); });
+    //   ad.load();
+    //   ad.show();
+    // } catch { /* SDK 미연동 시 자체 오버레이 사용 */ }
+  }, [clearCountdown]);
+
+  const dismiss = useCallback(() => {
+    clearCountdown();
+    setIsShowing(false);
+    setSkipCountdown(15);
+    setCanSkip(false);
+  }, [clearCountdown]);
+
+  // 언마운트 시 타이머 정리
+  useEffect(() => {
+    return () => { clearCountdown(); };
+  }, [clearCountdown]);
+
+  return { isShowing, skipCountdown, canSkip, showAfterShare, dismiss };
 };
 
 // ==================== 광고 관리자 (글로벌) ====================

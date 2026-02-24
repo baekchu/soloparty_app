@@ -62,7 +62,9 @@ export const useNotifications = () => {
     return () => { mounted = false; };
   }, []);
 
-  // 알림 활성화/비활성화
+  // 알림 활성화/비활성화 (함수형 updater로 stale closure 방지)
+  // 참고: toggleNotificationsService가 내부적으로도 설정을 저장하므로
+  //       여기서는 최신 prev 기반으로 덮어써서 일관성 보장
   const toggleNotifications = useCallback(async (enabled: boolean) => {
     try {
       const success = await toggleNotificationsService(enabled);
@@ -70,7 +72,10 @@ export const useNotifications = () => {
       if (success) {
         setSettings(prev => {
           const newSettings = { ...prev, enabled };
-          saveNotificationSettings(newSettings);
+          // 서비스가 이미 저장했지만, prev 기반 최신 상태도 반영
+          saveNotificationSettings(newSettings).catch(() => {
+            secureLog.error('알림 설정 저장 실패');
+          });
           return newSettings;
         });
         return true;
@@ -83,23 +88,27 @@ export const useNotifications = () => {
     }
   }, []);
 
-  // 새 일정 알림 토글 (async 불필요 - 상태 업데이트만 수행)
+  // 새 일정 알림 토글 (함수형 updater로 stale closure 방지)
   const toggleNewEventAlerts = useCallback((enabled: boolean) => {
-    const newSettings = { ...settings, newEventAlerts: enabled };
-    setSettings(newSettings);
-    saveNotificationSettings(newSettings).catch(() => {
-      secureLog.error('새 일정 알림 설정 저장 실패');
+    setSettings(prev => {
+      const newSettings = { ...prev, newEventAlerts: enabled };
+      saveNotificationSettings(newSettings).catch(() => {
+        secureLog.error('새 일정 알림 설정 저장 실패');
+      });
+      return newSettings;
     });
-  }, [settings]);
+  }, []);
 
-  // 일정 리마인더 토글 (async 불필요)
+  // 일정 리마인더 토글 (함수형 updater로 stale closure 방지)
   const toggleEventReminders = useCallback((enabled: boolean) => {
-    const newSettings = { ...settings, eventReminders: enabled };
-    setSettings(newSettings);
-    saveNotificationSettings(newSettings).catch(() => {
-      secureLog.error('리마인더 설정 저장 실패');
+    setSettings(prev => {
+      const newSettings = { ...prev, eventReminders: enabled };
+      saveNotificationSettings(newSettings).catch(() => {
+        secureLog.error('리마인더 설정 저장 실패');
+      });
+      return newSettings;
     });
-  }, [settings]);
+  }, []);
 
   // 권한 요청
   const requestPermission = useCallback(async () => {

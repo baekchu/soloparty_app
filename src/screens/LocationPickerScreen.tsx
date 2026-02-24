@@ -7,6 +7,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog } from '../utils/secureStorage';
+import { env } from '../config/env';
 
 interface LocationPickerScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'LocationPicker'>;
@@ -19,7 +20,7 @@ interface LocationPickerScreenProps {
 
 // ==================== 상수 정의 ====================
 const LOCATION_STATS_KEY = '@location_stats';
-const EVENTS_GIST_URL = 'https://gist.githubusercontent.com/baekchu/f805cac22604ff764916280710db490e/raw/gistfile1.txt';
+const EVENTS_GIST_URL = env.GIST_RAW_URL;
 const FETCH_TIMEOUT = 10000; // 10초 타임아웃
 const MAX_LOCATIONS = 100; // 최대 장소 수 제한
 
@@ -105,9 +106,13 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
     return () => subscription?.remove();
   }, []);
 
-  // 장소 데이터 로드
+  // 장소 데이터 로드 (언마운트 시 abort)
+  const unmountControllerRef = useRef<AbortController | null>(null);
   useEffect(() => {
     loadLocationsFromGist();
+    return () => {
+      unmountControllerRef.current?.abort();
+    };
   }, []);
 
   // 필터링된 장소 목록 (메모이제이션)
@@ -137,6 +142,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   // ==================== 데이터 로드 함수 ====================
   const loadLocationsFromGist = useCallback(async () => {
     const controller = new AbortController();
+    unmountControllerRef.current = controller;
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
     
     try {
@@ -164,7 +170,6 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       try {
         const cleanText = text
           .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
-          .replace(/""\s*([,}])/g, '"$1')
           .replace(/[\n\r\t]/g, ' ')
           .replace(/\s+/g, ' ');
         data = JSON.parse(cleanText);

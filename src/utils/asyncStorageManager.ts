@@ -16,6 +16,7 @@ let initPromise: Promise<void> | null = null;
 let writeQueue: Array<[string, string]> = [];
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 const WRITE_BATCH_DELAY = 100; // 100ms 내의 쓰기는 배치로 처리
+const MAX_QUEUE_SIZE = 50; // 배치 큐 최대 크기 (메모리 폭탄 방지)
 
 /**
  * AsyncStorage 초기화 (앱 시작 시 한 번만 호출)
@@ -121,10 +122,19 @@ export const safeSetItem = async (key: string, value: string, immediate: boolean
       return true;
     }
     
-    // 배치 처리
-    writeQueue.push([key, value]);
+    // 배치 처리 (큐 크기 제한 + 동일 키 병합)
+    const existingIdx = writeQueue.findIndex(item => item[0] === key);
+    if (existingIdx >= 0) {
+      writeQueue[existingIdx] = [key, value]; // 동일 키: 최신 값으로 덮어쓰기
+    } else {
+      writeQueue.push([key, value]);
+    }
     
-    if (!writeTimer) {
+    if (writeQueue.length >= MAX_QUEUE_SIZE) {
+      // 큐가 가득 차면 즉시 플러시
+      if (writeTimer) { clearTimeout(writeTimer); writeTimer = null; }
+      await flushWriteQueue();
+    } else if (!writeTimer) {
       writeTimer = setTimeout(flushWriteQueue, WRITE_BATCH_DELAY);
     }
     

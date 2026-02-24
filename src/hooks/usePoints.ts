@@ -18,7 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Alert } from 'react-native';
+import { AppState, AppStateStatus } from 'react-native';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog, encryptData, decryptData } from '../utils/secureStorage';
 import PointsSecurityService, { 
@@ -32,6 +32,16 @@ const AD_REWARD_POINTS = 50; // 광고 1회 시청 보상
 const MAX_ADS_PER_PERIOD = 10; // 기간당 최대 광고 수
 const AD_RESET_PERIOD_MS = 6 * 60 * 60 * 1000; // 6시간 (밀리초)
 const AD_LIMIT_STORAGE_KEY = '@soloparty_ad_limit_v3';
+
+// ==================== 인스턴스 간 상태 동기화 ====================
+// 다중 usePoints() 인스턴스 간 balance/adCount 등이 동기화되도록 리스너 패턴
+type PointsListener = () => void;
+const _pointsListeners = new Set<PointsListener>();
+const _notifyPointsListeners = () => { _pointsListeners.forEach(fn => fn()); };
+// 모듈 레벨 공유 mutex (인스턴스별 별도 mutex 방지)
+let _pointsMutexLocked = false;
+// AutoSync 참조 카운터 (첫 인스턴스 시작, 마지막 인스턴스 중지)
+let _syncRefCount = 0;
 
 // ==================== 타입 정의 ====================
 interface PointHistory {
@@ -66,11 +76,37 @@ const loadAdLimitData = async (): Promise<AdLimitData> => {
         };
       }
       
+      // 보안: decryptData는 실패 시 throw 대신 빈 문자열을 반환할 수 있음
+      if (!data) {
+        secureLog.warn('⚠️ 광고 제한 데이터 복호화 결과 비어있음 - 초기화');
+        return {
+          count: 0,
+          resetTimestamp: Date.now() + AD_RESET_PERIOD_MS,
+          lastWatchTimestamp: 0,
+        };
+      }
+      
       const parsed: AdLimitData = JSON.parse(data);
       const now = Date.now();
       
+      // 보안: 필드 타입/범위 검증 (조작된 데이터 방지)
+      const count = typeof parsed.count === 'number' && Number.isFinite(parsed.count)
+        ? Math.max(0, Math.min(Math.floor(parsed.count), MAX_ADS_PER_PERIOD))
+        : 0;
+      const resetTimestamp = typeof parsed.resetTimestamp === 'number' && Number.isFinite(parsed.resetTimestamp)
+        ? parsed.resetTimestamp
+        : now + AD_RESET_PERIOD_MS;
+      const lastWatchTimestamp = typeof parsed.lastWatchTimestamp === 'number' && Number.isFinite(parsed.lastWatchTimestamp)
+        ? Math.max(0, Math.min(parsed.lastWatchTimestamp, now))
+        : 0;
+      
+      // resetTimestamp가 비정상적으로 먼 미래인 경우 방지 (최대 2배 리셋 기간)
+      const safeResetTimestamp = resetTimestamp > now + AD_RESET_PERIOD_MS * 2
+        ? now + AD_RESET_PERIOD_MS
+        : resetTimestamp;
+      
       // 리셋 시간이 지났으면 초기화
-      if (now >= parsed.resetTimestamp) {
+      if (now >= safeResetTimestamp) {
         return {
           count: 0,
           resetTimestamp: now + AD_RESET_PERIOD_MS,
@@ -78,7 +114,11 @@ const loadAdLimitData = async (): Promise<AdLimitData> => {
         };
       }
       
-      return parsed;
+      return {
+        count,
+        resetTimestamp: safeResetTimestamp,
+        lastWatchTimestamp,
+      };
     }
   } catch {
     // 로드 실패
@@ -124,16 +164,73 @@ export const usePoints = () => {
   const balanceRef = useRef(balance);
   const secureDataRef = useRef(secureData);
   
-  // ref를 항상 최신 상태로 동기화
-  useEffect(() => { balanceRef.current = balance; }, [balance]);
-  useEffect(() => { secureDataRef.current = secureData; }, [secureData]);
+  // 광고 상태 ref (watchAdForPoints stale closure 방지)
+  const adCountRef = useRef(adCount);
+  const adResetTimeRef = useRef(adResetTime);
+  const lastAdTimestampRef = useRef(lastAdTimestamp);
+  
+  // ref를 항상 최신 상태로 동기화 (단일 effect로 통합 — 렌더 사이클 절약)
+  useEffect(() => {
+    balanceRef.current = balance;
+    secureDataRef.current = secureData;
+    adCountRef.current = adCount;
+    adResetTimeRef.current = adResetTime;
+    lastAdTimestampRef.current = lastAdTimestamp;
+  }, [balance, secureData, adCount, adResetTime, lastAdTimestamp]);
+
+  // 포인트 조작 mutex (모듈 레벨 공유 — 다중 인스턴스 동시 실행 방지)
+  const withPointsLock = useCallback(async <T>(fn: () => Promise<T>): Promise<T | null> => {
+    if (_pointsMutexLocked) return null;
+    _pointsMutexLocked = true;
+    try {
+      return await fn();
+    } finally {
+      _pointsMutexLocked = false;
+    }
+  }, []);
+
+  // 다중 인스턴스 동기화: 다른 인스턴스의 상태 변경 수신
+  useEffect(() => {
+    const listener: PointsListener = async () => {
+      if (!isMountedRef.current) return;
+      try {
+        // 스토리지에서 최신 상태 다시 로드
+        const freshData = await PointsSecurityService.loadSecurePointsData();
+        if (freshData && isMountedRef.current) {
+          setBalance(freshData.balance);
+          setSecureData(freshData);
+        }
+        const freshAdLimit = await loadAdLimitData();
+        if (isMountedRef.current) {
+          setAdCount(freshAdLimit.count);
+          setAdResetTime(freshAdLimit.resetTimestamp);
+          setLastAdTimestamp(freshAdLimit.lastWatchTimestamp);
+        }
+      } catch { /* 무시 */ }
+    };
+    _pointsListeners.add(listener);
+    return () => { _pointsListeners.delete(listener); };
+  }, []);
+
+  // 광고 간격 체크를 위한 tick (5초 간격 자동 갱신)
+  const [adIntervalTick, setAdIntervalTick] = useState(0);
+  
+  useEffect(() => {
+    // lastAdTimestamp 변경 후 MIN_AD_INTERVAL_MS 뒤에 canWatchAd 재평가
+    if (lastAdTimestamp > 0) {
+      const timer = setTimeout(() => {
+        setAdIntervalTick(t => t + 1);
+      }, 5500); // 5.5초 (5초 간격 + 여유)
+      return () => clearTimeout(timer);
+    }
+  }, [lastAdTimestamp]);
 
   // 광고 시청 가능 여부
   const canWatchAd = useMemo(() => {
     const now = Date.now();
     const MIN_AD_INTERVAL_MS = 5000;
     return adCount < MAX_ADS_PER_PERIOD && (now - lastAdTimestamp) >= MIN_AD_INTERVAL_MS;
-  }, [adCount, lastAdTimestamp]);
+  }, [adCount, lastAdTimestamp, adIntervalTick]);
   
   // 남은 광고 수
   const remainingAds = useMemo(() => Math.max(0, MAX_ADS_PER_PERIOD - adCount), [adCount]);
@@ -276,212 +373,228 @@ export const usePoints = () => {
 
   // ==================== 포인트 추가 ====================
   const addPoints = useCallback(async (amount: number, reason: string): Promise<boolean> => {
-    const currentBalance = balanceRef.current;
-    const currentSecureData = secureDataRef.current;
-    if (!currentSecureData || amount <= 0) return false;
-    
-    try {
-      const newBalance = currentBalance + amount;
+    const result = await withPointsLock(async () => {
+      const currentBalance = balanceRef.current;
+      const currentSecureData = secureDataRef.current;
+      if (!currentSecureData || amount <= 0) return false;
       
-      // 포인트 변동 검증
-      if (!PointsSecurityService.validatePointChange(currentBalance, newBalance, amount)) {
-        secureLog.warn('⚠️ 포인트 변동 검증 실패');
+      try {
+        const newBalance = currentBalance + amount;
+        
+        // 포인트 변동 검증
+        if (!PointsSecurityService.validatePointChange(currentBalance, newBalance, amount)) {
+          secureLog.warn('⚠️ 포인트 변동 검증 실패');
+          return false;
+        }
+        
+        // 트랜잭션 기록
+        const tx = await PointsSecurityService.addTransaction('earn', amount, newBalance, { reason });
+        if (!tx) {
+          return false;
+        }
+        
+        // 새 데이터 저장
+        const newData: Omit<SecurePointsData, 'integrity_hash' | 'updated_at'> = {
+          ...currentSecureData,
+          balance: newBalance,
+          total_earned: currentSecureData.total_earned + amount,
+        };
+        
+        const saved = await PointsSecurityService.saveSecurePointsData(newData);
+        if (!saved) return false;
+        
+        // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
+        const freshData = await PointsSecurityService.loadSecurePointsData();
+        
+        if (isMountedRef.current) {
+          setBalance(newBalance);
+          if (freshData) setSecureData(freshData);
+          setHistory(prev => [{
+            id: tx.id,
+            amount,
+            reason,
+            timestamp: tx.timestamp,
+            tx_hash: tx.hash,
+          }, ...prev.slice(0, 99)]);
+        }
+        
+        // 다른 usePoints 인스턴스에 상태 변경 알림
+        _notifyPointsListeners();
+        return true;
+      } catch {
         return false;
       }
-      
-      // 트랜잭션 기록
-      const tx = await PointsSecurityService.addTransaction('earn', amount, newBalance, { reason });
-      if (!tx) {
-        return false;
-      }
-      
-      // 새 데이터 저장
-      const newData: Omit<SecurePointsData, 'integrity_hash' | 'updated_at'> = {
-        ...currentSecureData,
-        balance: newBalance,
-        total_earned: currentSecureData.total_earned + amount,
-      };
-      
-      const saved = await PointsSecurityService.saveSecurePointsData(newData);
-      if (!saved) return false;
-      
-      // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
-      const freshData = await PointsSecurityService.loadSecurePointsData();
-      
-      if (isMountedRef.current) {
-        setBalance(newBalance);
-        if (freshData) setSecureData(freshData);
-        setHistory(prev => [{
-          id: tx.id,
-          amount,
-          reason,
-          timestamp: tx.timestamp,
-          tx_hash: tx.hash,
-        }, ...prev.slice(0, 99)]);
-      }
-      
-      return true;
-    } catch {
-      return false;
-    }
-  }, []); // ref 사용으로 deps 불필요
+    });
+    return result ?? false;
+  }, []); // ref + mutex 사용으로 deps 불필요
 
   // ==================== 광고 시청 보상 ====================
   const watchAdForPoints = useCallback(async (): Promise<{ success: boolean; message: string }> => {
-    const currentSecureData = secureDataRef.current;
-    if (!currentSecureData) {
-      return { success: false, message: '데이터 로드 중입니다.' };
-    }
-    
-    try {
-      const now = Date.now();
-      
-      // 1. 광고 시청 패턴 검증
-      const validation = await PointsSecurityService.validateAdWatchPattern(lastAdTimestamp);
-      if (!validation.allowed) {
-        return {
-          success: false,
-          message: validation.reason || '잠시 후 다시 시도해주세요.',
-        };
+    const result = await withPointsLock(async () => {
+      const currentSecureData = secureDataRef.current;
+      if (!currentSecureData) {
+        return { success: false, message: '데이터 로드 중입니다.' };
       }
       
-      // 2. 리셋 시간 체크
-      let currentAdCount = adCount;
-      let currentResetTime = adResetTime;
-      
-      if (now >= adResetTime) {
-        currentAdCount = 0;
-        currentResetTime = now + AD_RESET_PERIOD_MS;
-        setAdCount(0);
-        setAdResetTime(currentResetTime);
-      }
-      
-      // 3. 광고 제한 체크
-      if (currentAdCount >= MAX_ADS_PER_PERIOD) {
-        const hoursLeft = Math.ceil(timeUntilReset / (60 * 60 * 1000));
-        const minutesLeft = Math.ceil((timeUntilReset % (60 * 60 * 1000)) / (60 * 1000));
+      try {
+        const now = Date.now();
         
-        return {
-          success: false,
-          message: `🚫 광고 시청 한도 초과\n\n6시간당 최대 ${MAX_ADS_PER_PERIOD}개까지 시청 가능합니다.\n\n⏰ 리셋까지: ${hoursLeft > 0 ? `${hoursLeft}시간 ` : ''}${minutesLeft}분`,
+        // 1. 광고 시청 패턴 검증 (ref 기반)
+        const validation = await PointsSecurityService.validateAdWatchPattern(lastAdTimestampRef.current);
+        if (!validation.allowed) {
+          return {
+            success: false,
+            message: validation.reason || '잠시 후 다시 시도해주세요.',
+          };
+        }
+        
+        // 2. 리셋 시간 체크 (ref 기반)
+        let currentAdCount = adCountRef.current;
+        let currentResetTime = adResetTimeRef.current;
+        
+        if (now >= currentResetTime) {
+          currentAdCount = 0;
+          currentResetTime = now + AD_RESET_PERIOD_MS;
+          setAdCount(0);
+          setAdResetTime(currentResetTime);
+        }
+        
+        // 3. 광고 제한 체크
+        if (currentAdCount >= MAX_ADS_PER_PERIOD) {
+          const remaining = Math.max(0, currentResetTime - now);
+          const hoursLeft = Math.floor(remaining / (60 * 60 * 1000));
+          const minutesLeft = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
+          
+          return {
+            success: false,
+            message: `🚫 광고 시청 한도 초과\n\n6시간당 최대 ${MAX_ADS_PER_PERIOD}개까지 시청 가능합니다.\n\n⏰ 리셋까지: ${hoursLeft > 0 ? `${hoursLeft}시간 ` : ''}${minutesLeft}분`,
+          };
+        }
+        
+        // 4. 포인트 계산
+        const currentBalance = balanceRef.current;
+        const newBalance = currentBalance + AD_REWARD_POINTS;
+        
+        // 5. 포인트 변동 검증
+        if (!PointsSecurityService.validatePointChange(currentBalance, newBalance, AD_REWARD_POINTS)) {
+          return { success: false, message: '포인트 처리 중 오류가 발생했습니다.' };
+        }
+        
+        // 6. 트랜잭션 기록
+        const tx = await PointsSecurityService.addTransaction('ad_watch', AD_REWARD_POINTS, newBalance, {
+          ad_index: currentAdCount + 1,
+          reset_time: currentResetTime,
+        });
+        
+        if (!tx) {
+          return { success: false, message: '트랜잭션 기록 실패' };
+        }
+        
+        // 7. 광고 시청 기록
+        await PointsSecurityService.recordAdWatch(AD_REWARD_POINTS, tx.hash);
+        
+        // 8. 새 데이터 저장
+        const latestSecureData = secureDataRef.current ?? currentSecureData;
+        const newAdCount = currentAdCount + 1;
+        const newData: Omit<SecurePointsData, 'integrity_hash' | 'updated_at'> = {
+          ...latestSecureData,
+          balance: newBalance,
+          total_earned: latestSecureData.total_earned + AD_REWARD_POINTS,
+          ad_watches_total: latestSecureData.ad_watches_total + 1,
+          ad_watches_today: latestSecureData.ad_watches_today + 1,
+          last_ad_timestamp: now,
         };
+        
+        await Promise.all([
+          PointsSecurityService.saveSecurePointsData(newData),
+          saveAdLimitData({
+            count: newAdCount,
+            resetTimestamp: currentResetTime,
+            lastWatchTimestamp: now,
+          }),
+        ]);
+        
+        // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
+        const freshData = await PointsSecurityService.loadSecurePointsData();
+        
+        if (isMountedRef.current) {
+          setBalance(newBalance);
+          if (freshData) setSecureData(freshData);
+          setAdCount(newAdCount);
+          setAdResetTime(currentResetTime);
+          setLastAdTimestamp(now);
+          setHistory(prev => [{
+            id: tx.id,
+            amount: AD_REWARD_POINTS,
+            reason: '📺 광고 시청 보상',
+            timestamp: now,
+            tx_hash: tx.hash,
+          }, ...prev.slice(0, 99)]);
+        }
+        
+        const remaining = MAX_ADS_PER_PERIOD - newAdCount;
+        
+        // 다른 usePoints 인스턴스에 상태 변경 알림
+        _notifyPointsListeners();
+        return {
+          success: true,
+          message: `💰 ${AD_REWARD_POINTS}P 적립 완료!\n\n현재 잔액: ${newBalance.toLocaleString()}P\n남은 광고: ${remaining}개`,
+        };
+      } catch {
+        return { success: false, message: '포인트 적립에 실패했습니다.' };
       }
-      
-      // 4. 포인트 계산
-      const currentBalance = balanceRef.current;
-      const newBalance = currentBalance + AD_REWARD_POINTS;
-      
-      // 5. 포인트 변동 검증
-      if (!PointsSecurityService.validatePointChange(currentBalance, newBalance, AD_REWARD_POINTS)) {
-        return { success: false, message: '포인트 처리 중 오류가 발생했습니다.' };
-      }
-      
-      // 6. 트랜잭션 기록
-      const tx = await PointsSecurityService.addTransaction('ad_watch', AD_REWARD_POINTS, newBalance, {
-        ad_index: currentAdCount + 1,
-        reset_time: currentResetTime,
-      });
-      
-      if (!tx) {
-        return { success: false, message: '트랜잭션 기록 실패' };
-      }
-      
-      // 7. 광고 시청 기록
-      await PointsSecurityService.recordAdWatch(AD_REWARD_POINTS, tx.hash);
-      
-      // 8. 새 데이터 저장
-      const currentSecureData = secureDataRef.current!;
-      const newAdCount = currentAdCount + 1;
-      const newData: Omit<SecurePointsData, 'integrity_hash' | 'updated_at'> = {
-        ...currentSecureData,
-        balance: newBalance,
-        total_earned: currentSecureData.total_earned + AD_REWARD_POINTS,
-        ad_watches_total: currentSecureData.ad_watches_total + 1,
-        ad_watches_today: currentSecureData.ad_watches_today + 1,
-        last_ad_timestamp: now,
-      };
-      
-      await Promise.all([
-        PointsSecurityService.saveSecurePointsData(newData),
-        saveAdLimitData({
-          count: newAdCount,
-          resetTimestamp: currentResetTime,
-          lastWatchTimestamp: now,
-        }),
-      ]);
-      
-      // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
-      const freshData = await PointsSecurityService.loadSecurePointsData();
-      
-      if (isMountedRef.current) {
-        setBalance(newBalance);
-        if (freshData) setSecureData(freshData);
-        setAdCount(newAdCount);
-        setAdResetTime(currentResetTime);
-        setLastAdTimestamp(now);
-        setHistory(prev => [{
-          id: tx.id,
-          amount: AD_REWARD_POINTS,
-          reason: '📺 광고 시청 보상',
-          timestamp: now,
-          tx_hash: tx.hash,
-        }, ...prev.slice(0, 99)]);
-      }
-      
-      const remaining = MAX_ADS_PER_PERIOD - newAdCount;
-      
-      return {
-        success: true,
-        message: `💰 ${AD_REWARD_POINTS}P 적립 완료!\n\n현재 잔액: ${newBalance.toLocaleString()}P\n남은 광고: ${remaining}개`,
-      };
-    } catch {
-      return { success: false, message: '포인트 적립에 실패했습니다.' };
-    }
-  }, [adCount, adResetTime, lastAdTimestamp, timeUntilReset]); // ref 사용으로 balance/secureData deps 제거
+    });
+    return result ?? { success: false, message: '이미 처리 중입니다. 잠시 후 다시 시도해주세요.' };
+  }, []); // ref + mutex 사용으로 모든 state deps 제거
 
   // ==================== 포인트 사용 ====================
   const spendPoints = useCallback(async (amount: number, reason: string): Promise<boolean> => {
-    const currentBalance = balanceRef.current;
-    const currentSecureData = secureDataRef.current;
-    if (!currentSecureData || amount <= 0 || currentBalance < amount) return false;
-    
-    try {
-      const newBalance = currentBalance - amount;
+    const result = await withPointsLock(async () => {
+      const currentBalance = balanceRef.current;
+      const currentSecureData = secureDataRef.current;
+      if (!currentSecureData || amount <= 0 || currentBalance < amount) return false;
       
-      // 트랜잭션 기록
-      const tx = await PointsSecurityService.addTransaction('spend', -amount, newBalance, { reason });
-      if (!tx) return false;
+      try {
+        const newBalance = currentBalance - amount;
+        
+        // 트랜잭션 기록
+        const tx = await PointsSecurityService.addTransaction('spend', -amount, newBalance, { reason });
+        if (!tx) return false;
+        
+        // 새 데이터 저장
+        const newData: Omit<SecurePointsData, 'integrity_hash' | 'updated_at'> = {
+          ...currentSecureData,
+          balance: newBalance,
+          total_spent: currentSecureData.total_spent + amount,
+        };
       
-      // 새 데이터 저장
-      const newData: Omit<SecurePointsData, 'integrity_hash' | 'updated_at'> = {
-        ...currentSecureData,
-        balance: newBalance,
-        total_spent: currentSecureData.total_spent + amount,
-      };
-      
-      const saved = await PointsSecurityService.saveSecurePointsData(newData);
-      if (!saved) return false;
-      
-      // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
-      const freshData = await PointsSecurityService.loadSecurePointsData();
-      
-      if (isMountedRef.current) {
-        setBalance(newBalance);
-        if (freshData) setSecureData(freshData);
-        setHistory(prev => [{
-          id: tx.id,
-          amount: -amount,
-          reason,
-          timestamp: tx.timestamp,
-          tx_hash: tx.hash,
-        }, ...prev.slice(0, 99)]);
+        const saved = await PointsSecurityService.saveSecurePointsData(newData);
+        if (!saved) return false;
+        
+        // 저장 후 최신 데이터 로드 (무결성 해시 동기화)
+        const freshData = await PointsSecurityService.loadSecurePointsData();
+        
+        if (isMountedRef.current) {
+          setBalance(newBalance);
+          if (freshData) setSecureData(freshData);
+          setHistory(prev => [{
+            id: tx.id,
+            amount: -amount,
+            reason,
+            timestamp: tx.timestamp,
+            tx_hash: tx.hash,
+          }, ...prev.slice(0, 99)]);
+        }
+        
+        // 다른 usePoints 인스턴스에 상태 변경 알림
+        _notifyPointsListeners();
+        return true;
+      } catch {
+        return false;
       }
-      
-      return true;
-    } catch {
-      return false;
-    }
-  }, []); // ref 사용으로 deps 불필요
+    });
+    return result ?? false;
+  }, []); // ref + mutex 사용으로 deps 불필요
 
   // ==================== 포인트 자동 동기화 ====================
   // 포인트 변경 시 자동 백업
@@ -491,10 +604,29 @@ export const usePoints = () => {
     }
   }, [balance, isLoading]);
 
-  // 앱 시작 시 자동 동기화 시작
+  // 앱 시작 시 자동 동기화 시작 + AppState 백그라운드 저장
+  // 참조 카운터 패턴: 첫 인스턴스만 시작, 마지막 인스턴스만 중지
   useEffect(() => {
-    PointsAutoSyncService.startAutoSync();
-    return () => PointsAutoSyncService.stopAutoSync();
+    _syncRefCount++;
+    if (_syncRefCount === 1) {
+      PointsAutoSyncService.startAutoSync();
+    }
+
+    // AppState: 앱이 백그라운드로 갈 때 즉시 백업
+    const appStateSub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        PointsAutoSyncService.autoBackup().catch(() => {});
+      }
+    });
+
+    return () => {
+      _syncRefCount--;
+      if (_syncRefCount <= 0) {
+        _syncRefCount = 0;
+        PointsAutoSyncService.stopAutoSync();
+      }
+      appStateSub.remove();
+    };
   }, []);
 
   // ==================== 광고 제한 리셋 (DEV 전용) ====================
@@ -540,6 +672,7 @@ export const usePoints = () => {
     remainingAds,
     canWatchAd,
     timeUntilReset,
+    adResetTime,
     maxAds: MAX_ADS_PER_PERIOD,
     adRewardPoints: AD_REWARD_POINTS,
     

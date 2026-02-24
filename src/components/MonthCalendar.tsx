@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useState, useEffect } from 'react';
+import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Dimensions, StyleSheet } from 'react-native';
 import { EventsByDate, Event } from '../types';
 import EventColorManager from '../utils/eventColorManager';
@@ -65,6 +65,10 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     return { cellWidth, cellHeight };
   });
 
+  // dimensions를 ref로도 유지 (renderDay deps에서 제거 → 불필요한 42셀 재생성 방지)
+  const dimensionsRef = useRef(dimensions);
+  dimensionsRef.current = dimensions;
+
   React.useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       const { width, height } = window;
@@ -92,17 +96,32 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const daysInMonth = useMemo(() => getDaysInMonth(year, month), [year, month]);
   const firstDay = useMemo(() => getFirstDayOfMonth(year, month), [year, month]);
   
-  // 오늘 날짜 계산 (매 렌더링 시 갱신 — 자정 이후에도 정확하게 표시)
-  const todayString = (() => {
+  // 오늘 날짜 (자정 넘김 감지  — 앱을 열어둔 채 자정을 넘겨도 정확한 "오늘" 표시)
+  const getTodayStr = () => {
     const today = new Date();
     return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  })();
+  };
+  const [todayString, setTodayString] = useState(getTodayStr);
+  
+  useEffect(() => {
+    // 자정까지 남은 시간 계산
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const msUntilMidnight = midnight.getTime() - now.getTime();
+    
+    const timer = setTimeout(() => {
+      setTodayString(getTodayStr());
+    }, msUntilMidnight + 500); // 자정 직후 0.5초 후 갱신
+    
+    return () => clearTimeout(timer);
+  }, [todayString]); // todayString 변경 시 다음 자정 타이머 재설정
 
   const renderDay = useCallback((day: number | null, weekIndex: number, dayIndex: number, isOtherMonth: boolean = false) => {
+    const dim = dimensionsRef.current;
     if (!day || isOtherMonth) {
       return <View key={`empty-${weekIndex}-${dayIndex}`} style={{ 
-        width: dimensions.cellWidth, 
-        height: dimensions.cellHeight,
+        width: dim.cellWidth, 
+        height: dim.cellHeight,
         backgroundColor: 'transparent',
       }} />;
     }
@@ -117,20 +136,20 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
       <TouchableOpacity
         key={`${weekIndex}-${dayIndex}`}
         style={{ 
-          width: dimensions.cellWidth, 
-          height: dimensions.cellHeight,
+          width: dim.cellWidth, 
+          height: dim.cellHeight,
           borderBottomWidth: 0,
           backgroundColor: 'transparent',
         }}
         onPress={() => onDatePress?.(dateString)}
         activeOpacity={0.7}
       >
-        <View style={{ padding: dimensions.cellWidth < 50 ? 1 : 2, height: '100%', flexDirection: 'column' }}>
+        <View style={{ padding: dim.cellWidth < 50 ? 1 : 2, height: '100%', flexDirection: 'column' }}>
           {/* 날짜 숫자 - 상단 중앙 */}
           <View style={{ alignItems: 'center', marginBottom: 6, marginTop: 3 }}>
             <Text 
               style={{
-                fontSize: dimensions.cellWidth < 50 ? 12 : 15,
+                fontSize: dim.cellWidth < 50 ? 12 : 15,
                 fontWeight: isToday ? '800' : '500',
                 color: isToday 
                   ? (isDark ? '#a78bfa' : '#ec4899')
@@ -157,7 +176,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 idx,
                 isDark
               );
-              const eventHeight = Math.max(Math.min(dimensions.cellHeight / 6, 14), 11); // 셀 높이에 비례, 최소 11, 최대 14
+              const eventHeight = Math.max(Math.min(dim.cellHeight / 6, 14), 11); // 셀 높이에 비례, 최소 11, 최대 14
               return (
                 <View
                   key={event.id}
@@ -172,7 +191,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                   <Text 
                     style={{ 
                       color: isDark ? '#ffffff' : '#374151',
-                      fontSize: dimensions.cellWidth < 50 ? 7 : Math.min(8, eventHeight * 0.6),
+                      fontSize: dim.cellWidth < 50 ? 7 : Math.min(8, eventHeight * 0.6),
                       fontWeight: '700',
                       letterSpacing: -0.2,
                     }}
@@ -192,7 +211,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 alignSelf: 'flex-start',
                 marginTop: 1,
               }}>
-                <Text style={{ fontSize: dimensions.cellWidth < 50 ? 7 : 8, fontWeight: '800', color: isDark ? '#d1d5db' : '#4b5563' }}>
+                <Text style={{ fontSize: dim.cellWidth < 50 ? 7 : 8, fontWeight: '800', color: isDark ? '#d1d5db' : '#4b5563' }}>
                   +{dayEvents.length - 3}
                 </Text>
               </View>
@@ -201,7 +220,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
         </View>
       </TouchableOpacity>
     );
-  }, [dimensions, filteredEvents, isDark, todayString, year, month, onDatePress]);
+  }, [filteredEvents, isDark, todayString, year, month, onDatePress]);
 
   const renderWeeks = useCallback(() => {
     const weeks: Array<Array<{ day: number; isOtherMonth: boolean }>> = [];

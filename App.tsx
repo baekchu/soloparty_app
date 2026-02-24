@@ -99,6 +99,10 @@ function AppContent() {
       try {
         await initAsyncStorage();
         
+        // AsyncStorage 준비 후 EventColorManager 초기화
+        const EventColorManager = require('./src/utils/eventColorManager').default;
+        EventColorManager.initialize().catch(() => {});
+        
         // 광고 시스템 초기화 (백그라운드)
         AdManager.initialize().catch(() => {});
         
@@ -143,13 +147,21 @@ function AppContent() {
     // 짧은 지연 후 네비게이션 (UI 안정화)
     const timeoutId = setTimeout(() => {
       if (navigationRef.current) {
-        const mockEvent: Event = {
+        // 안전한 Event 객체: EventDetail에서 참조하는 모든 필드에 기본값 제공
+        // (불완전 객체 참조로 인한 크래시 방지)
+        const safeEvent: Event = {
           id: pendingDeepLink.eventId,
           title: '파티 정보 로딩 중...',
+          time: undefined,
+          location: undefined,
+          description: undefined,
+          link: undefined,
+          coordinates: undefined,
+          region: undefined,
         };
         
         navigationRef.current.navigate('EventDetail', {
-          event: mockEvent,
+          event: safeEvent,
           date: pendingDeepLink.date,
         });
         

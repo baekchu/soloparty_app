@@ -25,6 +25,8 @@ import {
 } from 'react-native';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { isTablet } from '../utils/responsive';
+import { useShareInterstitialAd } from '../services/AdService';
+import AdOverlay from './AdOverlay';
 
 const STORE_LINKS = {
   ios: 'https://apps.apple.com/us/app/%EC%86%94%EB%A1%9C%ED%8C%8C%ED%8B%B0/id6757147307',
@@ -60,8 +62,10 @@ const PointsModal = memo(({
   const canWatchAd = canWatchAdProp ?? remainingAds > 0;
   const [isProcessing, setIsProcessing] = useState(false);
   const [dailyShareCount, setDailyShareCount] = useState(0);
+  const shareStartTimeRef = React.useRef(0);
   const remainingShares = MAX_DAILY_SHARES - dailyShareCount;
   const canShare = remainingShares > 0;
+  const { isShowing: isAdShowing, skipCountdown, canSkip, showAfterShare, dismiss: dismissAd } = useShareInterstitialAd();
 
   // 일일 공유 횟수 로드
   useEffect(() => {
@@ -70,9 +74,13 @@ const PointsModal = memo(({
       try {
         const stored = await safeGetItem(SHARE_COUNT_KEY);
         if (stored) {
-          const { count, date } = JSON.parse(stored);
-          const today = new Date().toISOString().slice(0, 10);
-          setDailyShareCount(date === today ? count : 0);
+          const parsed = JSON.parse(stored);
+          // 타입 검증: 변조된 데이터 방어
+          if (typeof parsed.count === 'number' && parsed.count >= 0 &&
+              typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) {
+            const today = new Date().toISOString().slice(0, 10);
+            setDailyShareCount(parsed.date === today ? Math.min(parsed.count, MAX_DAILY_SHARES) : 0);
+          }
         }
       } catch { /* ignore */ }
     })();
@@ -122,17 +130,26 @@ const PointsModal = memo(({
       const storeLink = Platform.OS === 'ios' ? STORE_LINKS.ios : STORE_LINKS.android;
       const message = `🎉 솔로파티에서 소개팅 파티를 찾아보세요!\n\n솔로들을 위한 파티 일정을 한눈에 확인하고 참여할 수 있어요.\n\n지금 다운로드하세요 👇\n${storeLink}`;
 
+      shareStartTimeRef.current = Date.now();
       const result = await Share.share({
         message,
         title: '솔로파티 - 소개팅 파티 캘린더',
       });
 
       if (result.action === Share.sharedAction) {
-        // 공유 횟수 카운트 저장
+        // Android에서는 공유 다이얼로그를 열기만 해도 sharedAction 반환됨
+        // 최소 3초 이상 다이얼로그가 열려있었는지 확인하여 악용 방지
+        const shareElapsed = Date.now() - shareStartTimeRef.current;
+        if (Platform.OS === 'android' && shareElapsed < 3000) {
+          Alert.alert('📤 공유 확인', '공유가 완료되지 않은 것 같아요.\n실제로 공유해 주세요!', [{ text: '확인' }]);
+          return;
+        }
+
+        // 공유 횟수 카운트 저장 (경쟁 조건 방지: updater 외부에서 계산)
         const newCount = dailyShareCount + 1;
+        setDailyShareCount(newCount);
         const today = new Date().toISOString().slice(0, 10);
         await safeSetItem(SHARE_COUNT_KEY, JSON.stringify({ count: newCount, date: today }));
-        setDailyShareCount(newCount);
 
         if (onAddPoints) {
           const success = await onAddPoints(SHARE_REWARD_POINTS, '앱 공유 보상');
@@ -146,11 +163,14 @@ const PointsModal = memo(({
         } else {
           Alert.alert('📤 공유 완료', '친구에게 공유되었습니다!', [{ text: '확인' }]);
         }
+
+        // 공유 완료 후 광고 표시 (15초 후 건너뛰기 가능)
+        showAfterShare();
       }
     } catch {
       // 공유 취소 시 무시
     }
-  }, [canShare, dailyShareCount, onAddPoints]);
+  }, [canShare, onAddPoints, showAfterShare]);
 
   const handleWatchAd = useCallback(async () => {
     if (!canWatchAd) {
@@ -178,6 +198,7 @@ const PointsModal = memo(({
   }, [canWatchAd, maxDailyAds, onWatchAd]);
 
   return (
+    <>
     <Modal
       visible={visible}
       transparent={true}
@@ -359,6 +380,16 @@ const PointsModal = memo(({
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>
+
+    {/* 공유 후 광고 오버레이 (15초 후 건너뛰기 가능) */}
+    <AdOverlay
+      visible={isAdShowing}
+      isDark={isDark}
+      skipCountdown={skipCountdown}
+      canSkip={canSkip}
+      onDismiss={dismissAd}
+    />
+    </>
   );
 });
 
@@ -509,3 +540,4 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
+

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, memo } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ListRenderItemInfo } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { loadEvents } from '../utils/storage';
 import { Event } from '../types';
@@ -13,6 +13,7 @@ import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { MainTabParamList } from '../types';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { Colors, Radius, Shadows, Typography, Spacing } from '../utils/designSystem';
+import { parseLocalDate } from '../utils/sanitize';
 
 type EventListScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, 'EventList'>,
@@ -46,7 +47,7 @@ const EventCard = memo(({ item, isDark, onPress }: EventCardProps) => {
       <View style={[styles.eventAccent, { backgroundColor: isDark ? Colors.primary : Colors.secondary }]} />
       <View style={styles.eventContent}>
         <Text style={[styles.eventDate, { color: isDark ? Colors.primaryLight : Colors.secondary }]}>
-          {format(parseISO(item.date), 'yyyy년 M월 d일 (EEE)', { locale: ko })}
+          {format(parseLocalDate(item.date), 'yyyy년 M월 d일 (EEE)', { locale: ko })}
         </Text>
         <Text style={[styles.eventTitle, { color: c.text }]} numberOfLines={2}>
           {item.title}
@@ -105,17 +106,22 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
   );
 
   const loadAllEvents = useCallback(async () => {
-    const events = await loadEvents();
-    const eventList: EventWithDate[] = [];
+    try {
+      const events = await loadEvents();
+      const eventList: EventWithDate[] = [];
 
-    Object.keys(events).forEach(date => {
-      events[date].forEach(event => {
-        eventList.push({ ...event, date });
+      Object.keys(events).forEach(date => {
+        events[date].forEach(event => {
+          eventList.push({ ...event, date });
+        });
       });
-    });
 
-    eventList.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    setAllEvents(eventList);
+      eventList.sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime());
+      setAllEvents(eventList);
+    } catch {
+      // 로드 실패 시 빈 목록 유지
+      setAllEvents([]);
+    }
   }, []);
 
   const isDark = useMemo(() => theme === 'dark', [theme]);

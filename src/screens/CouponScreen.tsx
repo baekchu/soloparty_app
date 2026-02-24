@@ -17,10 +17,11 @@
  * ========================================================================
  */
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   Alert,
@@ -28,6 +29,7 @@ import {
   Modal,
   ActivityIndicator,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePoints } from '../hooks/usePoints';
@@ -44,20 +46,21 @@ interface CouponScreenProps {
 }
 
 export default function CouponScreen({ navigation }: CouponScreenProps) {
-  const { theme } = useTheme();
-  const isDark = useMemo(() => theme === 'dark', [theme]);
+  const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   
   // 포인트 및 쿠폰 훅
   const { 
     balance, 
     isLoading: pointsLoading, 
+    addPoints,
     spendPoints,
     // 광고 관련
     adCount,
     remainingAds,
     canWatchAd,
     timeUntilReset,
+    adResetTime,
     maxAds,
     adRewardPoints,
     watchAdForPoints,
@@ -72,6 +75,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
     POINTS_PER_COUPON,
     exchangePointsForCoupon,
     useCoupon,
+    verifyCouponByCode,
     canExchange,
     pointsNeededForCoupon,
   } = useCoupons();
@@ -81,13 +85,28 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
   const [isExchanging, setIsExchanging] = useState(false);
   const [isWatchingAd, setIsWatchingAd] = useState(false);
   const [resetTimeDisplay, setResetTimeDisplay] = useState('');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
+  const adTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 언마운트 시 광고 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+    };
+  }, []);
 
   const isLoading = pointsLoading || couponsLoading;
 
   // 보상형 광고 (건너뛰기 불가 - 최고 단가)
   const { showAd: showRewardedAd, loaded: adLoaded, loading: adLoading } = useRewardedAd(
     async (rewardAmount) => {
-      // 광고 시청 완료 시 포인트 지급
+      // 광고 시청 완료 시 타임아웃 정리 후 포인트 지급
+      if (adTimeoutRef.current) {
+        clearTimeout(adTimeoutRef.current);
+        adTimeoutRef.current = null;
+      }
       const result = await watchAdForPoints();
       setIsWatchingAd(false);
       
@@ -99,12 +118,13 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
     }
   );
 
-  // 리셋 시간 표시 업데이트 (1분마다)
+  // 리셋 시간 표시 업데이트 (1분마다, adResetTime에서 실시간 계산)
   useEffect(() => {
     const updateResetTime = () => {
-      if (timeUntilReset > 0) {
-        const hours = Math.floor(timeUntilReset / (60 * 60 * 1000));
-        const minutes = Math.ceil((timeUntilReset % (60 * 60 * 1000)) / (60 * 1000));
+      const remaining = Math.max(0, adResetTime - Date.now());
+      if (remaining > 0) {
+        const hours = Math.floor(remaining / (60 * 60 * 1000));
+        const minutes = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
         setResetTimeDisplay(`${hours}시간 ${minutes}분`);
       } else {
         setResetTimeDisplay('');
@@ -114,9 +134,10 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
     updateResetTime();
     const interval = setInterval(updateResetTime, 60000);
     return () => clearInterval(interval);
-  }, [timeUntilReset]);
+  }, [adResetTime]);
 
   // 보상형 광고 시청 핸들러 (건너뛰기 불가)
+  // AD_CONFIG.disableAll 상태에서는 adLoaded가 항상 false이므로 watchAdForPoints 직접 호출
   const handleWatchAd = useCallback(async () => {
     if (!canWatchAd) {
       Alert.alert(
@@ -129,18 +150,30 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
 
     setIsWatchingAd(true);
     try {
-      // 보상형 광고 표시 (전체 시청 필수, 건너뛰기 불가)
-      showRewardedAd();
-      // 실제로는 광고가 완료되면 useRewardedAd 콜백에서 처리됨
-      // 타임아웃: 60초 후에도 완료되지 않으면 자동 해제
-      setTimeout(() => {
+      if (adLoaded) {
+        // 실제 광고 SDK가 활성화된 경우: 보상형 광고 표시
+        showRewardedAd();
+        // 타임아웃: 60초 후에도 완료되지 않으면 자동 해제
+        if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+        adTimeoutRef.current = setTimeout(() => {
+          setIsWatchingAd(false);
+          adTimeoutRef.current = null;
+        }, 60000);
+      } else {
+        // 광고 SDK 비활성화 상태: watchAdForPoints로 직접 포인트 적립
+        const result = await watchAdForPoints();
+        Alert.alert(
+          result.success ? '💰 적립 완료!' : '알림',
+          result.message,
+          [{ text: '확인' }]
+        );
         setIsWatchingAd(false);
-      }, 60000);
+      }
     } catch (error) {
       Alert.alert('오류', '광고 로드 중 오류가 발생했습니다.');
       setIsWatchingAd(false);
     }
-  }, [canWatchAd, maxAds, resetTimeDisplay, showRewardedAd]);
+  }, [canWatchAd, adLoaded, maxAds, resetTimeDisplay, showRewardedAd, watchAdForPoints]);
 
   // 쿠폰 교환 핸들러
   const handleExchange = useCallback(async () => {
@@ -164,7 +197,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
           onPress: async () => {
             setIsExchanging(true);
             try {
-              const result = await exchangePointsForCoupon(balance, spendPoints, 'free_event');
+              const result = await exchangePointsForCoupon(balance, spendPoints, 'free_event', addPoints);
               
               Alert.alert(
                 result.success ? '🎉 교환 완료!' : '교환 실패',
@@ -180,7 +213,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         },
       ]
     );
-  }, [balance, canExchange, pointsNeededForCoupon, POINTS_PER_COUPON, exchangePointsForCoupon, spendPoints]);
+  }, [balance, canExchange, pointsNeededForCoupon, POINTS_PER_COUPON, exchangePointsForCoupon, spendPoints, addPoints]);
 
   // 쿠폰 사용 핸들러
   const handleUseCoupon = useCallback(async (coupon: Coupon) => {
@@ -206,6 +239,30 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
       ]
     );
   }, [useCoupon]);
+
+  // 코드 인증 핸들러
+  const handleVerifyCode = useCallback(async () => {
+    if (!verifyCode.trim()) return;
+    setIsVerifying(true);
+    setVerifyResult(null);
+    try {
+      const result = await verifyCouponByCode(verifyCode);
+      setVerifyResult({ success: result.success, message: result.message });
+      if (result.success) {
+        setVerifyCode('');
+      }
+    } catch {
+      setVerifyResult({ success: false, message: '인증 중 오류가 발생했습니다.' });
+    } finally {
+      setIsVerifying(false);
+    }
+  }, [verifyCode, verifyCouponByCode]);
+
+  // 코드 복사
+  const handleCopyCode = useCallback(async (code: string) => {
+    await Clipboard.setStringAsync(code);
+    Alert.alert('복사 완료', '비밀 코드가 클립보드에 복사되었습니다.');
+  }, []);
 
   // 뒤로가기
   const goBack = useCallback(() => {
@@ -403,6 +460,60 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
           </View>
         </View>
 
+        {/* 🔐 입장권 인증 섹션 */}
+        <View style={[styles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+          <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+            🔐 입장권 인증
+          </Text>
+          <Text style={[styles.adDescription, { color: isDark ? '#94a3b8' : '#64748b', marginBottom: 12 }]}>
+            쿠폰의 비밀 코드를 입력하여 입장권을 인증하세요
+          </Text>
+
+          <View style={[styles.verifyInputRow, { borderColor: isDark ? '#334155' : '#e5e7eb' }]}>
+            <TextInput
+              style={[styles.verifyInput, { color: isDark ? '#f8fafc' : '#0f172a', backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}
+              placeholder="XXXX-XXXX-XXXX"
+              placeholderTextColor={isDark ? '#4b5563' : '#9ca3af'}
+              value={verifyCode}
+              onChangeText={setVerifyCode}
+              autoCapitalize="characters"
+              maxLength={14}
+              returnKeyType="done"
+              onSubmitEditing={handleVerifyCode}
+            />
+            <TouchableOpacity
+              onPress={handleVerifyCode}
+              disabled={isVerifying || !verifyCode.trim()}
+              style={[
+                styles.verifyButton,
+                { backgroundColor: verifyCode.trim() ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#334155' : '#e5e7eb') }
+              ]}
+            >
+              {isVerifying ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={[styles.verifyButtonText, { color: verifyCode.trim() ? '#ffffff' : (isDark ? '#64748b' : '#9ca3af') }]}>
+                  인증
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {verifyResult && (
+            <View style={[
+              styles.verifyResult,
+              { backgroundColor: verifyResult.success ? (isDark ? '#064e3b' : '#d1fae5') : (isDark ? '#7f1d1d' : '#fee2e2') }
+            ]}>
+              <Text style={[
+                styles.verifyResultText,
+                { color: verifyResult.success ? (isDark ? '#6ee7b7' : '#065f46') : (isDark ? '#fca5a5' : '#991b1b') }
+              ]}>
+                {verifyResult.message}
+              </Text>
+            </View>
+          )}
+        </View>
+
         {/* 보유 쿠폰 목록 */}
         <View style={[styles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
           <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
@@ -445,6 +556,11 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                     <Text style={[styles.couponName, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
                       {coupon.name}
                     </Text>
+                    <TouchableOpacity onPress={() => handleCopyCode(coupon.secretCode)} activeOpacity={0.7}>
+                      <Text style={[styles.couponCode, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
+                        🔑 {coupon.secretCode}
+                      </Text>
+                    </TouchableOpacity>
                     <Text style={[styles.couponExpiry, { color: isExpiringSoon ? '#f59e0b' : (isDark ? '#94a3b8' : '#64748b') }]}>
                       {isExpiringSoon ? `⚠️ ${daysLeft}일 후 만료` : `만료: ${formatDate(coupon.expiresAt)}`}
                     </Text>
@@ -521,6 +637,21 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                 <Text style={[styles.modalDescription, { color: isDark ? '#94a3b8' : '#64748b' }]}>
                   {selectedCoupon.description}
                 </Text>
+
+                {/* 비밀 코드 표시 */}
+                <TouchableOpacity
+                  onPress={() => handleCopyCode(selectedCoupon.secretCode)}
+                  style={[styles.secretCodeBox, { backgroundColor: isDark ? '#0f172a' : '#f1f5f9', borderColor: isDark ? '#334155' : '#e5e7eb' }]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.secretCodeLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+                    🔑 비밀 코드 (탭하여 복사)
+                  </Text>
+                  <Text style={[styles.secretCodeText, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
+                    {selectedCoupon.secretCode}
+                  </Text>
+                </TouchableOpacity>
+
                 <View style={[styles.modalDivider, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]} />
                 <Text style={[styles.modalInfo, { color: isDark ? '#64748b' : '#9ca3af' }]}>
                   발급일: {formatDate(selectedCoupon.createdAt)}{'\n'}
@@ -850,5 +981,69 @@ const styles = StyleSheet.create({
   modalButtonText: {
     fontSize: 16,
     fontWeight: '700',
+  },
+  // ==================== 인증 섹션 스타일 ====================
+  verifyInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  verifyInput: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 2,
+    fontFamily: 'monospace',
+  },
+  verifyButton: {
+    height: 48,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  verifyButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  verifyResult: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+  },
+  verifyResultText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  // ==================== 쿠폰 코드 스타일 ====================
+  couponCode: {
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    letterSpacing: 1,
+    marginTop: 2,
+    marginBottom: 2,
+  },
+  secretCodeBox: {
+    width: '100%',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  secretCodeLabel: {
+    fontSize: 12,
+    marginBottom: 6,
+  },
+  secretCodeText: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 3,
+    fontFamily: 'monospace',
   },
 });

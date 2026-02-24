@@ -48,7 +48,29 @@ const cleanJSON = (text: string): string => {
 };
 
 // 최적화된 fetch (에러 처리 개선)
+// 허용된 호스트 화이트리스트 (SSRF 방지)
+const ALLOWED_HOSTS = [
+  'gist.githubusercontent.com',
+  'raw.githubusercontent.com',
+] as const;
+
+const isAllowedUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    return ALLOWED_HOSTS.some(host => parsed.hostname === host);
+  } catch {
+    return false;
+  }
+};
+
 const fetchData = async (url: string): Promise<EventsByDate> => {
+  // URL 화이트리스트 검증
+  if (!isAllowedUrl(url)) {
+    secureLog.warn('⚠️ 허용되지 않은 URL');
+    throw new Error('Blocked URL');
+  }
+  
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
   
@@ -59,12 +81,17 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
         'Cache-Control': 'no-cache',
         'Accept': 'application/json',
       },
-      // SSRF 방지: redirect 제한
       redirect: 'error',
     });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    // 응답 URL이 허용된 도메인인지 재검증 (리디렉트 우회 방지)
+    if (response.url && !isAllowedUrl(response.url)) {
+      secureLog.warn('⚠️ 응답 URL이 허용되지 않은 도메인');
+      throw new Error('Redirected to blocked URL');
     }
     
     const text = await response.text();
@@ -78,11 +105,9 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     // 2단계 파싱만 (간소화) - 안전한 파싱 사용
     const parsed = safeJSONParse<EventsByDate>(text, {});
     if (Object.keys(parsed).length > 0) {
-      clearTimeout(timeoutId);
       return parsed;
     }
     // 정제 후 재시도
-    clearTimeout(timeoutId);
     return safeJSONParse<EventsByDate>(cleanJSON(text), {});
   } catch (error: any) {
     if (error.name === 'AbortError') {
@@ -90,7 +115,6 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     } else {
       secureLog.warn('⚠️ 네트워크 오류');
     }
-    clearTimeout(timeoutId);
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -179,7 +203,13 @@ const sanitizeEvent = (event: Event): Event => {
     address: cleanString(event.address, 200), // 상세 주소
     region: normalizeRegion(cleanString(event.region, 50)),
     link: cleanUrl(event.link),
-    coordinates: event.coordinates,
+    coordinates: (() => {
+      const c = event.coordinates;
+      if (!c || typeof c.latitude !== 'number' || typeof c.longitude !== 'number') return undefined;
+      if (!isFinite(c.latitude) || !isFinite(c.longitude)) return undefined;
+      if (c.latitude < -90 || c.latitude > 90 || c.longitude < -180 || c.longitude > 180) return undefined;
+      return { latitude: c.latitude, longitude: c.longitude };
+    })(),
     // 참석자 정보
     maleCapacity: cleanNumber(event.maleCapacity),
     femaleCapacity: cleanNumber(event.femaleCapacity),
@@ -309,12 +339,25 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
   } catch (error) {
     secureLog.warn('⚠️ 네트워크 오류, 캀시 복구 시도');
     
-    // 캐시 복구 시도
+    // 1. 유효한 캐시 시도
     const cached = await loadFromCache();
     if (cached) {
       secureLog.info('✅ 캐시 복구');
       return cached;
     }
+    
+    // 2. 만료된 캐시라도 반환 (빈 화면보다 나음)
+    try {
+      const results = await safeMultiGet([CACHE_KEY]);
+      const rawCached = results[0]?.[1];
+      if (rawCached) {
+        const staleEvents = safeJSONParse<EventsByDate>(rawCached, {});
+        if (validateEvents(staleEvents) && Object.keys(staleEvents).length > 0) {
+          secureLog.warn('⚠️ 만료된 캐시 사용 (네트워크 오류 대비)');
+          return staleEvents;
+        }
+      }
+    } catch { /* 무시 */ }
     
     secureLog.warn('❌ 빈 데이터 반환');
     return {};

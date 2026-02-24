@@ -26,6 +26,7 @@ import { loadEvents } from "../utils/storage";
 import { EventsByDate } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRegion } from "../contexts/RegionContext";
+import { safeGetItem, safeSetItem } from "../utils/asyncStorageManager";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../types";
 import { useFocusEffect } from "@react-navigation/native";
@@ -41,6 +42,7 @@ import useBookmarks from "../hooks/useBookmarks";
 import useReminders from "../hooks/useReminders";
 import { sendNewEventNotification } from "../services/NotificationService";
 import { secureLog } from "../utils/secureStorage";
+import { sanitizeText, sanitizeColor, parseLocalDate } from "../utils/sanitize";
 
 type CalendarScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, "Calendar">,
@@ -63,6 +65,7 @@ const deduplicateMonths = (months: Array<{ year: number; month: number }>) => {
 };
 
 // ==================== 상수 정의 (성능 최적화) ====================
+const PANEL_TAB_KEY = '@panel_tab_preference';
 const MONTH_NAMES = [
   "1월",
   "2월",
@@ -77,36 +80,9 @@ const MONTH_NAMES = [
   "11월",
   "12월",
 ] as const;
-const POLL_INTERVAL = 30000; // 30초 폴링
+const POLL_INTERVAL = 300000; // 5분 폴링 (배터리 최적화)
 const INITIAL_MONTHS_RANGE = 3; // 초기 로드 월 범위 (앞뒤 3개월)
 
-// ==================== 광고 배너 설정 (활성화 시 사용) ====================
-
-// ==================== 인스타그램 링크 처리 (보안 강화) ====================
-
-// 허용된 도메인 화이트리스트 (보안)
-const ALLOWED_DOMAINS = [
-  "instagram.com",
-  "www.instagram.com",
-  "naver.com",
-  "www.naver.com",
-  "m.naver.com",
-  "facebook.com",
-  "www.facebook.com",
-  "m.facebook.com",
-  "twitter.com",
-  "www.twitter.com",
-  "x.com",
-  "www.x.com",
-  "youtube.com",
-  "www.youtube.com",
-  "m.youtube.com",
-  "youtu.be",
-  "kakao.com",
-  "open.kakao.com",
-  "band.us",
-  "www.band.us",
-] as const;
 
 
 
@@ -132,6 +108,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [panelTab, setPanelTab] = useState<'all' | 'bookmarks'>('all');
 
+  // panelTab 복원 (앱 재시작 시 마지막 탭 유지)
+  useEffect(() => {
+    safeGetItem(PANEL_TAB_KEY).then(saved => {
+      if (saved === 'bookmarks') setPanelTab('bookmarks');
+    }).catch(() => {});
+  }, []);
+
+  // panelTab 변경 시 저장
+  const handleSetPanelTab = useCallback((tab: 'all' | 'bookmarks') => {
+    setPanelTab(tab);
+    safeSetItem(PANEL_TAB_KEY, tab).catch(() => {});
+  }, []);
+
   // ==================== Contexts ====================
   const { theme } = useTheme();
   const { selectedLocation, selectedRegion, clearFilters, setSelectedRegion } =
@@ -151,7 +140,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   } = usePoints();
 
   // ==================== 찜/즐겨찾기 & 리마인더 ====================
-  const { bookmarks, isBookmarked, toggleBookmark } = useBookmarks();
+  const { bookmarks, isBookmarked, toggleBookmark, isLoaded: bookmarksLoaded } = useBookmarks();
   const { hasReminder, scheduleReminder, cancelReminder } = useReminders();
 
   // ==================== Dimensions (메모이제이션) ====================
@@ -163,7 +152,38 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   // ==================== Refs (성능 최적화) ====================
   const panelHeight = useRef(new Animated.Value(100)).current;
+  const panelHeightValueRef = useRef(100); // Animated.Value 추적 (private _value 대체)
   const panelStartHeight = useRef(100);
+  const panelAnimRef = useRef<Animated.CompositeAnimation | null>(null); // 애니메이션 충돌 방지
+  const pendingHeightUpdateRef = useRef(false); // heightUpdateTrigger 배치 처리용
+  const screenHeightRef = useRef(screenHeight); // PanResponder 내부용 최신 screenHeight
+  screenHeightRef.current = screenHeight;
+
+  // 패널 애니메이션 헬퍼 (이전 애니메이션 중지 후 시작)
+  const animatePanel = useCallback((toValue: number, callback?: () => void) => {
+    if (panelAnimRef.current) {
+      panelAnimRef.current.stop();
+    }
+    const anim = Animated.spring(panelHeight, {
+      toValue,
+      useNativeDriver: false,
+      tension: 50,
+      friction: 8,
+    });
+    panelAnimRef.current = anim;
+    anim.start(({ finished }) => {
+      if (finished) panelAnimRef.current = null;
+      callback?.();
+    });
+  }, [panelHeight]);
+
+  // panelHeight 변경 추적 (listener 기반 — _value 접근 제거)
+  useEffect(() => {
+    const listenerId = panelHeight.addListener(({ value }) => {
+      panelHeightValueRef.current = value;
+    });
+    return () => { panelHeight.removeListener(listenerId); };
+  }, [panelHeight]);
   const scrollViewRef = useRef<ScrollView>(null);
   const monthHeightsRef = useRef<Record<string, number>>({});
   const eventListHeightsRef = useRef<Record<string, number>>({});
@@ -177,6 +197,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const isUserScrollingRef = useRef(false);
   const previousEventsRef = useRef<EventsByDate>({});
   const isMountedRef = useRef(true); // 마운트 상태 추적 (메모리 누수 방지)
+  const isFocusedRef = useRef(true); // 포커스 상태 추적 (마운트와 분리)
   const lastMonthUpdateRef = useRef(0); // 월 변경 throttle
 
   // ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
@@ -205,8 +226,15 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }, []);
 
   // ==================== 초기화 (InteractionManager로 UI 블로킹 방지) ====================
+  const initialScreenHeightRef = useRef(screenHeight);
+  if (initialScreenHeightRef.current === 0 && screenHeight > 0) {
+    initialScreenHeightRef.current = screenHeight;
+  }
+
   useEffect(() => {
-    if (visibleMonths.length > 0 || screenHeight === 0) return;
+    if (visibleMonths.length > 0 || initialScreenHeightRef.current === 0) return;
+
+    const currentScreenH = initialScreenHeightRef.current;
 
     // InteractionManager를 사용하여 애니메이션 후 실행
     const interactionHandle = InteractionManager.runAfterInteractions(() => {
@@ -254,7 +282,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           let totalHeight = 0;
           for (let i = 0; i < INITIAL_MONTHS_RANGE && i < months.length; i++) {
             const key = `${months[i].year}-${months[i].month}`;
-            totalHeight += monthHeightsRef.current[key] || screenHeight * 0.7;
+            totalHeight += monthHeightsRef.current[key] || currentScreenH * 0.7;
           }
 
           const adjustedHeight = Math.max(0, totalHeight + 56);
@@ -279,26 +307,28 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     });
 
     return () => interactionHandle.cancel();
-  }, [screenHeight]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialScreenHeightRef.current > 0]);
 
   // ==================== 패널 애니메이션 (최적화) ====================
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => false, // 탭은 패스시킴
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // 수직 제스처만 인식 (dy가 dx보다 클 때)
-        return Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+        // 수직 제스처만 인식 (dy가 dx보다 클 때, 최소 5px 이동)
+        return Math.abs(gestureState.dy) > 5 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
       },
+      onPanResponderTerminationRequest: () => true,
       onPanResponderGrant: () => {
         // 드래그 시작 시 현재 높이 저장
-        panelStartHeight.current = (panelHeight as any)._value || 100;
+        panelStartHeight.current = panelHeightValueRef.current || 100;
       },
       onPanResponderMove: (_, gestureState) => {
         // 드래그 시작점에서 이동한 거리만큼 패널 높이 조정
         const newValue = panelStartHeight.current - gestureState.dy;
         const minHeight = 100;
-        const maxHeight = screenHeight - 100;
+        const maxHeight = screenHeightRef.current - 100;
         
         if (newValue >= minHeight && newValue <= maxHeight) {
           panelHeight.setValue(newValue);
@@ -310,42 +340,22 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         if (gestureState.dy < -threshold) {
           // 위로 스와이프 - 패널 확장
           setIsPanelExpanded(true);
-          Animated.spring(panelHeight, {
-            toValue: screenHeight - 100,
-            useNativeDriver: false,
-            tension: 50,
-            friction: 8,
-          }).start();
+          animatePanel(screenHeightRef.current - 100);
         } else if (gestureState.dy > threshold) {
           // 아래로 스와이프 - 패널 축소
           setIsPanelExpanded(false);
-          Animated.spring(panelHeight, {
-            toValue: 100,
-            useNativeDriver: false,
-            tension: 50,
-            friction: 8,
-          }).start();
+          animatePanel(100);
         } else {
           // 현재 위치에 따라 결정
-          const currentValue = (panelHeight as any)._value;
-          const midPoint = (100 + screenHeight - 100) / 2;
+          const currentValue = panelHeightValueRef.current;
+          const midPoint = (100 + screenHeightRef.current - 100) / 2;
           
           if (currentValue > midPoint) {
             setIsPanelExpanded(true);
-            Animated.spring(panelHeight, {
-              toValue: screenHeight - 100,
-              useNativeDriver: false,
-              tension: 50,
-              friction: 8,
-            }).start();
+            animatePanel(screenHeightRef.current - 100);
           } else {
             setIsPanelExpanded(false);
-            Animated.spring(panelHeight, {
-              toValue: 100,
-              useNativeDriver: false,
-              tension: 50,
-              friction: 8,
-            }).start();
+            animatePanel(100);
           }
         }
       },
@@ -356,15 +366,22 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const panelContentPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
       onMoveShouldSetPanResponder: (_, gestureState) => {
+        // 패널이 축소 상태면 절대 가로채지 않음
+        const currentValue = panelHeightValueRef.current || 100;
+        if (currentValue <= 120) return false;
+        
         // 스크롤이 맨 위에 있고, 아래로 드래그하는 경우에만 패널 드래그 활성화
-        const isAtTop = panelScrollYRef.current <= 0;
-        const isDraggingDown = gestureState.dy > 10; // 아래로 10px 이상 이동
-        const isVertical = Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+        const isAtTop = isPanelScrollAtTopRef.current;
+        const isDraggingDown = gestureState.dy > 15; // 15px 이상으로 임계값 높임
+        const isVertical = Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.5;
         return isAtTop && isDraggingDown && isVertical;
       },
+      onMoveShouldSetPanResponderCapture: () => false, // 절대 캡처하지 않음
+      onPanResponderTerminationRequest: () => true, // 다른 핸들러가 터치 요청하면 양보
       onPanResponderGrant: () => {
-        panelStartHeight.current = (panelHeight as any)._value || 100;
+        panelStartHeight.current = panelHeightValueRef.current || 100;
       },
       onPanResponderMove: (_, gestureState) => {
         // 아래로 드래그할 때만 패널 높이 조정
@@ -381,42 +398,22 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         if (gestureState.dy < -threshold) {
           // 위로 스와이프 - 패널 확장
           setIsPanelExpanded(true);
-          Animated.spring(panelHeight, {
-            toValue: screenHeight - 100,
-            useNativeDriver: false,
-            tension: 50,
-            friction: 8,
-          }).start();
+          animatePanel(screenHeightRef.current - 100);
         } else if (gestureState.dy > threshold) {
           // 아래로 스와이프 - 패널 축소
           setIsPanelExpanded(false);
-          Animated.spring(panelHeight, {
-            toValue: 100,
-            useNativeDriver: false,
-            tension: 50,
-            friction: 8,
-          }).start();
+          animatePanel(100);
         } else {
           // 현재 위치에 따라 결정
-          const currentValue = (panelHeight as any)._value;
-          const midPoint = (100 + screenHeight - 100) / 2;
+          const currentValue = panelHeightValueRef.current;
+          const midPoint = (100 + screenHeightRef.current - 100) / 2;
           
           if (currentValue > midPoint) {
             setIsPanelExpanded(true);
-            Animated.spring(panelHeight, {
-              toValue: screenHeight - 100,
-              useNativeDriver: false,
-              tension: 50,
-              friction: 8,
-            }).start();
+            animatePanel(screenHeightRef.current - 100);
           } else {
             setIsPanelExpanded(false);
-            Animated.spring(panelHeight, {
-              toValue: 100,
-              useNativeDriver: false,
-              tension: 50,
-              friction: 8,
-            }).start();
+            animatePanel(100);
           }
         }
       },
@@ -425,23 +422,65 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const expandPanel = useCallback(() => {
     setIsPanelExpanded(true);
-    Animated.spring(panelHeight, {
-      toValue: screenHeight - 100,
-      useNativeDriver: false,
-      tension: 50,
-      friction: 8,
-    }).start();
-  }, [panelHeight, screenHeight]);
+    animatePanel(screenHeight - 100);
+  }, [animatePanel, screenHeight]);
 
   const collapsePanel = useCallback(() => {
     setIsPanelExpanded(false);
-    Animated.spring(panelHeight, {
-      toValue: 100,
-      useNativeDriver: false,
-      tension: 50,
-      friction: 8,
-    }).start();
-  }, [panelHeight]);
+    animatePanel(100);
+  }, [animatePanel]);
+
+  // ==================== UI 핸들러 (useCallback으로 최적화) ====================
+  const handleGoToToday = useCallback(() => {
+    const today = new Date();
+    isUserScrollingRef.current = false;
+    setCurrentMonth(today.getMonth() + 1);
+    setCurrentYear(today.getFullYear());
+  }, []);
+
+  const handleNavigateSettings = useCallback(() => {
+    navigation.navigate("Settings");
+  }, [navigation]);
+
+  const handleNavigateLocationPicker = useCallback(() => {
+    navigation.navigate("LocationPicker");
+  }, [navigation]);
+
+  const handleDatePress = useCallback((date: string) => {
+    setSelectedDate(date);
+    expandPanel();
+  }, [expandPanel]);
+
+  const handleClearSelectedDate = useCallback(() => {
+    setSelectedDate(null);
+  }, []);
+
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('');
+  }, []);
+
+  const handleTabAll = useCallback(() => handleSetPanelTab('all'), [handleSetPanelTab]);
+  const handleTabBookmarks = useCallback(() => handleSetPanelTab('bookmarks'), [handleSetPanelTab]);
+
+  const handleCloseNotificationPrompt = useCallback(() => {
+    setNotificationPromptClosed(true);
+  }, []);
+
+  const handleCloseAdModal = useCallback(() => {
+    setShowAdModal(false);
+  }, []);
+
+  const handleClosePointsModal = useCallback(() => {
+    setShowPointsModal(false);
+  }, []);
+
+  const handleRegionPress = useCallback((region: string) => {
+    if (selectedRegion === region) {
+      clearFilters();
+    } else {
+      setSelectedRegion(region);
+    }
+  }, [selectedRegion, clearFilters, setSelectedRegion]);
 
   // ==================== 월 변경 시 자동 스크롤 ====================
   useEffect(() => {
@@ -470,7 +509,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }
   }, [currentMonth, currentYear]);
 
-  const getVisibleMonths = useCallback(() => {
+  const visibleMonthTabs = useMemo(() => {
     const isLargeScreen = screenWidth >= 600;
     const monthCount = isLargeScreen ? 5 : 3;
     const sideCount = Math.floor((monthCount - 1) / 2);
@@ -485,7 +524,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     return months;
   }, [currentMonth, screenWidth]);
 
-  const getUpcomingEvents = useCallback(() => {
+  const upcomingEvents = useMemo(() => {
     // 필터링 함수
     const filterByRegion = (item: { event: any }) =>
       !selectedRegion || item.event.region === selectedRegion;
@@ -531,7 +570,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
     return Object.entries(events)
       .flatMap(([date, eventList]) => {
-        const eventDate = new Date(date);
+        const eventDate = parseLocalDate(date);
         eventDate.setHours(0, 0, 0, 0);
         return eventDate >= today
           ? eventList.map((event) => ({ date, event }))
@@ -542,16 +581,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       .filter(filterBySearch)
       .sort((a, b) => {
         const dateCompare =
-          new Date(a.date).getTime() - new Date(b.date).getTime();
+          parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime();
         return dateCompare !== 0 ? dateCompare : sortByTime(a, b);
       });
   }, [events, selectedDate, selectedRegion, selectedLocation, searchQuery]);
-
-  // 성능 최적화: upcomingEvents를 메모이제이션
-  const upcomingEvents = useMemo(
-    () => getUpcomingEvents(),
-    [getUpcomingEvents]
-  );
 
   // ==================== 추천 파티 (프로모션 광고 + 일반) ====================
   const weeklyHotEvents = useMemo(() => {
@@ -567,7 +600,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     for (const [date, eventList] of Object.entries(events)) {
       const parts = date.split('-');
       if (parts.length !== 3) continue;
-      const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
       if (d >= today && d <= endOfWeek) {
         for (const ev of eventList) {
           if (ev.promoted) {
@@ -592,15 +625,31 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     return result;
   }, [events]);
 
-  // visibleMonths 중복 제거 (정기 클린업)
+  // visibleMonths 중복 제거 + 최대 개수 제한 (정기 클린업)
+  const MAX_VISIBLE_MONTHS = 24;
   React.useEffect(() => {
     setVisibleMonths((prev) => {
-      const deduplicated = deduplicateMonths(prev);
-      return deduplicated.length !== prev.length ? deduplicated : prev;
+      let cleaned = deduplicateMonths(prev);
+      if (cleaned.length > MAX_VISIBLE_MONTHS) {
+        // 현재 월 기준으로 가장 가까운 MAX_VISIBLE_MONTHS개만 유지
+        const currentIdx = cleaned.findIndex(
+          (m) => m.year === currentYear && m.month === currentMonth
+        );
+        if (currentIdx >= 0) {
+          const start = Math.max(0, currentIdx - Math.floor(MAX_VISIBLE_MONTHS / 2));
+          cleaned = cleaned.slice(start, start + MAX_VISIBLE_MONTHS);
+        } else {
+          cleaned = cleaned.slice(-MAX_VISIBLE_MONTHS);
+        }
+      }
+      return cleaned.length !== prev.length ? cleaned : prev;
     });
   }, [currentMonth, currentYear]);
 
   // ==================== 데이터 처리 함수 ====================
+
+  // 이미 알림을 보낸 이벤트 추적 (중복 방지)
+  const notifiedEventsRef = useRef(new Set<string>());
 
   // 새 일정 감지 함수
   const checkForNewEvents = useCallback(
@@ -612,7 +661,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       today.setHours(0, 0, 0, 0);
 
       Object.keys(newEvents).forEach((date) => {
-        const eventDate = new Date(date);
+        const eventDate = parseLocalDate(date);
         eventDate.setHours(0, 0, 0, 0);
 
         // 오늘 이후의 일정만 확인
@@ -623,16 +672,27 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         );
 
         newEvents[date].forEach((event) => {
-          const eventKey = `${event.id}-${event.title}`;
+          const eventKey = `${date}:${event.id}-${event.title}`;
+
+          // 이미 알림을 보낸 이벤트는 건너뜀
+          if (notifiedEventsRef.current.has(eventKey)) return;
 
           // 새로 추가된 일정이면 알림 전송 (안전하게)
-          if (!oldEventIds.has(eventKey)) {
+          if (!oldEventIds.has(`${event.id}-${event.title}`)) {
             try {
-              const formattedDate = new Date(date + 'T00:00:00').toLocaleDateString("ko-KR", {
+              const parsedNotifDate = parseLocalDate(date);
+              const formattedDate = parsedNotifDate.toLocaleDateString("ko-KR", {
                 month: "long",
                 day: "numeric",
               });
               sendNewEventNotification(event.title, formattedDate);
+              notifiedEventsRef.current.add(eventKey);
+
+              // 메모리 관리: 500개 초과 시 오래된 항목 정리
+              if (notifiedEventsRef.current.size > 500) {
+                const entries = Array.from(notifiedEventsRef.current);
+                notifiedEventsRef.current = new Set(entries.slice(-250));
+              }
             } catch (notifError) {
               // Expo Go에서는 알림이 작동하지 않을 수 있음 (무시)
             }
@@ -698,8 +758,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   
   useFocusEffect(
     useCallback(() => {
-      // 마운트 상태 확인
-      isMountedRef.current = true;
+      // 포커스 상태 추적 (마운트 상태와 분리)
+      isFocusedRef.current = true;
 
       // 초기 데이터 로드 (안전하게)
       const loadData = async () => {
@@ -720,7 +780,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
       // 폴링 설정 (배터리 최적화)
       pollIntervalRef.current = setInterval(async () => {
-        if (!isMountedRef.current) return;
+        if (!isFocusedRef.current || !isMountedRef.current) return;
 
         try {
           const latestEvents = await loadEvents(true);
@@ -759,7 +819,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
       // 클린업 함수
       return () => {
-        isMountedRef.current = false;
+        isFocusedRef.current = false;
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
@@ -871,15 +931,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             </Text>
             <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => {
-                const today = new Date();
-                const todayMonth = today.getMonth() + 1;
-                const todayYear = today.getFullYear();
-
-                isUserScrollingRef.current = false;
-                setCurrentMonth(todayMonth);
-                setCurrentYear(todayYear);
-              }}
+              onPress={handleGoToToday}
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 6,
@@ -960,7 +1012,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             </TouchableOpacity> */}
             <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => navigation.navigate("Settings")}
+              onPress={handleNavigateSettings}
               style={{
                 padding: 10,
               }}
@@ -1012,14 +1064,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             paddingHorizontal: screenWidth >= 600 ? 40 : 10,
           }}
         >
-          {getVisibleMonths().map((monthNum, idx) => {
+          {visibleMonthTabs.map((monthNum, idx) => {
             const isActive = monthNum === currentMonth;
             return (
               <TouchableOpacity
                 key={`${monthNum}-${idx}`}
                 activeOpacity={0.7}
                 onPress={() => {
-                  const tabMonths = getVisibleMonths();
+                  const tabMonths = visibleMonthTabs;
                   const middleIndex = Math.floor(tabMonths.length / 2);
                   const offset = idx - middleIndex;
 
@@ -1091,9 +1143,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => {
-              clearFilters();
-            }}
+            onPress={clearFilters}
             style={{
               paddingHorizontal: 16,
               paddingVertical: 10,
@@ -1129,7 +1179,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => navigation.navigate("LocationPicker")}
+            onPress={handleNavigateLocationPicker}
             style={{
               paddingHorizontal: 16,
               paddingVertical: 10,
@@ -1158,13 +1208,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             <TouchableOpacity
               key={region}
               activeOpacity={0.7}
-              onPress={() => {
-                if (selectedRegion === region) {
-                  clearFilters();
-                } else {
-                  setSelectedRegion(region);
-                }
-              }}
+              onPress={() => handleRegionPress(region)}
               style={{
                 paddingHorizontal: 16,
                 paddingVertical: 10,
@@ -1313,6 +1357,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               }
 
               setVisibleMonths((prev) => {
+                if (prev.length >= MAX_VISIBLE_MONTHS) return prev;
                 const key = `${nextYear}-${nextMonth}`;
                 const exists = prev.some((m) => `${m.year}-${m.month}` === key);
                 if (exists) return prev;
@@ -1333,6 +1378,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               }
 
               setVisibleMonths((prev) => {
+                if (prev.length >= MAX_VISIBLE_MONTHS) return prev;
                 const key = `${prevYear}-${prevMonth}`;
                 const exists = prev.some((m) => `${m.year}-${m.month}` === key);
                 if (exists) return prev;
@@ -1359,9 +1405,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           }
         }}
       >
-        {visibleMonths.map((monthData, index) => (
+        {visibleMonths.map((monthData) => (
           <View
-            key={`${monthData.year}-${monthData.month}-${index}`}
+            key={`${monthData.year}-${monthData.month}`}
             onLayout={(event) => {
               const { height } = event.nativeEvent.layout;
               const key = `${monthData.year}-${monthData.month}`;
@@ -1375,10 +1421,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               isDark={isDark}
               selectedLocation={selectedLocation}
               selectedRegion={selectedRegion}
-              onDatePress={(date) => {
-                setSelectedDate(date);
-                expandPanel();
-              }}
+              onDatePress={handleDatePress}
             />
           </View>
         ))}
@@ -1448,9 +1491,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             </Text>
             {selectedDate && (
               <TouchableOpacity
-                onPress={() => {
-                  setSelectedDate(null);
-                }}
+                onPress={handleClearSelectedDate}
                 style={{ marginTop: 4 }}
               >
                 <Text
@@ -1512,7 +1553,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 returnKeyType="search"
               />
               {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <TouchableOpacity onPress={handleClearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>✕</Text>
                 </TouchableOpacity>
               )}
@@ -1521,7 +1562,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             <View style={{ flexDirection: 'row', gap: 6 }}>
               <TouchableOpacity
                 activeOpacity={0.7}
-                onPress={() => setPanelTab('all')}
+                onPress={handleTabAll}
                 style={{
                   paddingHorizontal: 14,
                   paddingVertical: 6,
@@ -1535,7 +1576,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               </TouchableOpacity>
               <TouchableOpacity
                 activeOpacity={0.7}
-                onPress={() => setPanelTab('bookmarks')}
+                onPress={handleTabBookmarks}
                 style={{
                   paddingHorizontal: 14,
                   paddingVertical: 6,
@@ -1566,7 +1607,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           </View>
         )}
 
-        <View style={{ flex: 1 }} {...panelContentPanResponder.panHandlers}>
+        <View style={{ flex: 1 }} {...(isPanelExpanded ? panelContentPanResponder.panHandlers : {})}>
           <ScrollView
             ref={panelScrollRef}
             showsVerticalScrollIndicator={false}
@@ -1583,7 +1624,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           >
           {/* ===== 찜 탭 ===== */}
           {panelTab === 'bookmarks' ? (
-            bookmarks.length === 0 ? (
+            !bookmarksLoaded ? (
+              <View style={{ alignItems: 'center', paddingVertical: 30 }}>
+                <ActivityIndicator size="small" color="#a78bfa" />
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 8 }}>
+                  불러오는 중...
+                </Text>
+              </View>
+            ) : bookmarks.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 30 }}>
                 <Text style={{ color: '#e0e7ff',fontSize: 32, marginBottom: 12 }}>♡</Text>
                 <Text style={{ color: '#e0e7ff', fontSize: 14 }}>
@@ -1596,13 +1644,13 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             ) : (
               bookmarks.map((bookmark, index) => {
                 const { event, date } = bookmark;
-                const eventDate = new Date(date);
+                const eventDate = parseLocalDate(date);
                 const month = eventDate.getMonth() + 1;
                 const day = eventDate.getDate();
                 const reminderSet = hasReminder(event.id, date);
                 return (
                   <View
-                    key={`bm-${event.id}-${date}-${index}`}
+                    key={`bm-${event.id}-${date}`}
                     style={{
                       backgroundColor: 'rgba(255, 255, 255, 0.15)',
                       borderRadius: 16,
@@ -1700,7 +1748,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                   </View>
                   {weeklyHotEvents.map((item, idx) => {
                     const parts = item.date.split('-');
-                    const evDate = parts.length === 3 ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])) : new Date();
+                    const evDate = parts.length === 3 ? new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)) : new Date();
                     const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
                     const dayName = dayNames[evDate.getDay()];
                     const month = evDate.getMonth() + 1;
@@ -1712,8 +1760,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                     const dDayStr = diffDays === 0 ? '오늘!' : diffDays === 1 ? '내일' : `D-${diffDays}`;
                     const dDayColor = diffDays === 0 ? '#ef4444' : diffDays <= 2 ? '#f59e0b' : '#22c55e';
                     const isPromoted = item.event.promoted === true;
-                    const promoLabel = item.event.promotionLabel || 'AD';
-                    const promoColor = item.event.promotionColor || '#f59e0b';
+                    const promoLabel = sanitizeText(item.event.promotionLabel, 20) || 'AD';
+                    const promoColor = sanitizeColor(item.event.promotionColor, '#f59e0b');
                     const borderColor = isPromoted ? promoColor : dDayColor;
 
                     return (
@@ -1753,11 +1801,11 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <View style={{ flex: 1 }}>
                             <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }} numberOfLines={1}>
-                              {item.event.title}
+                              {sanitizeText(item.event.title, 100)}
                             </Text>
                             <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 }}>
-                              {month}/{day}({dayName}) · {item.event.time || '시간 미정'}
-                              {item.event.location ? ` · ${item.event.location}` : ''}
+                              {month}/{day}({dayName}) · {sanitizeText(item.event.time, 30) || '시간 미정'}
+                              {item.event.location ? ` · ${sanitizeText(item.event.location, 100)}` : ''}
                             </Text>
                             {isPromoted && item.event.price !== undefined && (
                               <Text style={{ fontSize: 12, color: '#f59e0b', marginTop: 2, fontWeight: '600' }}>
@@ -1799,7 +1847,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
                 const dateElements = dates.map((date, dateIndex) => {
                   const eventsForDate = groupedByDate[date];
-                  const eventDate = new Date(date);
+                  const eventDate = parseLocalDate(date);
                   const day = eventDate.getDate();
                   const monthName = MONTH_NAMES[eventDate.getMonth()];
                   const isLastDate = dateIndex === dates.length - 1;
@@ -1904,7 +1952,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                             Math.abs(prevHeight - nextHeight) > 2
                           ) {
                             eventListHeightsRef.current[date] = nextHeight;
-                            setHeightUpdateTrigger((prev) => prev + 1);
+                            // 배치 처리: 연쇄 리렌더링 방지
+                            if (!pendingHeightUpdateRef.current) {
+                              pendingHeightUpdateRef.current = true;
+                              requestAnimationFrame(() => {
+                                pendingHeightUpdateRef.current = false;
+                                setHeightUpdateTrigger((prev) => prev + 1);
+                              });
+                            }
                           }
                         }}
                       >
@@ -1936,7 +1991,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                                   flex: 1,
                                 }}
                               >
-                                {item.event.title}
+                                {sanitizeText(item.event.title, 100)}
                               </Text>
                               {item.event.location && (
                                 <Text
@@ -1947,7 +2002,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                                     marginLeft: 8,
                                   }}
                                 >
-                                  {item.event.location}
+                                  {sanitizeText(item.event.location, 100)}
                                 </Text>
                               )}
                             </View>
@@ -2111,6 +2166,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       {/* 안드로이드 네비게이션 바 배경 - 다크모드 대응 */}
       {Platform.OS === "android" && insets.bottom > 0 && (
         <View
+          pointerEvents="none"
           style={{
             position: "absolute",
             left: 0,
@@ -2136,21 +2192,21 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       {/* ==================== 초기 알림 설정 프롬프트 ==================== */}
       <NotificationPrompt 
         isDark={isDark} 
-        onClose={() => setNotificationPromptClosed(true)}
+        onClose={handleCloseNotificationPrompt}
       />
 
       {/* ==================== 앱 시작 광고 팝업 모달 ==================== */}
       {showAdModal && (
         <StartupAdModal 
           isDark={isDark}
-          onClose={() => setShowAdModal(false)}
+          onClose={handleCloseAdModal}
         />
       )}
 
       {/* ==================== 포인트 모달 ==================== */}
       <PointsModal
         visible={showPointsModal}
-        onClose={() => setShowPointsModal(false)}
+        onClose={handleClosePointsModal}
         points={points}
         onSpendPoints={spendPoints}
         onWatchAd={watchAdForPoints}

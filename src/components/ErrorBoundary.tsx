@@ -1,5 +1,5 @@
 import React, { Component, ReactNode } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Appearance } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Appearance, ColorSchemeName, NativeEventSubscription } from 'react-native';
 import { secureLog } from '../utils/secureStorage';
 
 interface Props {
@@ -11,16 +11,35 @@ interface State {
   hasError: boolean;
   error: Error | null;
   errorCount: number;
+  colorScheme: ColorSchemeName;
 }
 
 // 에러 보고 큐 (네트워크 전송 대비)
 const errorQueue: Array<{ message: string; timestamp: number; platform: string }> = [];
 const MAX_ERROR_QUEUE = 20;
 
+// 슬라이딩 윈도우 크래시 카운터 (1분 이내 연속 크래시만 카운트)
+const _errorTimestamps: number[] = [];
+const ERROR_WINDOW_MS = 60_000; // 1분
+const MAX_ERRORS_IN_WINDOW = 5;
+
 export class ErrorBoundary extends Component<Props, State> {
+  private _appearanceSub: NativeEventSubscription | null = null;
+
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null, errorCount: 0 };
+    this.state = { hasError: false, error: null, errorCount: 0, colorScheme: Appearance.getColorScheme() };
+  }
+
+  componentDidMount() {
+    // 테마 변경 시 자동 리렌더 (에러 화면에서도 다크모드 반영)
+    this._appearanceSub = Appearance.addChangeListener(({ colorScheme }) => {
+      this.setState({ colorScheme });
+    });
+  }
+
+  componentWillUnmount() {
+    this._appearanceSub?.remove();
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
@@ -42,20 +61,27 @@ export class ErrorBoundary extends Component<Props, State> {
       });
     }
     
-    this.setState(prev => ({ errorCount: prev.errorCount + 1 }));
+    // 슬라이딩 윈도우 기반 크래시 카운트 (1분 이내만)
+    const now = Date.now();
+    _errorTimestamps.push(now);
+    while (_errorTimestamps.length > 0 && _errorTimestamps[0] < now - ERROR_WINDOW_MS) {
+      _errorTimestamps.shift();
+    }
+    
+    this.setState(prev => ({ errorCount: _errorTimestamps.length }));
   }
 
   handleReset = () => {
-    // 연속 크래시 방지: 3번 이상 크래시 시 경고
-    if (this.state.errorCount >= 3) {
-      secureLog.warn('⚠️ 반복 크래시 감지 - 앱 재설치 권장');
+    // 슬라이딩 윈도우 기반: 1분 내 5회 이상 크래시 시 경고
+    if (_errorTimestamps.length >= MAX_ERRORS_IN_WINDOW) {
+      secureLog.warn('⚠️ 1분 내 반복 크래시 감지 - 앱 재설치 권장');
     }
     this.setState({ hasError: false, error: null });
   };
 
   render() {
     if (this.state.hasError) {
-      const isDark = Appearance.getColorScheme() === 'dark';
+      const isDark = this.state.colorScheme === 'dark';
       return (
         <View style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#fce7f3' }]}>
           <View style={styles.content}>

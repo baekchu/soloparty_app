@@ -20,6 +20,9 @@ interface NotificationPromptProps {
 
 export const NotificationPrompt: React.FC<NotificationPromptProps> = ({ onClose }) => {
   const hasRequestedRef = useRef(false);
+  // onClose를 ref로 관리 → deps에서 제거하여 race condition 방지
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     let mounted = true;
@@ -51,12 +54,12 @@ export const NotificationPrompt: React.FC<NotificationPromptProps> = ({ onClose 
         // 완료 후 onClose 호출 (약간의 딜레이)
         if (mounted) {
           setTimeout(() => {
-            if (mounted) onClose?.();
+            if (mounted) onCloseRef.current?.();
           }, 300);
         }
       } catch (error) {
         // 알림 권한 요청 실패는 치명적이지 않음 - 로그 생략
-        if (mounted) onClose?.();
+        if (mounted) onCloseRef.current?.();
       }
     };
     
@@ -67,7 +70,7 @@ export const NotificationPrompt: React.FC<NotificationPromptProps> = ({ onClose 
       mounted = false;
       clearTimeout(timer);
     };
-  }, [onClose]);
+  }, []); // onClose를 ref로 관리하므로 deps 불필요
 
   // UI를 렌더링하지 않음 (시스템 다이얼로그만 사용)
   return null;
