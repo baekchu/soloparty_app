@@ -60,13 +60,21 @@ const EventCard = memo(({ item, isDark, onPress }: EventCardProps) => {
               </Text>
             </View>
           )}
-          {item.location && (
+          {item.subEvents && item.subEvents.length > 1 ? (
+            item.subEvents.map((sub, si) => (
+              <View key={si} style={[styles.metaChip, { backgroundColor: isDark ? Colors.dark.surfaceAlt : Colors.light.surfaceAlt }]}>
+                <Text style={[styles.metaChipText, { color: c.textSecondary }]}>
+                  📍 {sub.location || sub.venue || `지점${si + 1}`}
+                </Text>
+              </View>
+            ))
+          ) : item.location ? (
             <View style={[styles.metaChip, { backgroundColor: isDark ? Colors.dark.surfaceAlt : Colors.light.surfaceAlt }]}>
               <Text style={[styles.metaChipText, { color: c.textSecondary }]}>
                 📍 {item.location}
               </Text>
             </View>
-          )}
+          ) : null}
         </View>
         {item.description && (
           <Text

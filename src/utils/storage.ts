@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { EventsByDate, Event } from '../types';
+import { EventsByDate, Event, RecurringEvent } from '../types';
 import { safeGetItem, safeSetItem, safeRemoveItem, safeMultiGet, safeMultiSet } from './asyncStorageManager';
 import { secureLog } from './secureStorage';
 import { env } from '../config/env';
@@ -121,6 +121,91 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
   }
 };
 
+// ==================== 반복 일정 전개 ====================
+
+const DAY_MAP: Record<string, number> = {
+  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+};
+
+/**
+ * recurring 배열을 날짜별 이벤트로 전개
+ * days에 지정된 요일마다 startDate~endDate 범위에서 이벤트 생성
+ */
+const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
+  const result: EventsByDate = {};
+  
+  if (!Array.isArray(recurring)) return result;
+  
+  for (const rule of recurring) {
+    if (!rule.id || !rule.title || !Array.isArray(rule.days) || !rule.startDate || !rule.endDate) {
+      continue;
+    }
+    
+    // 요일 숫자로 변환
+    const targetDays = rule.days
+      .map(d => DAY_MAP[d.toLowerCase()])
+      .filter((d): d is number => d !== undefined);
+    
+    if (targetDays.length === 0) continue;
+    
+    const excludeSet = new Set(rule.excludeDates || []);
+    const start = new Date(rule.startDate + 'T00:00:00');
+    const end = new Date(rule.endDate + 'T00:00:00');
+    
+    // 날짜 유효성
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) continue;
+    
+    // 최대 365일 제한 (무한 루프 방지)
+    const maxDays = 365;
+    let count = 0;
+    
+    const current = new Date(start);
+    while (current <= end && count < maxDays) {
+      if (targetDays.includes(current.getDay())) {
+        const dateStr = current.toISOString().split('T')[0];
+        
+        if (!excludeSet.has(dateStr)) {
+          const event: Event = {
+            id: `${rule.id}_${dateStr}`,
+            groupId: rule.groupId || rule.id,
+            title: rule.title,
+            time: rule.time,
+            location: rule.location,
+            region: rule.region,
+            description: rule.description,
+            link: rule.link,
+            coordinates: rule.coordinates,
+            maleCapacity: rule.maleCapacity,
+            femaleCapacity: rule.femaleCapacity,
+            maleCount: rule.maleCount,
+            femaleCount: rule.femaleCount,
+            price: rule.price,
+            ageRange: rule.ageRange,
+            organizer: rule.organizer,
+            contact: rule.contact,
+            detailDescription: rule.detailDescription,
+            venue: rule.venue,
+            address: rule.address,
+            tags: rule.tags,
+            promoted: rule.promoted,
+            promotionPriority: rule.promotionPriority,
+            promotionLabel: rule.promotionLabel,
+            promotionColor: rule.promotionColor,
+          };
+          
+          if (!result[dateStr]) result[dateStr] = [];
+          result[dateStr].push(event);
+        }
+      }
+      
+      current.setDate(current.getDate() + 1);
+      count++;
+    }
+  }
+  
+  return result;
+};
+
 // ==================== 데이터 검증 (간소화) ====================
 
 const validateEvents = (data: any): data is EventsByDate => {
@@ -226,6 +311,10 @@ const sanitizeEvent = (event: Event): Event => {
     promotionPriority: typeof event.promotionPriority === 'number' ? Math.max(0, event.promotionPriority) : undefined,
     promotionLabel: cleanString(event.promotionLabel, 20),
     promotionColor: cleanString(event.promotionColor, 20),
+    // 반복 일정 그룹
+    groupId: cleanString(event.groupId, 100),
+    // 서브 이벤트 (지점별 묶음) — 이미 sanitize된 상태로 들어옴
+    subEvents: event.subEvents,
   };
 };
 
@@ -313,6 +402,14 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     const url = `${GIST_RAW_URL}?_=${Date.now()}`;
     const rawData = await fetchData(url);
     
+    // recurring 필드 추출 후 제거
+    const rawAny = rawData as any;
+    let recurringEvents: EventsByDate = {};
+    if (Array.isArray(rawAny.recurring)) {
+      recurringEvents = expandRecurringEvents(rawAny.recurring);
+      delete rawAny.recurring;
+    }
+    
     if (!validateEvents(rawData)) {
       secureLog.warn('⚠️ 데이터 검증 실패');
       throw new Error('Invalid data');
@@ -320,14 +417,57 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     
     // 데이터 정제
     const processed: EventsByDate = {};
+    
+    // 1. 반복 일정 먼저 추가
+    for (const [date, eventList] of Object.entries(recurringEvents)) {
+      const sanitized = eventList
+        .map(e => sanitizeEvent(e))
+        .filter(e => e.title);
+      if (sanitized.length > 0) {
+        processed[date] = sanitized;
+      }
+    }
+    
+    // 2. 개별 일정 병합 (같은 날짜면 뒤에 추가)
     for (const [date, eventList] of Object.entries(rawData)) {
       const sanitized = (eventList as Event[])
         .map((e, i) => sanitizeEvent({ ...e, id: e.id || `${date}-${i}` }))
         .filter(e => e.title);
       
       if (sanitized.length > 0) {
-        processed[date] = sanitized;
+        if (processed[date]) {
+          processed[date].push(...sanitized);
+        } else {
+          processed[date] = sanitized;
+        }
       }
+    }
+    
+    // 3. 같은 날짜 + 같은 groupId 이벤트를 subEvents로 병합
+    for (const date of Object.keys(processed)) {
+      const events = processed[date];
+      const grouped: Event[] = [];
+      const groupMap = new Map<string, Event>();
+      
+      for (const ev of events) {
+        if (ev.groupId) {
+          const existing = groupMap.get(ev.groupId);
+          if (existing) {
+            // 이미 대표 이벤트가 있으면 subEvents에 추가
+            if (!existing.subEvents) {
+              existing.subEvents = [{ ...existing }]; // 대표 자신도 subEvents에 포함
+            }
+            existing.subEvents.push(ev);
+          } else {
+            groupMap.set(ev.groupId, ev);
+            grouped.push(ev);
+          }
+        } else {
+          grouped.push(ev);
+        }
+      }
+      
+      processed[date] = grouped;
     }
     
     secureLog.info('✅ 로딩 완료');

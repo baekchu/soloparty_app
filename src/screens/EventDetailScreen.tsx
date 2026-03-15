@@ -127,10 +127,15 @@ const InfoCard = memo(({
 });
 
 export default function EventDetailScreen({ navigation, route }: Props) {
-  const { event, date } = route.params;
+  const { event: routeEvent, date } = route.params;
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const isDark = theme === 'dark';
+
+  // 지점 선택 (subEvents가 있으면 지점 탭 표시)
+  const hasSubEvents = routeEvent.subEvents && routeEvent.subEvents.length > 1;
+  const [selectedBranchIdx, setSelectedBranchIdx] = useState(0);
+  const event = hasSubEvents ? routeEvent.subEvents![selectedBranchIdx] : routeEvent;
 
   // 찜/즐겨찾기 & 리마인더
   const { isBookmarked, toggleBookmark } = useBookmarks();
@@ -427,6 +432,45 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         contentContainerStyle={[styles.contentContainer, { paddingBottom: insets.bottom + 100 }]}
         showsVerticalScrollIndicator={false}
       >
+        {/* 지점 선택 탭 (subEvents가 2개 이상일 때만 표시) */}
+        {hasSubEvents && (
+          <View style={[styles.branchTabContainer, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
+            <Text style={[styles.branchTabTitle, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+              지점 선택
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.branchTabScroll}>
+              {routeEvent.subEvents!.map((sub, idx) => {
+                const isActive = idx === selectedBranchIdx;
+                return (
+                  <TouchableOpacity
+                    key={sub.id || idx}
+                    style={[
+                      styles.branchTab,
+                      { 
+                        backgroundColor: isActive 
+                          ? (isDark ? '#a78bfa' : '#ec4899')
+                          : (isDark ? '#374151' : '#f1f5f9'),
+                        borderColor: isActive
+                          ? (isDark ? '#a78bfa' : '#ec4899')
+                          : (isDark ? '#475569' : '#e5e7eb'),
+                      },
+                    ]}
+                    onPress={() => setSelectedBranchIdx(idx)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[
+                      styles.branchTabText,
+                      { color: isActive ? '#ffffff' : (isDark ? '#e2e8f0' : '#374151') },
+                    ]}>
+                      {sanitizeText(sub.location || sub.venue || `지점 ${idx + 1}`, 20)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
         {/* 메인 정보 카드 */}
         <View style={[styles.mainCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
           {/* 프로모션 뱃지 */}
@@ -849,6 +893,38 @@ export default function EventDetailScreen({ navigation, route }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  // 지점 선택 탭
+  branchTabContainer: {
+    marginTop: -8,
+    marginBottom: -8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  branchTabTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  branchTabScroll: {
+    flexDirection: 'row',
+  },
+  branchTab: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+  },
+  branchTabText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',

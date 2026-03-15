@@ -117,23 +117,27 @@ class EventColorManager {
     dayEvents: any[], 
     currentIndex: number,
     isDark: boolean = false,
+    groupId?: string,
   ): string {
+    // groupId가 있으면 그룹 기준으로 색상 할당 (반복 일정 동일 색상)
+    const colorKey = groupId || eventId;
+    
     // 초기화 미완료 시 — 해시 기반 임시 색상 반환 (colorMap에 저장하지 않음)
     if (!this.isInitialized) {
-      const hash = (eventId || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      const hash = (colorKey || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
       const colors = isDark ? this.DARK_EVENT_COLORS : this.EVENT_COLORS;
       return colors[hash % colors.length];
     }
     
     // 이미 색상이 할당되어 있으면 다크모드 변환 후 반환
-    if (this.colorMap[eventId]) {
+    if (this.colorMap[colorKey]) {
       if (isDark) {
-        const lightIdx = this.EVENT_COLORS.indexOf(this.colorMap[eventId]);
+        const lightIdx = this.EVENT_COLORS.indexOf(this.colorMap[colorKey]);
         if (lightIdx >= 0) {
           return this.DARK_EVENT_COLORS[lightIdx];
         }
       }
-      return this.colorMap[eventId];
+      return this.colorMap[colorKey];
     }
 
     // 현재 날짜 파싱 (로컬 시간 기준 — UTC 해석 방지)
@@ -199,8 +203,8 @@ class EventColorManager {
       selectedColor = this.EVENT_COLORS[hash % this.EVENT_COLORS.length];
     }
 
-    // 라이트 색상을 colorMap에 저장
-    this.colorMap[eventId] = selectedColor;
+    // 라이트 색상을 colorMap에 저장 (groupId 기준)
+    this.colorMap[colorKey] = selectedColor;
     
     // colorMap 크기 제한 (1000개 초과 시 오래된 항목 정리)
     const MAX_COLOR_MAP_SIZE = 1000;

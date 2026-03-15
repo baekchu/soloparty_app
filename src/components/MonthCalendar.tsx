@@ -167,6 +167,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
           {/* 일정 목록 - 최대 3개만 표시 */}
           <View style={{ flex: 1, gap: 1 }}>
             {dayEvents.slice(0, 3).map((event, idx) => {
+              const groupId = event.groupId;
               const colorBg = EventColorManager.getColorForEvent(
                 event.id || `${dateString}-${idx}`,
                 event.title,
@@ -174,9 +175,11 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 filteredEvents,
                 dayEvents,
                 idx,
-                isDark
+                isDark,
+                groupId,
               );
-              const eventHeight = Math.max(Math.min(dim.cellHeight / 6, 14), 11); // 셀 높이에 비례, 최소 11, 최대 14
+              const eventHeight = Math.max(Math.min(dim.cellHeight / 6, 14), 11);
+
               return (
                 <View
                   key={event.id}

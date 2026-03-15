@@ -23,7 +23,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { loadEvents } from "../utils/storage";
-import { EventsByDate } from "../types";
+import { EventsByDate, Event } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRegion } from "../contexts/RegionContext";
 import { safeGetItem, safeSetItem } from "../utils/asyncStorageManager";
@@ -107,6 +107,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [showPointsModal, setShowPointsModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [panelTab, setPanelTab] = useState<'all' | 'bookmarks'>('all');
+  const [quickFilter, setQuickFilter] = useState<'all' | 'weekend' | 'age20s' | 'age30s' | 'thisWeek' | 'small' | 'large'>('all');
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+  const MAX_COLLAPSED_EVENTS = 3; // 접힌 상태에서 보여줄 최대 이벤트 수
 
   // panelTab 복원 (앱 재시작 시 마지막 탭 유지)
   useEffect(() => {
@@ -448,11 +451,13 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const handleDatePress = useCallback((date: string) => {
     setSelectedDate(date);
+    setQuickFilter('all');
     expandPanel();
   }, [expandPanel]);
 
   const handleClearSelectedDate = useCallback(() => {
     setSelectedDate(null);
+    setQuickFilter('all');
   }, []);
 
   const handleClearSearch = useCallback(() => {
@@ -461,6 +466,22 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const handleTabAll = useCallback(() => handleSetPanelTab('all'), [handleSetPanelTab]);
   const handleTabBookmarks = useCallback(() => handleSetPanelTab('bookmarks'), [handleSetPanelTab]);
+
+  const handleToggleDateExpand = useCallback((date: string) => {
+    setExpandedDates(prev => {
+      const next = new Set(prev);
+      if (next.has(date)) {
+        next.delete(date);
+      } else {
+        next.add(date);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleQuickFilter = useCallback((filter: 'all' | 'weekend' | 'age20s' | 'age30s' | 'thisWeek' | 'small' | 'large') => {
+    setQuickFilter(filter);
+  }, []);
 
   const handleCloseNotificationPrompt = useCallback(() => {
     setNotificationPromptClosed(true);
@@ -532,6 +553,50 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     const filterByLocation = (item: { event: any }) =>
       !selectedLocation || item.event.location === selectedLocation;
 
+    const filterByQuickFilter = (item: { date: string; event: any }) => {
+      if (quickFilter === 'all') return true;
+      const e = item.event;
+      if (quickFilter === 'weekend') {
+        const d = parseLocalDate(item.date);
+        const dow = d.getDay(); // 0=일, 5=금, 6=토
+        return dow === 5 || dow === 6 || dow === 0;
+      }
+      if (quickFilter === 'age20s') {
+        if (!e.ageRange) return false;
+        const nums = e.ageRange.match(/\d+/g);
+        if (!nums) return false;
+        const min = parseInt(nums[0], 10);
+        const max = nums[1] ? parseInt(nums[1], 10) : min;
+        return min >= 20 && max < 40;
+      }
+      if (quickFilter === 'age30s') {
+        if (!e.ageRange) return false;
+        const nums = e.ageRange.match(/\d+/g);
+        if (!nums) return false;
+        const min = parseInt(nums[0], 10);
+        const max = nums[1] ? parseInt(nums[1], 10) : min;
+        return max >= 30;
+      }
+      if (quickFilter === 'thisWeek') {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const endOfWeek = new Date(now);
+        endOfWeek.setDate(endOfWeek.getDate() + (7 - now.getDay()));
+        endOfWeek.setHours(23, 59, 59, 999);
+        const d = parseLocalDate(item.date);
+        return d >= now && d <= endOfWeek;
+      }
+      if (quickFilter === 'small') {
+        const total = (e.maleCapacity || 0) + (e.femaleCapacity || 0);
+        return total > 0 && total <= 20;
+      }
+      if (quickFilter === 'large') {
+        const total = (e.maleCapacity || 0) + (e.femaleCapacity || 0);
+        return total > 20;
+      }
+      return true;
+    };
+
     const filterBySearch = (item: { event: any }) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
@@ -557,6 +622,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           .map((event) => ({ date: selectedDate, event }))
           .filter(filterByRegion)
           .filter(filterByLocation)
+          .filter(filterByQuickFilter)
           .filter(filterBySearch)
           .sort(sortByTime);
       }
@@ -578,13 +644,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       })
       .filter(filterByRegion)
       .filter(filterByLocation)
+      .filter(filterByQuickFilter)
       .filter(filterBySearch)
       .sort((a, b) => {
         const dateCompare =
           parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime();
         return dateCompare !== 0 ? dateCompare : sortByTime(a, b);
       });
-  }, [events, selectedDate, selectedRegion, selectedLocation, searchQuery]);
+  }, [events, selectedDate, selectedRegion, selectedLocation, searchQuery, quickFilter]);
 
   // ==================== 추천 파티 (프로모션 광고 + 일반) ====================
   const weeklyHotEvents = useMemo(() => {
@@ -1476,7 +1543,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             marginBottom: 8,
           }}
         >
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text
               style={{
                 fontSize: 18,
@@ -1489,6 +1556,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 ? `${new Date(selectedDate + 'T00:00:00').getDate()}일 일정`
                 : "일정"}
             </Text>
+            {/* 일정 개수 뱃지 */}
+            {panelTab === 'all' && upcomingEvents.length > 0 && (
+              <View style={{
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                borderRadius: 10,
+                paddingHorizontal: 7,
+                paddingVertical: 2,
+              }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#ffffff' }}>
+                  {upcomingEvents.length}
+                </Text>
+              </View>
+            )}
             {selectedDate && (
               <TouchableOpacity
                 onPress={handleClearSelectedDate}
@@ -1604,6 +1684,49 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 )}
               </TouchableOpacity>
             </View>
+            {/* 빠른 필터 칩 */}
+            {panelTab === 'all' && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }} contentContainerStyle={{ gap: 6 }}>
+                {(selectedDate
+                  ? [
+                      { key: 'all' as const, label: '전체' },
+                      { key: 'age20s' as const, label: '20대' },
+                      { key: 'age30s' as const, label: '30대' },
+                      { key: 'small' as const, label: '소규모' },
+                      { key: 'large' as const, label: '대규모' },
+                    ]
+                  : [
+                      { key: 'all' as const, label: '전체' },
+                      { key: 'thisWeek' as const, label: '이번 주' },
+                      { key: 'weekend' as const, label: '주말' },
+                      { key: 'age20s' as const, label: '20대' },
+                      { key: 'age30s' as const, label: '30대' },
+                    ]
+                ).map(chip => (
+                  <TouchableOpacity
+                    key={chip.key}
+                    activeOpacity={0.7}
+                    onPress={() => handleQuickFilter(chip.key)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 5,
+                      borderRadius: 14,
+                      backgroundColor: quickFilter === chip.key ? 'rgba(167,139,250,0.5)' : 'rgba(255,255,255,0.08)',
+                      borderWidth: quickFilter === chip.key ? 0 : 1,
+                      borderColor: 'rgba(255,255,255,0.15)',
+                    }}
+                  >
+                    <Text style={{
+                      fontSize: 12,
+                      fontWeight: quickFilter === chip.key ? '700' : '500',
+                      color: quickFilter === chip.key ? '#ffffff' : 'rgba(255,255,255,0.6)',
+                    }}>
+                      {chip.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
           </View>
         )}
 
@@ -1674,11 +1797,30 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                         <Text style={{color: reminderSet ? '#ffffff' : 'rgba(255,255,255,0.6)', fontSize: 18 }}>♥</Text>
                       </TouchableOpacity>
                     </View>
-                    {event.location && (
-                      <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 8 }}>
-                        {event.location}
-                      </Text>
-                    )}
+                    {event.subEvents && event.subEvents.length > 1 ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                        {event.subEvents.slice(0, 3).map((sub, si) => (
+                          <View key={si} style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+                              {sub.location || sub.venue || `지점${si + 1}`}
+                            </Text>
+                          </View>
+                        ))}
+                        {event.subEvents.length > 3 && (
+                          <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>+{event.subEvents.length - 3}</Text>
+                          </View>
+                        )}
+                      </View>
+                    ) : event.location ? (
+                      <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+                        <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+                            {event.location}
+                          </Text>
+                        </View>
+                      </View>
+                    ) : null}
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <TouchableOpacity
                         onPress={() => navigation.navigate('EventDetail', { event, date })}
@@ -1963,7 +2105,23 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                           }
                         }}
                       >
-                        {eventsForDate.map((item, eventIndex) => (
+                        {(() => {
+                          const isDateExpanded = expandedDates.has(date);
+                          const totalCount = eventsForDate.length;
+                          const shouldCollapse = totalCount > MAX_COLLAPSED_EVENTS && !isDateExpanded;
+                          const visibleEvents = shouldCollapse ? eventsForDate.slice(0, MAX_COLLAPSED_EVENTS) : eventsForDate;
+                          const hiddenCount = totalCount - MAX_COLLAPSED_EVENTS;
+                          return (
+                            <>
+                              {/* 일정 개수 뱃지 (5개 이상일 때) */}
+                              {totalCount >= 5 && (
+                                <View style={{ marginBottom: 8 }}>
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>
+                                    {totalCount}개 일정
+                                  </Text>
+                                </View>
+                              )}
+                              {visibleEvents.map((item, eventIndex) => (
                           <React.Fragment key={`${date}-${item.event.id}-${eventIndex}`}>
                           <View
                             style={{
@@ -1972,7 +2130,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                               padding: 16,
                               paddingTop: 12,
                               marginBottom:
-                                eventIndex < eventsForDate.length - 1 ? 12 : 0,
+                                eventIndex < visibleEvents.length - 1 || shouldCollapse ? 12 : 0,
                             }}
                           >
                             <View
@@ -1993,19 +2151,32 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                               >
                                 {sanitizeText(item.event.title, 100)}
                               </Text>
-                              {item.event.location && (
-                                <Text
-                                  style={{
-                                    fontSize: 13,
-                                    fontWeight: "600",
-                                    color: "rgba(255, 255, 255, 0.7)",
-                                    marginLeft: 8,
-                                  }}
-                                >
-                                  {sanitizeText(item.event.location, 100)}
-                                </Text>
-                              )}
                             </View>
+                            {/* 지점 뱃지 */}
+                            {item.event.subEvents && item.event.subEvents.length > 1 ? (
+                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                                {item.event.subEvents.slice(0, 3).map((sub: Event, si: number) => (
+                                  <View key={si} style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+                                      {sub.location || sub.venue || `지점${si + 1}`}
+                                    </Text>
+                                  </View>
+                                ))}
+                                {item.event.subEvents.length > 3 && (
+                                  <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>+{item.event.subEvents.length - 3}</Text>
+                                  </View>
+                                )}
+                              </View>
+                            ) : item.event.location ? (
+                              <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                                <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+                                    {sanitizeText(item.event.location, 100)}
+                                  </Text>
+                                </View>
+                              </View>
+                            ) : null}
                             <Text
                               style={{
                                 fontSize: 13,
@@ -2051,6 +2222,40 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                           */}
                           </React.Fragment>
                         ))}
+                              {shouldCollapse && (
+                                <TouchableOpacity
+                                  activeOpacity={0.7}
+                                  onPress={() => handleToggleDateExpand(date)}
+                                  style={{
+                                    paddingVertical: 10,
+                                    borderRadius: 12,
+                                    backgroundColor: 'rgba(255,255,255,0.08)',
+                                    alignItems: 'center',
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>
+                                    +{hiddenCount}개 더 보기
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                              {isDateExpanded && totalCount > MAX_COLLAPSED_EVENTS && (
+                                <TouchableOpacity
+                                  activeOpacity={0.7}
+                                  onPress={() => handleToggleDateExpand(date)}
+                                  style={{
+                                    paddingVertical: 8,
+                                    alignItems: 'center',
+                                    marginTop: 4,
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>
+                                    접기
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </>
+                          );
+                        })()}
                       </View>
                     </View>
                   );
@@ -2064,7 +2269,23 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 );
               } else {
                 // 특정 날짜 선택: 카드 스타일
-                return upcomingEvents.map(({ date, event }, index) => (
+                const selectedDateKey = selectedDate || '_selected';
+                const isSelectedExpanded = expandedDates.has(selectedDateKey);
+                const totalSelected = upcomingEvents.length;
+                const shouldCollapseSelected = totalSelected > MAX_COLLAPSED_EVENTS && !isSelectedExpanded;
+                const visibleSelected = shouldCollapseSelected ? upcomingEvents.slice(0, MAX_COLLAPSED_EVENTS) : upcomingEvents;
+                const hiddenSelectedCount = totalSelected - MAX_COLLAPSED_EVENTS;
+                return (
+                  <>
+                    {/* 일정 개수 표시 */}
+                    {totalSelected >= 5 && (
+                      <View style={{ marginBottom: 8 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>
+                          {totalSelected}개 일정
+                        </Text>
+                      </View>
+                    )}
+                    {visibleSelected.map(({ date, event }, index) => (
                   <React.Fragment key={`${date}-${event.id}-${index}`}>
                   <View
                     style={{
@@ -2092,19 +2313,32 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                       >
                         {event.title}
                       </Text>
-                      {event.location && (
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: "600",
-                            color: "rgba(255, 255, 255, 0.7)",
-                            marginLeft: 8,
-                          }}
-                        >
-                          {event.location}
-                        </Text>
-                      )}
                     </View>
+                    {/* 지점 뱃지 */}
+                    {event.subEvents && event.subEvents.length > 1 ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                        {event.subEvents.slice(0, 3).map((sub, si) => (
+                          <View key={si} style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+                              {sub.location || sub.venue || `지점${si + 1}`}
+                            </Text>
+                          </View>
+                        ))}
+                        {event.subEvents.length > 3 && (
+                          <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>+{event.subEvents.length - 3}</Text>
+                          </View>
+                        )}
+                      </View>
+                    ) : event.location ? (
+                      <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+                        <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+                            {event.location}
+                          </Text>
+                        </View>
+                      </View>
+                    ) : null}
                     <Text
                       style={{
                         fontSize: 13,
@@ -2151,7 +2385,40 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                   }
                   */}
                   </React.Fragment>
-                ));
+                ))}
+                    {shouldCollapseSelected && (
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() => handleToggleDateExpand(selectedDateKey)}
+                        style={{
+                          paddingVertical: 10,
+                          borderRadius: 12,
+                          backgroundColor: 'rgba(255,255,255,0.08)',
+                          alignItems: 'center',
+                          marginBottom: 12,
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>
+                          +{hiddenSelectedCount}개 더 보기
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {isSelectedExpanded && totalSelected > MAX_COLLAPSED_EVENTS && (
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() => handleToggleDateExpand(selectedDateKey)}
+                        style={{
+                          paddingVertical: 8,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>
+                          접기
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                );
               }
             })()
           )
@@ -2195,13 +2462,13 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         onClose={handleCloseNotificationPrompt}
       />
 
-      {/* ==================== 앱 시작 광고 팝업 모달 ==================== */}
-      {showAdModal && (
+      {/* ==================== 앱 시작 광고 팝업 모달 (비활성화 - 나중에 활성화 시 주석 해제) ==================== */}
+      {/* {showAdModal && (
         <StartupAdModal 
           isDark={isDark}
           onClose={handleCloseAdModal}
         />
-      )}
+      )} */}
 
       {/* ==================== 포인트 모달 ==================== */}
       <PointsModal
