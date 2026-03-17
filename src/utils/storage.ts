@@ -1,16 +1,21 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventsByDate, Event, RecurringEvent } from '../types';
-import { safeGetItem, safeSetItem, safeRemoveItem, safeMultiGet, safeMultiSet } from './asyncStorageManager';
+import { safeRemoveItem, safeMultiGet, safeMultiSet } from './asyncStorageManager';
 import { secureLog } from './secureStorage';
 import { env } from '../config/env';
+import { getAllHolidays } from './koreanHolidays';
 
 // 환경 변수에서 Gist URL 로드 (보안 강화)
 const GIST_RAW_URL = env.GIST_RAW_URL;
 
 const CACHE_KEY = '@events_cache';
 const CACHE_TIMESTAMP_KEY = '@events_cache_timestamp';
-const CACHE_DURATION = 180000; // 3분 캐시 (성능 최적화)
+const CACHE_DURATION = 900000; // 15분 디스크 캐시
 const FETCH_TIMEOUT = 10000; // 10초 타임아웃
+
+// 인메모리 캐시: 앱 세션 동안 AsyncStorage 접근을 최소화
+let _memCache: EventsByDate | null = null;
+let _memCacheTime = 0;
+const MEM_CACHE_DURATION = 300000; // 5분 메모리 캐시 (디스크보다 짧게)
 const MAX_JSON_SIZE = 5 * 1024 * 1024; // 5MB 최대 JSON 크기 (DoS 방지)
 
 // ==================== 보안 강화 JSON 처리 ====================
@@ -155,15 +160,23 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
     // 날짜 유효성
     if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) continue;
     
-    // 최대 365일 제한 (무한 루프 방지)
-    const maxDays = 365;
-    let count = 0;
-    
-    const current = new Date(start);
-    while (current <= end && count < maxDays) {
-      if (targetDays.includes(current.getDay())) {
-        const dateStr = current.toISOString().split('T')[0];
-        
+    // 공휴일 자동 할당에서 중복 방지를 위해 이미 생성된 날짜 추적
+    const generatedDates = new Set<string>();
+
+    // 요일별로 직접 점프 (7일 단위) → 날짜 하나씩 순회 대비 ~7배 빠름
+    for (const targetDay of targetDays) {
+      // start~end 안에서 첫 번째 해당 요일 찾기
+      const daysToFirst = (targetDay - start.getDay() + 7) % 7;
+      const current = new Date(start);
+      current.setDate(current.getDate() + daysToFirst);
+
+      let occurrenceCount = 0;
+      while (current <= end && occurrenceCount < 60) { // 최대 60주(약 14개월) 안전 장치
+        const year = current.getFullYear();
+        const month = String(current.getMonth() + 1).padStart(2, '0');
+        const day = String(current.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+
         if (!excludeSet.has(dateStr)) {
           const event: Event = {
             id: `${rule.id}_${dateStr}`,
@@ -192,14 +205,59 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
             promotionLabel: rule.promotionLabel,
             promotionColor: rule.promotionColor,
           };
-          
+
           if (!result[dateStr]) result[dateStr] = [];
           result[dateStr].push(event);
+          generatedDates.add(dateStr);
         }
+
+        current.setDate(current.getDate() + 7);
+        occurrenceCount++;
       }
-      
-      current.setDate(current.getDate() + 1);
-      count++;
+    }
+
+    // 공휴일 자동 할당: includeHolidays=true 인 경우, 기존 패턴에 없는 공휴일에도 이벤트 추가
+    if (rule.includeHolidays) {
+      const startStr = rule.startDate;
+      const endStr = rule.endDate;
+      const allHolidays = getAllHolidays();
+
+      for (const [dateStr] of Object.entries(allHolidays)) {
+        if (dateStr < startStr || dateStr > endStr) continue;
+        if (excludeSet.has(dateStr)) continue;
+        if (generatedDates.has(dateStr)) continue; // 이미 요일 패턴으로 생성됨
+
+        const holidayEvent: Event = {
+          id: `${rule.id}_${dateStr}`,
+          groupId: rule.groupId || rule.id,
+          title: rule.title,
+          time: rule.time,
+          location: rule.location,
+          region: rule.region,
+          description: rule.description,
+          link: rule.link,
+          coordinates: rule.coordinates,
+          maleCapacity: rule.maleCapacity,
+          femaleCapacity: rule.femaleCapacity,
+          maleCount: rule.maleCount,
+          femaleCount: rule.femaleCount,
+          price: rule.price,
+          ageRange: rule.ageRange,
+          organizer: rule.organizer,
+          contact: rule.contact,
+          detailDescription: rule.detailDescription,
+          venue: rule.venue,
+          address: rule.address,
+          tags: rule.tags,
+          promoted: rule.promoted,
+          promotionPriority: rule.promotionPriority,
+          promotionLabel: rule.promotionLabel,
+          promotionColor: rule.promotionColor,
+        };
+
+        if (!result[dateStr]) result[dateStr] = [];
+        result[dateStr].push(holidayEvent);
+      }
     }
   }
   
@@ -388,18 +446,28 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
 // ==================== 공개 API ====================
 
 export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsByDate> => {
-  // 캐시 먼저 확인
+  // 1순위: 인메모리 캐시 (AsyncStorage보다 100배 빠름)
+  if (!forceRefresh) {
+    const memAge = Date.now() - _memCacheTime;
+    if (_memCache && memAge >= 0 && memAge < MEM_CACHE_DURATION) {
+      return _memCache;
+    }
+  }
+
+  // 2순위: AsyncStorage 디스크 캐시
   if (!forceRefresh) {
     const cached = await loadFromCache();
     if (cached) {
-      secureLog.info('✅ 캐시 사용');
+      secureLog.info('✅ 디스크 캐시 사용');
+      _memCache = cached;
+      _memCacheTime = Date.now();
       return cached;
     }
   }
   
   try {
     secureLog.info('🔄 데이터 로딩...');
-    const url = `${GIST_RAW_URL}?_=${Date.now()}`;
+    const url = GIST_RAW_URL; // 캐시버스팅 파라미터 제거: Cache-Control 헤더로 처리
     const rawData = await fetchData(url);
     
     // recurring 필드 추출 후 제거
@@ -471,8 +539,12 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     }
     
     secureLog.info('✅ 로딩 완료');
-    
-    // 캠시 저장
+
+    // 인메모리 캐시 갱신 (저장보다 먼저)
+    _memCache = processed;
+    _memCacheTime = Date.now();
+
+    // 디스크 캐시 저장
     await saveToCache(processed);
     
     return processed;
@@ -519,6 +591,9 @@ export const saveEvents = async (events: EventsByDate): Promise<void> => {
 
 // 캐시 삭제 (디버깅용)
 export const clearCache = async (): Promise<void> => {
+  // 인메모리 캐시도 즉시 초기화
+  _memCache = null;
+  _memCacheTime = 0;
   try {
     await safeRemoveItem(CACHE_KEY);
     await safeRemoveItem(CACHE_TIMESTAMP_KEY);

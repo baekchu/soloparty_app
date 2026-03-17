@@ -2,6 +2,7 @@ import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react'
 import { View, Text, TouchableOpacity, Dimensions, StyleSheet } from 'react-native';
 import { EventsByDate, Event } from '../types';
 import EventColorManager from '../utils/eventColorManager';
+import { getHolidayName } from '../utils/koreanHolidays';
 
 // ==================== 상수 정의 (컴포넌트 외부) ====================
 const MONTH_NAMES = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'] as const;
@@ -131,6 +132,8 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     const isToday = dateString === todayString;
     const isSunday = dayIndex === 0;
     const isSaturday = dayIndex === 6;
+    const holidayName = getHolidayName(dateString);
+    const isHolidayDay = !!holidayName && !isSunday; // 일요일은 이미 빨강색
 
     return (
       <TouchableOpacity
@@ -145,15 +148,15 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
         activeOpacity={0.7}
       >
         <View style={{ padding: dim.cellWidth < 50 ? 1 : 2, height: '100%', flexDirection: 'column' }}>
-          {/* 날짜 숫자 - 상단 중앙 */}
-          <View style={{ alignItems: 'center', marginBottom: 6, marginTop: 3 }}>
+          {/* 날짜 숫자 - 상단 중앙 (고정 높이로 정렬 보장) */}
+          <View style={{ alignItems: 'center', marginTop: 3, height: 28, justifyContent: 'flex-start' }}>
             <Text 
               style={{
                 fontSize: dim.cellWidth < 50 ? 12 : 15,
                 fontWeight: isToday ? '800' : '500',
                 color: isToday 
                   ? (isDark ? '#a78bfa' : '#ec4899')
-                  : isSunday 
+                  : (isSunday || isHolidayDay)
                     ? '#ef4444' 
                     : isSaturday 
                       ? '#3b82f6' 
@@ -162,6 +165,21 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
             >
               {day}
             </Text>
+            {holidayName && (
+              <Text
+                numberOfLines={1}
+                style={{
+                  fontSize: dim.cellWidth < 46 ? 5 : 6,
+                  color: '#ef4444',
+                  fontWeight: '700',
+                  lineHeight: 8,
+                  textAlign: 'center',
+                  maxWidth: dim.cellWidth - 4,
+                }}
+              >
+                {holidayName.length > 5 ? holidayName.substring(0, 5) : holidayName}
+              </Text>
+            )}
           </View>
           
           {/* 일정 목록 - 최대 3개만 표시 */}

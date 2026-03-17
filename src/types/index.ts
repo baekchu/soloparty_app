@@ -73,8 +73,13 @@ export interface RecurringEvent {
   startDate: string;
   /** 반복 종료일 (YYYY-MM-DD) */
   endDate: string;
-  /** 특정 날짜 제외 (예: 공휴일) */
+  /** 특정 날짜 제외 */
   excludeDates?: string[];
+  /**
+   * 공휴일에도 파티를 여는 경우 true로 설정.
+   * 일반 요일 패턴에 없는 공휴일에도 자동으로 이벤트가 생성됩니다.
+   */
+  includeHolidays?: boolean;
 }
 
 export type RootStackParamList = {
