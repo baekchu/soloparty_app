@@ -71,6 +71,10 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     navigation.navigate('Legal', { type });
   }, [navigation]);
 
+  const navigateToTerms = useCallback(() => navigateToLegal('terms'), [navigateToLegal]);
+  const navigateToPrivacy = useCallback(() => navigateToLegal('privacy'), [navigateToLegal]);
+  const navigateToCopyright = useCallback(() => navigateToLegal('copyright'), [navigateToLegal]);
+
   const navigateToCoupon = useCallback(() => {
     navigation.navigate('Coupon');
   }, [navigation]);
@@ -232,36 +236,27 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
             약관 및 법적정보
           </Text>
 
-          <TouchableOpacity onPress={() => navigateToLegal('terms')} style={settingsStyles.menuItem}>
+          <TouchableOpacity onPress={navigateToTerms} style={settingsStyles.menuItem}>
             <Text style={[settingsStyles.menuText, { color: colors.text }]}>이용약관</Text>
             <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
 
           <View style={[settingsStyles.divider, { backgroundColor: colors.border }]} />
 
-          <TouchableOpacity onPress={() => navigateToLegal('privacy')} style={settingsStyles.menuItem}>
+          <TouchableOpacity onPress={navigateToPrivacy} style={settingsStyles.menuItem}>
             <Text style={[settingsStyles.menuText, { color: colors.text }]}>개인정보처리방침</Text>
             <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
 
           <View style={[settingsStyles.divider, { backgroundColor: colors.border }]} />
 
-          <TouchableOpacity onPress={() => navigateToLegal('copyright')} style={settingsStyles.menuItem}>
+          <TouchableOpacity onPress={navigateToCopyright} style={settingsStyles.menuItem}>
             <Text style={[settingsStyles.menuText, { color: colors.text }]}>저작권 정보</Text>
             <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 데이터 관리 */}
-        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
-          <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
-            데이터 관리
-          </Text>
-          <TouchableOpacity onPress={handleClearCache} style={settingsStyles.menuItem}>
-            <Text style={[settingsStyles.menuText, { color: colors.text }]}>캐시 삭제</Text>
-            <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
-          </TouchableOpacity>
-        </View>
+       
 
         {/* 앱 정보 */}
         <View style={[settingsStyles.section, { backgroundColor: colors.card }]}>

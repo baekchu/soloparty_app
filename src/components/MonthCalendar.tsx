@@ -26,6 +26,12 @@ const getFirstDayOfMonth = (year: number, month: number) => {
   return new Date(year, month - 1, 1).getDay();
 };
 
+// 컴포넌트 외부로 이동 — 매 렌더마다 원시 함수 재생성 방지
+const getTodayStr = () => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
+
 export default React.memo(function MonthCalendar({ year, month, events, isDark, onDatePress, selectedLocation, selectedRegion }: MonthCalendarProps) {
   
   // location과 region으로 필터링된 이벤트 (최적화)
@@ -70,6 +76,39 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const dimensionsRef = useRef(dimensions);
   dimensionsRef.current = dimensions;
 
+  // 치수 의존 스타일을 useMemo로 미리 계산 (renderDay 호출마다 새 객체 생성 방지)
+  const cellStyles = useMemo(() => {
+    const { cellWidth, cellHeight } = dimensions;
+    const isSmall = cellWidth < 50;
+    const circleSize = isSmall ? 22 : 25;
+    const eventHeight = Math.max(Math.min(cellHeight / 6, 14), 11);
+    return {
+      emptyCell: { width: cellWidth, height: cellHeight, backgroundColor: 'transparent' as const },
+      cell: { width: cellWidth, height: cellHeight, borderBottomWidth: 0 as const, backgroundColor: 'transparent' as const },
+      innerView: { padding: isSmall ? 1 : 2, height: '100%' as const, flexDirection: 'column' as const },
+      todayCircle: {
+        width: circleSize, height: circleSize,
+        borderRadius: isSmall ? 11 : 13,
+        alignItems: 'center' as const, justifyContent: 'center' as const,
+      },
+      fontSize: isSmall ? 12 : 15,
+      holidayFontSize: cellWidth < 46 ? 5 : 6,
+      // eventHeight를 미리 계산해 글자 크기에 반영 (이전 코드의 Math.min(8, eventHeight*0.6) 복원)
+      eventFontSize: isSmall ? 7 : Math.min(8, eventHeight * 0.6),
+      moreFontSize: isSmall ? 7 : 8,
+      eventHeight,
+    };
+  }, [dimensions]);
+
+  // 테마 의존 색상을 useMemo로 미리 계산
+  const themeColors = useMemo(() => ({
+    todayBg: isDark ? '#a78bfa' : '#ec4899',
+    text: isDark ? '#e5e7eb' : '#1f2937',
+    eventText: isDark ? '#ffffff' : '#374151',
+    moreIndicatorBg: isDark ? '#374151' : '#f3f4f6',
+    moreTextColor: isDark ? '#d1d5db' : '#4b5563',
+  }), [isDark]);
+
   React.useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       const { width, height } = window;
@@ -97,34 +136,22 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const daysInMonth = useMemo(() => getDaysInMonth(year, month), [year, month]);
   const firstDay = useMemo(() => getFirstDayOfMonth(year, month), [year, month]);
   
-  // 오늘 날짜 (자정 넘김 감지  — 앱을 열어둔 채 자정을 넘겨도 정확한 "오늘" 표시)
-  const getTodayStr = () => {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  };
+  // 오늘 날짜 (자정 넘김 감지)
   const [todayString, setTodayString] = useState(getTodayStr);
   
   useEffect(() => {
-    // 자정까지 남은 시간 계산
     const now = new Date();
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     const msUntilMidnight = midnight.getTime() - now.getTime();
-    
     const timer = setTimeout(() => {
       setTodayString(getTodayStr());
-    }, msUntilMidnight + 500); // 자정 직후 0.5초 후 갱신
-    
+    }, msUntilMidnight + 500);
     return () => clearTimeout(timer);
-  }, [todayString]); // todayString 변경 시 다음 자정 타이머 재설정
+  }, [todayString]);
 
   const renderDay = useCallback((day: number | null, weekIndex: number, dayIndex: number, isOtherMonth: boolean = false) => {
-    const dim = dimensionsRef.current;
     if (!day || isOtherMonth) {
-      return <View key={`empty-${weekIndex}-${dayIndex}`} style={{ 
-        width: dim.cellWidth, 
-        height: dim.cellHeight,
-        backgroundColor: 'transparent',
-      }} />;
+      return <View key={`empty-${weekIndex}-${dayIndex}`} style={cellStyles.emptyCell} />;
     }
 
     const dateString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -133,57 +160,57 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     const isSunday = dayIndex === 0;
     const isSaturday = dayIndex === 6;
     const holidayName = getHolidayName(dateString);
-    const isHolidayDay = !!holidayName && !isSunday; // 일요일은 이미 빨강색
+    const isHolidayDay = !!holidayName && !isSunday;
+
+    const dateTextColor = isToday
+      ? '#ffffff'
+      : (isSunday || isHolidayDay)
+        ? '#ef4444'
+        : isSaturday
+          ? '#3b82f6'
+          : themeColors.text;
 
     return (
       <TouchableOpacity
         key={`${weekIndex}-${dayIndex}`}
-        style={{ 
-          width: dim.cellWidth, 
-          height: dim.cellHeight,
-          borderBottomWidth: 0,
-          backgroundColor: 'transparent',
-        }}
+        style={cellStyles.cell}
         onPress={() => onDatePress?.(dateString)}
         activeOpacity={0.7}
       >
-        <View style={{ padding: dim.cellWidth < 50 ? 1 : 2, height: '100%', flexDirection: 'column' }}>
+        <View style={cellStyles.innerView}>
           {/* 날짜 숫자 - 상단 중앙 (고정 높이로 정렬 보장) */}
-          <View style={{ alignItems: 'center', marginTop: 3, height: 28, justifyContent: 'flex-start' }}>
-            <Text 
-              style={{
-                fontSize: dim.cellWidth < 50 ? 12 : 15,
-                fontWeight: isToday ? '800' : '500',
-                color: isToday 
-                  ? (isDark ? '#a78bfa' : '#ec4899')
-                  : (isSunday || isHolidayDay)
-                    ? '#ef4444' 
-                    : isSaturday 
-                      ? '#3b82f6' 
-                      : isDark ? '#e5e7eb' : '#1f2937',
-              }}
-            >
-              {day}
-            </Text>
+          <View style={monthStyles.dateHeader}>
+            {/* 오늘 날짜: 작은 원형 배경 */}
+            <View style={isToday ? [cellStyles.todayCircle, { backgroundColor: themeColors.todayBg }] : undefined}>
+              <Text
+                style={{
+                  fontSize: cellStyles.fontSize,
+                  fontWeight: isToday ? '800' : '500',
+                  color: dateTextColor,
+                }}
+              >
+                {day}
+              </Text>
+            </View>
             {holidayName && (
               <Text
                 numberOfLines={1}
                 style={{
-                  fontSize: dim.cellWidth < 46 ? 5 : 6,
+                  fontSize: cellStyles.holidayFontSize,
                   color: '#ef4444',
                   fontWeight: '700',
                   lineHeight: 8,
                   textAlign: 'center',
-                  maxWidth: dim.cellWidth - 4,
+                  maxWidth: dimensionsRef.current.cellWidth - 4,
                 }}
               >
                 {holidayName.length > 5 ? holidayName.substring(0, 5) : holidayName}
               </Text>
             )}
           </View>
-          
+
           {/* 일정 목록 - 최대 3개만 표시 */}
-          <View style={{ flex: 1, gap: 1 }}>
+          <View style={monthStyles.eventList}>
             {dayEvents.slice(0, 3).map((event, idx) => {
               const groupId = event.groupId;
               const colorBg = EventColorManager.getColorForEvent(
@@ -196,23 +223,16 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                 isDark,
                 groupId,
               );
-              const eventHeight = Math.max(Math.min(dim.cellHeight / 6, 14), 11);
 
               return (
                 <View
                   key={event.id}
-                  style={{ 
-                    backgroundColor: colorBg,
-                    borderRadius: 2,
-                    height: eventHeight,
-                    justifyContent: 'center',
-                    paddingHorizontal: 2,
-                  }}
+                  style={[monthStyles.eventItem, { backgroundColor: colorBg, height: cellStyles.eventHeight }]}
                 >
-                  <Text 
-                    style={{ 
-                      color: isDark ? '#ffffff' : '#374151',
-                      fontSize: dim.cellWidth < 50 ? 7 : Math.min(8, eventHeight * 0.6),
+                  <Text
+                    style={{
+                      color: themeColors.eventText,
+                      fontSize: cellStyles.eventFontSize,
                       fontWeight: '700',
                       letterSpacing: -0.2,
                     }}
@@ -224,15 +244,8 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
               );
             })}
             {dayEvents.length > 3 && (
-              <View style={{
-                backgroundColor: isDark ? '#374151' : '#f3f4f6',
-                borderRadius: 3,
-                paddingHorizontal: 3,
-                paddingVertical: 1,
-                alignSelf: 'flex-start',
-                marginTop: 1,
-              }}>
-                <Text style={{ fontSize: dim.cellWidth < 50 ? 7 : 8, fontWeight: '800', color: isDark ? '#d1d5db' : '#4b5563' }}>
+              <View style={[monthStyles.moreEventsContainer, { backgroundColor: themeColors.moreIndicatorBg }]}>
+                <Text style={[monthStyles.moreEventsText, { fontSize: cellStyles.moreFontSize, color: themeColors.moreTextColor }]}>
                   +{dayEvents.length - 3}
                 </Text>
               </View>
@@ -241,7 +254,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
         </View>
       </TouchableOpacity>
     );
-  }, [filteredEvents, isDark, todayString, year, month, onDatePress]);
+  }, [filteredEvents, isDark, todayString, year, month, onDatePress, cellStyles, themeColors]);
 
   const renderWeeks = useCallback(() => {
     const weeks: Array<Array<{ day: number; isOtherMonth: boolean }>> = [];
@@ -325,10 +338,11 @@ const monthStyles = StyleSheet.create({
     borderBottomWidth: 0,
     backgroundColor: 'transparent',
   },
-  dayNumber: {
+  dateHeader: {
     alignItems: 'center',
-    marginBottom: 6,
     marginTop: 3,
+    height: 28,
+    justifyContent: 'flex-start',
   },
   eventList: {
     flex: 1,
@@ -345,5 +359,8 @@ const monthStyles = StyleSheet.create({
     paddingVertical: 1,
     alignSelf: 'flex-start',
     marginTop: 1,
+  },
+  moreEventsText: {
+    fontWeight: '800',
   },
 });

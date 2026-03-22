@@ -20,18 +20,17 @@ const NOTIFICATION_SETTINGS_KEY = '@solo_party_notification_settings';
 // Expo Go 환경 감지
 const isExpoGo = Constants.appOwnership === 'expo';
 
-// 알림 핸들러 설정 (Expo Go가 아닐 때만)
-if (!isExpoGo) {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
-  });
-}
+// 알림 채널 ID (Android)
+const ANDROID_CHANNEL_ID = 'default';
+
+// ==================== 메모리 캐시 (성능 최적화) ====================
+let _cachedSettings: NotificationSettings | null = null;
+let _cachedSettingsTime = 0;
+const SETTINGS_CACHE_TTL = 30000; // 30초 캐시
+
+let _permissionGranted: boolean | null = null;
+let _permissionCheckTime = 0;
+const PERMISSION_CACHE_TTL = 60000; // 60초 캐시
 
 export interface NotificationSettings {
   enabled: boolean;
@@ -95,9 +94,14 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
 };
 
 /**
- * 알림 설정 불러오기
+ * 알림 설정 불러오기 (메모리 캐시 적용)
  */
 export const getNotificationSettings = async (): Promise<NotificationSettings> => {
+  // 캐시 유효하면 즉시 반환 (AsyncStorage I/O 생략)
+  const now = Date.now();
+  if (_cachedSettings && now - _cachedSettingsTime < SETTINGS_CACHE_TTL) {
+    return _cachedSettings;
+  }
   try {
     const settings = await safeGetItem(NOTIFICATION_SETTINGS_KEY);
     if (settings) {
@@ -114,11 +118,14 @@ export const getNotificationSettings = async (): Promise<NotificationSettings> =
         if (typeof parsed.enabled === 'boolean' &&
             typeof parsed.newEventAlerts === 'boolean' &&
             typeof parsed.eventReminders === 'boolean') {
-          return {
+          const result = {
             enabled: parsed.enabled,
             newEventAlerts: parsed.newEventAlerts,
             eventReminders: parsed.eventReminders,
           };
+          _cachedSettings = result;
+          _cachedSettingsTime = Date.now();
+          return result;
         }
       } catch {
         secureLog.warn('⚠️ 알림 설정 JSON 파싱 실패');
@@ -136,6 +143,9 @@ export const getNotificationSettings = async (): Promise<NotificationSettings> =
  */
 export const saveNotificationSettings = async (settings: NotificationSettings): Promise<void> => {
   try {
+    // 캐시 무효화 후 저장
+    _cachedSettings = settings;
+    _cachedSettingsTime = Date.now();
     await safeSetItem(NOTIFICATION_SETTINGS_KEY, JSON.stringify(settings));
   } catch (error) {
     secureLog.error('알림 설정 저장 실패');
@@ -197,6 +207,7 @@ export const sendNewEventNotification = async (eventTitle: string, eventDate: st
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.HIGH,
         data: { eventTitle, eventDate },
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_ID } : {}),
       },
       trigger: null, // 즉시 전송
     });
@@ -222,6 +233,7 @@ export const sendTestNotification = async (): Promise<boolean> => {
         body: '알림이 정상적으로 작동하고 있습니다!',
         sound: 'default',
         data: { test: true },
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_ID } : {}),
       },
       trigger: null,
     });
@@ -258,6 +270,7 @@ export const sendAdLimitResetNotification = async (): Promise<void> => {
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.HIGH,
         data: { type: 'ad_limit_reset' },
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_ID } : {}),
       },
       trigger: null, // 즉시 전송
     });
@@ -296,6 +309,7 @@ export const scheduleEventReminder = async (
         body: `${eventTitle}이(가) 1시간 후 시작됩니다.`,
         data: { type: 'event_reminder', eventId },
         sound: true,
+        ...(Platform.OS === 'android' ? { channelId: 'event-reminders' } : {}),
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,

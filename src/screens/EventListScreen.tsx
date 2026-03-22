@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, memo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ListRenderItemInfo } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ListRenderItemInfo, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { format } from 'date-fns';
 import { ko } from 'date-fns/locale';
@@ -14,6 +14,7 @@ import { MainTabParamList } from '../types';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { Colors, Radius, Shadows, Typography, Spacing } from '../utils/designSystem';
 import { parseLocalDate } from '../utils/sanitize';
+import { EventListSkeleton } from '../components/SkeletonLoader';
 
 type EventListScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, 'EventList'>,
@@ -104,6 +105,7 @@ const EventCard = memo(({ item, isDark, onPress }: EventCardProps) => {
 
 export default function EventListScreen({ navigation }: EventListScreenProps) {
   const [allEvents, setAllEvents] = useState<EventWithDate[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -114,6 +116,7 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
   );
 
   const loadAllEvents = useCallback(async () => {
+    setIsLoading(true);
     try {
       const events = await loadEvents();
       const eventList: EventWithDate[] = [];
@@ -129,6 +132,8 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
     } catch {
       // 로드 실패 시 빈 목록 유지
       setAllEvents([]);
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
@@ -147,18 +152,29 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
     item.id || `${item.date}-${item.title}`,
   []);
 
+  // 고정 높이로 성능 최적화 (실제 카드 높이에 맞게 조정)
+  const getItemLayout = useCallback((_: any, index: number) => ({
+    length: 150, // 예상 아이템 높이
+    offset: 150 * index,
+    index,
+  }), []);
+
   return (
     <View style={[styles.container, { backgroundColor: c.background, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
       <View style={[styles.header, { backgroundColor: c.background }]}>
         <Text style={[styles.headerTitle, { color: c.text }]}>
           전체 이벤트
         </Text>
-        <Text style={[styles.headerCount, { color: c.textSecondary }]}>
-          {allEvents.length}개
-        </Text>
+        {!isLoading && (
+          <Text style={[styles.headerCount, { color: c.textSecondary }]}>
+            {allEvents.length}개
+          </Text>
+        )}
       </View>
 
-      {allEvents.length === 0 ? (
+      {isLoading ? (
+        <EventListSkeleton count={8} />
+      ) : allEvents.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyIcon}>📅</Text>
           <Text style={[styles.emptyText, { color: c.textSecondary }]}>
@@ -173,13 +189,18 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
           data={allEvents}
           renderItem={renderEvent}
           keyExtractor={keyExtractor}
+          getItemLayout={getItemLayout}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          removeClippedSubviews={true}
-          maxToRenderPerBatch={15}
-          windowSize={7}
-          initialNumToRender={10}
-          updateCellsBatchingPeriod={30}
+          removeClippedSubviews={Platform.OS === 'android'} // Android에서만 활성화
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          initialNumToRender={8}
+          updateCellsBatchingPeriod={50}
+          scrollEventThrottle={16}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+          }}
         />
       )}
     </View>

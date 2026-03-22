@@ -297,6 +297,15 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
   if (isLoading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+        {/* 헤더 */}
+        <View style={[styles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
+          <TouchableOpacity onPress={goBack} style={styles.backButton}>
+            <Text style={[styles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>쿠폰</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+        
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={isDark ? '#a78bfa' : '#ec4899'} />
           <Text style={[styles.loadingText, { color: isDark ? '#94a3b8' : '#64748b' }]}>

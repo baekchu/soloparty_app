@@ -42,24 +42,30 @@ function ErrorScreen({ message }: { message: string }) {
   );
 }
 
-function AppNavigator() {
+// AppNavigator 최적화 - 불필요한 리렌더링 방지
+const AppNavigator = React.memo(() => {
   const { theme } = useTheme();
+  
+  // Stack.Navigator 설정을 useMemo로 최적화
+  const screenOptions = React.useMemo(() => ({ headerShown: false }), []);
+  const modalOptions = React.useMemo(() => ({ presentation: "modal" as const }), []);
+  const cardOptions = React.useMemo(() => ({ presentation: "card" as const }), []);
 
   return (
     <>
       <StatusBar style={theme === "dark" ? "light" : "dark"} />
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator screenOptions={screenOptions}>
         <Stack.Screen name="MainTabs" component={CalendarScreen} />
-        <Stack.Screen name="AddEvent" component={AddEventScreen} options={{ presentation: "modal" }} />
-        <Stack.Screen name="Settings" component={SettingsScreen} options={{ presentation: "modal" }} />
-        <Stack.Screen name="LocationPicker" component={LocationPickerScreen} options={{ presentation: "modal" }} />
-        <Stack.Screen name="Legal" component={LegalScreen} options={{ presentation: "modal" }} />
-        <Stack.Screen name="Coupon" component={CouponScreen} options={{ presentation: "modal" }} />
-        <Stack.Screen name="EventDetail" component={EventDetailScreen} options={{ presentation: "card" }} />
+        <Stack.Screen name="AddEvent" component={AddEventScreen} options={modalOptions} />
+        <Stack.Screen name="Settings" component={SettingsScreen} options={modalOptions} />
+        <Stack.Screen name="LocationPicker" component={LocationPickerScreen} options={modalOptions} />
+        <Stack.Screen name="Legal" component={LegalScreen} options={modalOptions} />
+        <Stack.Screen name="Coupon" component={CouponScreen} options={modalOptions} />
+        <Stack.Screen name="EventDetail" component={EventDetailScreen} options={cardOptions} />
       </Stack.Navigator>
     </>
   );
-}
+});
 
 function AppContent() {
   const [isReady, setIsReady] = useState(false);

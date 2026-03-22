@@ -20,6 +20,8 @@ import {
   InteractionManager,
   ActivityIndicator,
   TextInput,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { loadEvents } from "../utils/storage";
@@ -85,6 +87,109 @@ const INITIAL_MONTHS_RANGE = 3; // 초기 로드 월 범위 (앞뒤 3개월)
 
 
 
+// ==================== 이벤트 카드 (메모이제이션 — 데이터 변경 시에만 재렌더) ====================
+interface EventCardProps {
+  event: any;
+  date: string;
+  onPress: (event: any, date: string) => void;
+  compact?: boolean;
+  marginBottom?: number;
+}
+const EventCard = React.memo(({ event, date, onPress, compact = false, marginBottom = 12 }: EventCardProps) => {
+  const handlePress = React.useCallback(() => onPress(event, date), [onPress, event, date]);
+  return (
+    <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16, padding: 16, paddingTop: compact ? 12 : 16, marginBottom }}>
+      <Text style={{ fontSize: compact ? 15 : 16, fontWeight: '700', color: '#ffffff', flex: 1, marginBottom: 6 }} numberOfLines={compact ? 2 : undefined}>
+        {sanitizeText(event.title, 100)}
+      </Text>
+      {event.subEvents && event.subEvents.length > 1 ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: compact ? 6 : 8 }}>
+          {event.subEvents.slice(0, 3).map((sub: any, si: number) => (
+            <View key={si} style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+                {sub.location || sub.venue || `지점${si + 1}`}
+              </Text>
+            </View>
+          ))}
+          {event.subEvents.length > 3 && (
+            <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>+{event.subEvents.length - 3}</Text>
+            </View>
+          )}
+        </View>
+      ) : event.location ? (
+        <View style={{ flexDirection: 'row', marginBottom: compact ? 6 : 8 }}>
+          <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+            <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
+              {sanitizeText(event.location, 100)}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+      <Text style={{ fontSize: 13, fontWeight: '600', color: '#e0e7ff', marginBottom: compact ? 0 : 12 }}>
+        {event.time || '시간 미정'}
+      </Text>
+      <TouchableOpacity
+        onPress={handlePress}
+        style={{ marginTop: 10, paddingVertical: compact ? 6 : 8, paddingHorizontal: compact ? 12 : 14, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: compact ? 8 : 10, alignSelf: 'flex-start' }}
+      >
+        <Text style={{ color: '#ffffff', fontSize: compact ? 12 : 13, fontWeight: compact ? '600' : '700' }}>
+          자세히 보기
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+});
+
+// ==================== 검색바 (분리된 컴포넌트 — 타이핑 시 부모 리렌더 방지) ====================
+interface PanelSearchInputProps {
+  onDebouncedChange: (text: string) => void;
+  clearSignal: number;
+}
+const PanelSearchInput = React.memo(({ onDebouncedChange, clearSignal }: PanelSearchInputProps) => {
+  const [value, setValue] = React.useState('');
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    if (clearSignal === 0) return;
+    setValue('');
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    onDebouncedChange('');
+  }, [clearSignal, onDebouncedChange]);
+
+  const handleChange = React.useCallback((text: string) => {
+    setValue(text);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onDebouncedChange(text);
+      debounceRef.current = null;
+    }, 200);
+  }, [onDebouncedChange]);
+
+  const handleClear = React.useCallback(() => {
+    setValue('');
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    onDebouncedChange('');
+  }, [onDebouncedChange]);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.2)', borderRadius: 10, paddingHorizontal: 12, marginBottom: 8 }}>
+      <TextInput
+        style={{ flex: 1, paddingVertical: Platform.OS === 'ios' ? 10 : 8, fontSize: 14, color: '#ffffff' }}
+        placeholder="제목, 장소, 태그 검색..."
+        placeholderTextColor="rgba(255, 255, 255, 0.5)"
+        value={value}
+        onChangeText={handleChange}
+        returnKeyType="search"
+      />
+      {value.length > 0 && (
+        <TouchableOpacity onPress={handleClear} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>✕</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+});
 
 export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // ==================== 상태 관리 (최소화) ====================
@@ -103,11 +208,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [isDataReady, setIsDataReady] = useState(false); // 데이터 로딩 상태
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
   const [isPanelExpanded, setIsPanelExpanded] = useState(false);
-  const [heightUpdateTrigger, setHeightUpdateTrigger] = useState(0);
   const [showPointsModal, setShowPointsModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchClearSignal, setSearchClearSignal] = useState(0);
   const [panelTab, setPanelTab] = useState<'all' | 'bookmarks'>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'weekend' | 'age20s' | 'age30s' | 'thisWeek' | 'small' | 'large'>('all');
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
@@ -160,9 +263,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const panelHeightValueRef = useRef(100); // Animated.Value 추적 (private _value 대체)
   const panelStartHeight = useRef(100);
   const panelAnimRef = useRef<Animated.CompositeAnimation | null>(null); // 애니메이션 충돌 방지
-  const pendingHeightUpdateRef = useRef(false); // heightUpdateTrigger 배치 처리용
   const screenHeightRef = useRef(screenHeight); // PanResponder 내부용 최신 screenHeight
   screenHeightRef.current = screenHeight;
+  const insetsBottomRef = useRef(insets.bottom); // PanResponder 내부용 최신 insets.bottom
+  insetsBottomRef.current = insets.bottom;
 
   // 패널 애니메이션 헬퍼 (이전 애니메이션 중지 후 시작)
   const animatePanel = useCallback((toValue: number, callback?: () => void) => {
@@ -191,7 +295,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }, [panelHeight]);
   const scrollViewRef = useRef<ScrollView>(null);
   const monthHeightsRef = useRef<Record<string, number>>({});
-  const eventListHeightsRef = useRef<Record<string, number>>({});
 
   // 패널 내부 스크롤 상태 추적 (사용자 편의성 개선)
   const panelScrollRef = useRef<ScrollView>(null);
@@ -333,7 +436,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         // 드래그 시작점에서 이동한 거리만큼 패널 높이 조정
         const newValue = panelStartHeight.current - gestureState.dy;
         const minHeight = 100;
-        const maxHeight = screenHeightRef.current - 100;
+        const maxHeight = Platform.OS === 'android'
+          ? screenHeightRef.current - 100 - insetsBottomRef.current
+          : screenHeightRef.current - 100;
         
         if (newValue >= minHeight && newValue <= maxHeight) {
           panelHeight.setValue(newValue);
@@ -341,11 +446,15 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       },
       onPanResponderRelease: (_, gestureState) => {
         const threshold = 50;
+        const maxH = Platform.OS === 'android'
+          ? screenHeightRef.current - 100 - insetsBottomRef.current
+          : screenHeightRef.current - 100;
+        const midPoint = (100 + maxH) / 2;
         
         if (gestureState.dy < -threshold) {
           // 위로 스와이프 - 패널 확장
           setIsPanelExpanded(true);
-          animatePanel(screenHeightRef.current - 100);
+          animatePanel(maxH);
         } else if (gestureState.dy > threshold) {
           // 아래로 스와이프 - 패널 축소
           setIsPanelExpanded(false);
@@ -353,11 +462,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         } else {
           // 현재 위치에 따라 결정
           const currentValue = panelHeightValueRef.current;
-          const midPoint = (100 + screenHeightRef.current - 100) / 2;
           
           if (currentValue > midPoint) {
             setIsPanelExpanded(true);
-            animatePanel(screenHeightRef.current - 100);
+            animatePanel(maxH);
           } else {
             setIsPanelExpanded(false);
             animatePanel(100);
@@ -399,11 +507,15 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       },
       onPanResponderRelease: (_, gestureState) => {
         const threshold = 50;
+        const maxH = Platform.OS === 'android'
+          ? screenHeightRef.current - 100 - insetsBottomRef.current
+          : screenHeightRef.current - 100;
+        const midPoint = (100 + maxH) / 2;
         
         if (gestureState.dy < -threshold) {
           // 위로 스와이프 - 패널 확장
           setIsPanelExpanded(true);
-          animatePanel(screenHeightRef.current - 100);
+          animatePanel(maxH);
         } else if (gestureState.dy > threshold) {
           // 아래로 스와이프 - 패널 축소
           setIsPanelExpanded(false);
@@ -411,11 +523,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         } else {
           // 현재 위치에 따라 결정
           const currentValue = panelHeightValueRef.current;
-          const midPoint = (100 + screenHeightRef.current - 100) / 2;
           
           if (currentValue > midPoint) {
             setIsPanelExpanded(true);
-            animatePanel(screenHeightRef.current - 100);
+            animatePanel(maxH);
           } else {
             setIsPanelExpanded(false);
             animatePanel(100);
@@ -427,8 +538,11 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const expandPanel = useCallback(() => {
     setIsPanelExpanded(true);
-    animatePanel(screenHeight - 100);
-  }, [animatePanel, screenHeight]);
+    const maxH = Platform.OS === 'android'
+      ? screenHeight - 100 - insets.bottom
+      : screenHeight - 100;
+    animatePanel(maxH);
+  }, [animatePanel, screenHeight, insets.bottom]);
 
   const collapsePanel = useCallback(() => {
     setIsPanelExpanded(false);
@@ -447,6 +561,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     navigation.navigate("Settings");
   }, [navigation]);
 
+  const handleNavigateToEventDetail = useCallback((event: any, date: string) => {
+    navigation.navigate('EventDetail', { event, date });
+  }, [navigation]);
+
   const handleNavigateLocationPicker = useCallback(() => {
     navigation.navigate("LocationPicker");
   }, [navigation]);
@@ -463,21 +581,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }, []);
 
   const handleClearSearch = useCallback(() => {
-    setSearchQuery('');
     setDebouncedSearch('');
-    if (searchDebounceRef.current) {
-      clearTimeout(searchDebounceRef.current);
-      searchDebounceRef.current = null;
-    }
-  }, []);
-
-  const handleSearchChange = useCallback((text: string) => {
-    setSearchQuery(text);
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => {
-      setDebouncedSearch(text);
-      searchDebounceRef.current = null;
-    }, 200);
+    setSearchClearSignal(c => c + 1);
   }, []);
 
   const handleTabAll = useCallback(() => handleSetPanelTab('all'), [handleSetPanelTab]);
@@ -560,6 +665,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }
     return months;
   }, [currentMonth, screenWidth]);
+
+  const handleMonthTabPress = useCallback((idx: number) => {
+    const tabMonths = visibleMonthTabs;
+    const middleIndex = Math.floor(tabMonths.length / 2);
+    const offset = idx - middleIndex;
+    let newMonth = currentMonth + offset;
+    let newYear = currentYear;
+    if (newMonth < 1) { newMonth += 12; newYear--; }
+    else if (newMonth > 12) { newMonth -= 12; newYear++; }
+    isUserScrollingRef.current = false;
+    setCurrentMonth(newMonth);
+    setCurrentYear(newYear);
+  }, [visibleMonthTabs, currentMonth, currentYear]);
 
   const upcomingEvents = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
@@ -663,44 +781,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   }, [events, selectedDate, selectedRegion, selectedLocation, debouncedSearch, quickFilter]);
 
   // ==================== 추천 파티 (프로모션 광고 + 일반) ====================
-  const weeklyHotEvents = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const endOfWeek = new Date(today);
-    endOfWeek.setDate(endOfWeek.getDate() + 7);
-    endOfWeek.setHours(23, 59, 59, 999);
-
-    const promoted: Array<{ date: string; event: any }> = [];
-    const normal: Array<{ date: string; event: any }> = [];
-
-    for (const [date, eventList] of Object.entries(events)) {
-      const parts = date.split('-');
-      if (parts.length !== 3) continue;
-      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-      if (d >= today && d <= endOfWeek) {
-        for (const ev of eventList) {
-          if (ev.promoted) {
-            promoted.push({ date, event: ev });
-          } else {
-            normal.push({ date, event: ev });
-          }
-        }
-      }
-    }
-
-    // 프로모션: 우선순위(높은 순) > 날짜(가까운 순)
-    promoted.sort((a, b) => {
-      const prioDiff = (b.event.promotionPriority || 0) - (a.event.promotionPriority || 0);
-      return prioDiff !== 0 ? prioDiff : a.date.localeCompare(b.date);
-    });
-    // 일반: 날짜순
-    normal.sort((a, b) => a.date.localeCompare(b.date));
-
-    // 프로모션 우선 표시, 나머지 일반으로 채움 (최대 3개)
-    const result = [...promoted, ...normal].slice(0, 3);
-    return result;
-  }, [events]);
-
   // 날짜별 그룹화 (렌더 함수에서 매번 재계산하지 않도록 useMemo 분리)
   const groupedUpcoming = useMemo(() => {
     if (selectedDate) return null; // 날짜 선택 시 불필요
@@ -711,6 +791,130 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }
     return grouped;
   }, [upcomingEvents, selectedDate]);
+
+  // ==================== 패널 \uc774\ubca4\ud2b8 \ub9ac\uc2a4\ud2b8 \uc0ac\uc804\uc5f0\uc0b0 (memoized) ====================
+  // groupedDateElements: \ub0a0\uc9dc\ubcc4 \uadf8\ub8f9 \ub80c\ub354\ub9c1 \ucee8\ud150\uce20.
+  // groupedUpcoming / expandedDates / isDark \uac00 \ubc14\ub00c\uc9c0 \uc54a\uc73c\uba74 \uc7ac\uc0dd\uc131 \uc548 \ud568
+  // (\ud328\ub110 \uc5f4\uae30/\ub2eb\uae30, \uc6d4 \uc2a4\ud06c\ub864 \ub4f1\uc5d0\uc11c \uc7ac\uc0dd\uc131 \ubc1c\uc0dd \uc548 \ud568)
+  const groupedDateElements = useMemo(() => {
+    if (!groupedUpcoming) return null;
+    const dates = Object.keys(groupedUpcoming);
+    return dates.map((date, dateIndex) => {
+      const eventsForDate = groupedUpcoming[date];
+      const eventDate = parseLocalDate(date);
+      const day = eventDate.getDate();
+      const monthName = MONTH_NAMES[eventDate.getMonth()];
+      const isLastDate = dateIndex === dates.length - 1;
+      const isDateExpanded = expandedDates.has(date);
+      const totalCount = eventsForDate.length;
+      const shouldCollapse = totalCount > MAX_COLLAPSED_EVENTS && !isDateExpanded;
+      const visibleEvents = shouldCollapse ? eventsForDate.slice(0, MAX_COLLAPSED_EVENTS) : eventsForDate;
+      const hiddenCount = totalCount - MAX_COLLAPSED_EVENTS;
+
+      return (
+        <View
+          key={date}
+          style={{ flexDirection: 'row', marginBottom: isLastDate ? 0 : 24 }}
+        >
+          {/* [\uc67c\ucabd] \ub0a0\uc9dc \ubc84\ube14 + \uc5f0\uacb0\uc120 */}
+          <View style={{ alignItems: 'center', marginRight: 16, alignSelf: 'stretch' }}>
+            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: isDark ? '#334155' : '#ffffff', justifyContent: 'center', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: isDark ? '#a78bfa' : '#ec4899' }}>{day}</Text>
+              <Text style={{ fontSize: 9, fontWeight: '600', color: isDark ? '#a78bfa' : '#ec4899', marginTop: -2 }}>{monthName}</Text>
+            </View>
+            {!isLastDate && (
+              <View style={{ flex: 1, width: 2, marginTop: 6, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 1 }} />
+            )}
+          </View>
+
+          {/* [\uc624\ub978\ucabd] \uc774\ubca4\ud2b8 \ub9ac\uc2a4\ud2b8 */}
+          <View style={{ flex: 1 }}>
+            {totalCount >= 5 && (
+              <View style={{ marginBottom: 8 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>{totalCount}개 일정</Text>
+              </View>
+            )}
+            {visibleEvents.map((item, eventIndex) => (
+              <EventCard
+                key={`${date}-${item.event.id}-${eventIndex}`}
+                event={item.event}
+                date={item.date}
+                onPress={handleNavigateToEventDetail}
+                compact={true}
+                marginBottom={eventIndex < visibleEvents.length - 1 || shouldCollapse ? 12 : 0}
+              />
+            ))}
+            {shouldCollapse && (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => handleToggleDateExpand(date)}
+                style={{ paddingVertical: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>+{hiddenCount}개 더 보기</Text>
+              </TouchableOpacity>
+            )}
+            {isDateExpanded && totalCount > MAX_COLLAPSED_EVENTS && (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => handleToggleDateExpand(date)}
+                style={{ paddingVertical: 8, alignItems: 'center', marginTop: 4 }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>접기</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      );
+    });
+  }, [groupedUpcoming, expandedDates, isDark, handleNavigateToEventDetail, handleToggleDateExpand]);
+
+  // selectedDateElements: \ub0a0\uc9dc \uc120\ud0dd \uc2dc \uc774\ubca4\ud2b8 \ub9ac\uc2a4\ud2a4 \ucee8\ud150\uce20
+  const selectedDateElements = useMemo(() => {
+    if (!selectedDate) return null;
+    const selectedDateKey = selectedDate;
+    const isSelectedExpanded = expandedDates.has(selectedDateKey);
+    const totalSelected = upcomingEvents.length;
+    const shouldCollapseSelected = totalSelected > MAX_COLLAPSED_EVENTS && !isSelectedExpanded;
+    const visibleSelected = shouldCollapseSelected ? upcomingEvents.slice(0, MAX_COLLAPSED_EVENTS) : upcomingEvents;
+    const hiddenSelectedCount = totalSelected - MAX_COLLAPSED_EVENTS;
+    return (
+      <>
+        {totalSelected >= 5 && (
+          <View style={{ marginBottom: 8 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>{totalSelected}개 일정</Text>
+          </View>
+        )}
+        {visibleSelected.map(({ date, event }, index) => (
+          <EventCard
+            key={`${date}-${event.id}-${index}`}
+            event={event}
+            date={date}
+            onPress={handleNavigateToEventDetail}
+            compact={false}
+            marginBottom={12}
+          />
+        ))}
+        {shouldCollapseSelected && (
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => handleToggleDateExpand(selectedDateKey)}
+            style={{ paddingVertical: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', marginBottom: 12 }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>+{hiddenSelectedCount}개 더 보기</Text>
+          </TouchableOpacity>
+        )}
+        {isSelectedExpanded && totalSelected > MAX_COLLAPSED_EVENTS && (
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => handleToggleDateExpand(selectedDateKey)}
+            style={{ paddingVertical: 8, alignItems: 'center' }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>접기</Text>
+          </TouchableOpacity>
+        )}
+      </>
+    );
+  }, [upcomingEvents, selectedDate, expandedDates, handleNavigateToEventDetail, handleToggleDateExpand]);
 
   // visibleMonths 중복 제거 + 최대 개수 제한 (정기 클린업)
   const MAX_VISIBLE_MONTHS = 24;
@@ -936,6 +1140,343 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }
   }, [notificationPromptClosed, isInitialized]);
 
+  // ==================== 재사용 렌더 조각 (memoized) ====================
+  // 헤더 (연도·월탭·오늘버튼): 헤더 관련 state 변경 시에만 재생성
+  const calendarHeader = useMemo(() => (
+    <View
+      style={{
+        paddingHorizontal: 20,
+        paddingTop: 10,
+        paddingBottom: 0,
+        backgroundColor: isDark ? "#1e293b" : "#ffffff",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 3,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 16,
+          gap: 8,
+        }}
+      >
+        {/* 왼쪽 영역 - flex로 자동 조절 */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 28,
+              fontWeight: "900",
+              color: isDark ? "#f8fafc" : "#0f172a",
+            }}
+          >
+            {currentYear}
+          </Text>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={handleGoToToday}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 12,
+              backgroundColor: isDark ? "#334155" : "#f1f5f9",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "700",
+                color: isDark ? "#e2e8f0" : "#475569",
+              }}
+            >
+              오늘
+            </Text>
+          </TouchableOpacity>
+          {/* 필터 표시 - 말줄임 처리 */}
+          {(selectedRegion || selectedLocation) && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={clearFilters}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 12,
+                backgroundColor: isDark ? "#a78bfa" : "#ec4899",
+                flexDirection: "row",
+                alignItems: "center",
+                maxWidth: screenWidth - 280,
+                flexShrink: 1,
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                ellipsizeMode="tail"
+                style={{
+                  fontSize: 12,
+                  fontWeight: "700",
+                  color: "#ffffff",
+                  flexShrink: 1,
+                }}
+              >
+                {selectedLocation || selectedRegion}
+              </Text>
+              <Text style={{ fontSize: 11, color: "#ffffff", marginLeft: 4 }}>
+                ✕
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 오른쪽 영역 - 고정 너비 */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={handleNavigateSettings}
+            style={{
+              padding: 10,
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <View
+              style={{
+                width: 22,
+                height: 18,
+                justifyContent: "space-between",
+              }}
+            >
+              <View
+                style={{
+                  width: 22,
+                  height: 2,
+                  backgroundColor: isDark ? "#f8fafc" : "#0f172a",
+                  borderRadius: 2,
+                }}
+              />
+              <View
+                style={{
+                  width: 22,
+                  height: 2,
+                  backgroundColor: isDark ? "#f8fafc" : "#0f172a",
+                  borderRadius: 2,
+                }}
+              />
+              <View
+                style={{
+                  width: 22,
+                  height: 2,
+                  backgroundColor: isDark ? "#f8fafc" : "#0f172a",
+                  borderRadius: 2,
+                }}
+              />
+            </View>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* 월 탭 네비게이션 */}
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 0,
+          paddingHorizontal: screenWidth >= 600 ? 40 : 10,
+        }}
+      >
+        {visibleMonthTabs.map((monthNum, idx) => {
+          const isActive = monthNum === currentMonth;
+          return (
+            <TouchableOpacity
+              key={`${monthNum}-${idx}`}
+              activeOpacity={0.7}
+              onPress={() => handleMonthTabPress(idx)}
+              style={{
+                alignItems: "center",
+                paddingVertical: 8,
+                paddingHorizontal: 4,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: isActive ? 16 : 13,
+                  fontWeight: isActive ? "800" : "600",
+                  color: isActive
+                    ? isDark
+                      ? "#a78bfa"
+                      : "#ec4899"
+                    : isDark
+                    ? "#64748b"
+                    : "#94a3b8",
+                  letterSpacing: 0.5,
+                }}
+              >
+                {MONTH_NAMES[monthNum - 1]}
+              </Text>
+              {isActive && (
+                <View
+                  style={{
+                    width: 24,
+                    height: 3,
+                    backgroundColor: isDark ? "#a78bfa" : "#ec4899",
+                    marginTop: 6,
+                    borderRadius: 2,
+                  }}
+                />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  ), [isDark, currentYear, selectedRegion, selectedLocation, screenWidth, visibleMonthTabs, currentMonth, handleGoToToday, clearFilters, handleNavigateSettings, handleMonthTabPress]);
+
+  // 요일 헤더: isDark / screenWidth 변경 시에만 재생성
+  const weekDayHeader = useMemo(() => (
+    <View
+      style={{
+        flexDirection: "row",
+        backgroundColor: isDark ? "#1e293b" : "#ffffff",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 2,
+      }}
+    >
+      {["일", "월", "화", "수", "목", "금", "토"].map((day, index) => (
+        <View key={day} style={{ width: screenWidth / 7, paddingVertical: 14 }}>
+          <Text
+            style={{
+              textAlign: "center",
+              fontSize: screenWidth / 7 < 50 ? 10 : 12,
+              fontWeight: "700",
+              letterSpacing: 0.5,
+              color:
+                index === 0
+                  ? "#ef4444"
+                  : index === 6
+                  ? "#3b82f6"
+                  : isDark
+                  ? "#cbd5e1"
+                  : "#475569",
+            }}
+          >
+            {day}
+          </Text>
+        </View>
+      ))}
+    </View>
+  ), [isDark, screenWidth]);
+
+  // 지역 필터 바: 지역 목록 / 선택 필터 / isDark 변경 시에만 재생성
+  const regionFilterBar = useMemo(() => (
+    <View
+      style={{
+        backgroundColor: isDark ? "#1e293b" : "#ffffff",
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+      }}
+    >
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={clearFilters}
+          style={{
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 20,
+            backgroundColor:
+              !selectedRegion && !selectedLocation
+                ? isDark ? "#a78bfa" : "#ec4899"
+                : isDark ? "#334155" : "#f1f5f9",
+            marginRight: 8,
+            minWidth: 60,
+            alignItems: "center",
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: "700",
+              color:
+                !selectedRegion && !selectedLocation
+                  ? "#ffffff"
+                  : isDark ? "#94a3b8" : "#64748b",
+            }}
+          >
+            전체
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={handleNavigateLocationPicker}
+          style={{
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 20,
+            backgroundColor: isDark ? "#334155" : "#f1f5f9",
+            marginRight: 8,
+            minWidth: 60,
+            alignItems: "center",
+            borderWidth: 1,
+            borderColor: isDark ? "#475569" : "#e2e8f0",
+            borderStyle: "dashed",
+          }}
+        >
+          <Text style={{ fontSize: 14, fontWeight: "700", color: isDark ? "#94a3b8" : "#64748b" }}>
+            + 상세
+          </Text>
+        </TouchableOpacity>
+
+        {availableRegions.map((region) => (
+          <TouchableOpacity
+            key={region}
+            activeOpacity={0.7}
+            onPress={() => handleRegionPress(region)}
+            style={{
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: 20,
+              backgroundColor:
+                selectedRegion === region
+                  ? isDark ? "#a78bfa" : "#ec4899"
+                  : isDark ? "#334155" : "#f1f5f9",
+              marginRight: 8,
+              minWidth: 60,
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: "700",
+                color:
+                  selectedRegion === region
+                    ? "#ffffff"
+                    : isDark ? "#94a3b8" : "#64748b",
+              }}
+            >
+              {region}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  ), [isDark, availableRegions, selectedRegion, selectedLocation, clearFilters, handleNavigateLocationPicker, handleRegionPress]);
+
   if (!isInitialized || screenHeight === 0 || screenWidth === 0) {
     return (
       <View
@@ -975,404 +1516,13 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       }}
     >
       {/* 헤더 */}
-      <View
-        style={{
-          paddingHorizontal: 20,
-          paddingTop: 10,
-          paddingBottom: 0,
-          backgroundColor: isDark ? "#1e293b" : "#ffffff",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.08,
-          shadowRadius: 4,
-          elevation: 3,
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 16,
-            gap: 8,
-          }}
-        >
-          {/* 왼쪽 영역 - flex로 자동 조절 */}
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              flex: 1,
-              minWidth: 0,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 28,
-                fontWeight: "900",
-                color: isDark ? "#f8fafc" : "#0f172a",
-              }}
-            >
-              {currentYear}
-            </Text>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleGoToToday}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 12,
-                backgroundColor: isDark ? "#334155" : "#f1f5f9",
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 13,
-                  fontWeight: "700",
-                  color: isDark ? "#e2e8f0" : "#475569",
-                }}
-              >
-                오늘
-              </Text>
-            </TouchableOpacity>
-            {/* 필터 표시 - 말줄임 처리 */}
-            {(selectedRegion || selectedLocation) && (
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={clearFilters}
-                style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 6,
-                  borderRadius: 12,
-                  backgroundColor: isDark ? "#a78bfa" : "#ec4899",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  maxWidth: screenWidth - 280,
-                  flexShrink: 1,
-                }}
-              >
-                <Text
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                  style={{
-                    fontSize: 12,
-                    fontWeight: "700",
-                    color: "#ffffff",
-                    flexShrink: 1,
-                  }}
-                >
-                  {selectedLocation || selectedRegion}
-                </Text>
-                <Text style={{ fontSize: 11, color: "#ffffff", marginLeft: 4 }}>
-                  ✕
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* 오른쪽 영역 - 고정 너비 */}
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            {/* 포인트/쿠폰 버튼 */}
-            {/* <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setShowPointsModal(true)}
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 16,
-                backgroundColor: isDark ? '#a78bfa' : '#ec4899',
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.1,
-                shadowRadius: 4,
-                elevation: 3,
-              }}
-            >
-              <Text style={{ fontSize: 15, fontWeight: '900', color: '#ffffff' }}>P</Text>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>
-                {points >= 10000 ? `${Math.floor(points / 1000)}k` : points.toLocaleString()}
-              </Text>
-            </TouchableOpacity> */}
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleNavigateSettings}
-              style={{
-                padding: 10,
-              }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <View
-                style={{
-                  width: 22,
-                  height: 18,
-                  justifyContent: "space-between",
-                }}
-              >
-                <View
-                  style={{
-                    width: 22,
-                    height: 2,
-                    backgroundColor: isDark ? "#f8fafc" : "#0f172a",
-                    borderRadius: 2,
-                  }}
-                />
-                <View
-                  style={{
-                    width: 22,
-                    height: 2,
-                    backgroundColor: isDark ? "#f8fafc" : "#0f172a",
-                    borderRadius: 2,
-                  }}
-                />
-                <View
-                  style={{
-                    width: 22,
-                    height: 2,
-                    backgroundColor: isDark ? "#f8fafc" : "#0f172a",
-                    borderRadius: 2,
-                  }}
-                />
-              </View>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* 월 탭 네비게이션 */}
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 0,
-            paddingHorizontal: screenWidth >= 600 ? 40 : 10,
-          }}
-        >
-          {visibleMonthTabs.map((monthNum, idx) => {
-            const isActive = monthNum === currentMonth;
-            return (
-              <TouchableOpacity
-                key={`${monthNum}-${idx}`}
-                activeOpacity={0.7}
-                onPress={() => {
-                  const tabMonths = visibleMonthTabs;
-                  const middleIndex = Math.floor(tabMonths.length / 2);
-                  const offset = idx - middleIndex;
-
-                  let newMonth = currentMonth + offset;
-                  let newYear = currentYear;
-
-                  if (newMonth < 1) {
-                    newMonth += 12;
-                    newYear--;
-                  } else if (newMonth > 12) {
-                    newMonth -= 12;
-                    newYear++;
-                  }
-
-                  // 프로그래밍 방식의 스크롤임을 표시
-                  isUserScrollingRef.current = false;
-
-                  // 즉시 상태 업데이트
-                  setCurrentMonth(newMonth);
-                  setCurrentYear(newYear);
-                }}
-                style={{
-                  alignItems: "center",
-                  paddingVertical: 8,
-                  paddingHorizontal: 4,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: isActive ? 16 : 13,
-                    fontWeight: isActive ? "800" : "600",
-                    color: isActive
-                      ? isDark
-                        ? "#a78bfa"
-                        : "#ec4899"
-                      : isDark
-                      ? "#64748b"
-                      : "#94a3b8",
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  {MONTH_NAMES[monthNum - 1]}
-                </Text>
-                {isActive && (
-                  <View
-                    style={{
-                      width: 24,
-                      height: 3,
-                      backgroundColor: isDark ? "#a78bfa" : "#ec4899",
-                      marginTop: 6,
-                      borderRadius: 2,
-                    }}
-                  />
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
+      {calendarHeader}
 
       {/* 지역 필터 바 */}
-      <View
-        style={{
-          backgroundColor: isDark ? "#1e293b" : "#ffffff",
-          paddingVertical: 8,
-          paddingHorizontal: 16,
-        }}
-      >
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={clearFilters}
-            style={{
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: 20,
-              backgroundColor:
-                !selectedRegion && !selectedLocation
-                  ? isDark
-                    ? "#a78bfa"
-                    : "#ec4899"
-                  : isDark
-                  ? "#334155"
-                  : "#f1f5f9",
-              marginRight: 8,
-              minWidth: 60,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 14,
-                fontWeight: "700",
-                color:
-                  !selectedRegion && !selectedLocation
-                    ? "#ffffff"
-                    : isDark
-                    ? "#94a3b8"
-                    : "#64748b",
-              }}
-            >
-              전체
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={handleNavigateLocationPicker}
-            style={{
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: 20,
-              backgroundColor: isDark ? "#334155" : "#f1f5f9",
-              marginRight: 8,
-              minWidth: 60,
-              alignItems: "center",
-              borderWidth: 1,
-              borderColor: isDark ? "#475569" : "#e2e8f0",
-              borderStyle: "dashed",
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 14,
-                fontWeight: "700",
-                color: isDark ? "#94a3b8" : "#64748b",
-              }}
-            >
-              + 상세
-            </Text>
-          </TouchableOpacity>
-
-          {availableRegions.map((region) => (
-            <TouchableOpacity
-              key={region}
-              activeOpacity={0.7}
-              onPress={() => handleRegionPress(region)}
-              style={{
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                borderRadius: 20,
-                backgroundColor:
-                  selectedRegion === region
-                    ? isDark
-                      ? "#a78bfa"
-                      : "#ec4899"
-                    : isDark
-                    ? "#334155"
-                    : "#f1f5f9",
-                marginRight: 8,
-                minWidth: 60,
-                alignItems: "center",
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 14,
-                  fontWeight: "700",
-                  color:
-                    selectedRegion === region
-                      ? "#ffffff"
-                      : isDark
-                      ? "#94a3b8"
-                      : "#64748b",
-                }}
-              >
-                {region}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+      {regionFilterBar}
 
       {/* 요일 헤더 - 고정 */}
-      <View
-        style={{
-          flexDirection: "row",
-          backgroundColor: isDark ? "#1e293b" : "#ffffff",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 3,
-          elevation: 2,
-        }}
-      >
-        {["일", "월", "화", "수", "목", "금", "토"].map((day, index) => (
-          <View
-            key={day}
-            style={{
-              width: screenWidth / 7,
-              paddingVertical: 14,
-            }}
-          >
-            <Text
-              style={{
-                textAlign: "center",
-                fontSize: screenWidth / 7 < 50 ? 10 : 12,
-                fontWeight: "700",
-                letterSpacing: 0.5,
-                color:
-                  index === 0
-                    ? "#ef4444"
-                    : index === 6
-                    ? "#3b82f6"
-                    : isDark
-                    ? "#cbd5e1"
-                    : "#475569",
-              }}
-            >
-              {day}
-            </Text>
-          </View>
-        ))}
-      </View>
+      {weekDayHeader}
 
       {/* 캘린더 */}
       <ScrollView
@@ -1520,14 +1670,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           position: "absolute",
           left: 0,
           right: 0,
-          bottom: 0,
+          bottom: Platform.OS === "android" ? insets.bottom : 0,
           height: panelHeight,
           backgroundColor: isDark ? "#a78bfa" : "#ec4899",
           borderTopLeftRadius: 24,
           borderTopRightRadius: 24,
           paddingHorizontal: 20,
           paddingTop: 12,
-          paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 30) : insets.bottom,
+          paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 30) : 16,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: -4 },
           shadowOpacity: 0.15,
@@ -1630,34 +1780,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         {isPanelExpanded && (
           <View style={{ marginBottom: 10 }}>
             {/* 검색바 */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-              borderRadius: 10,
-              paddingHorizontal: 12,
-              marginBottom: 8,
-            }}>
-              
-              <TextInput
-                style={{
-                  flex: 1,
-                  paddingVertical: Platform.OS === 'ios' ? 10 : 8,
-                  fontSize: 14,
-                  color: '#ffffff',
-                }}
-                placeholder="제목, 장소, 태그 검색..."
-                placeholderTextColor="rgba(255, 255, 255, 0.5)"
-                value={searchQuery}
-                onChangeText={handleSearchChange}
-                returnKeyType="search"
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={handleClearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)' }}>✕</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            <PanelSearchInput
+              onDebouncedChange={setDebouncedSearch}
+              clearSignal={searchClearSignal}
+            />
             {/* 탭: 전체 / 찜 */}
             <View style={{ flexDirection: 'row', gap: 6 }}>
               <TouchableOpacity
@@ -1897,541 +2023,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             </View>
           ) : (
             (() => {
-              // 이번 주 HOT 파티 섹션 (프로모션 광고 모델)
-              const hotSection = weeklyHotEvents.length > 0 && !selectedDate && !searchQuery.trim() ? (
-                <View key="hot-section" style={{ marginBottom: 20 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={{ fontSize: 16 }}>🔥</Text>
-                      <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '800' }}>
-                        이번 주 추천 파티
-                      </Text>
-                    </View>
-                  </View>
-                  {weeklyHotEvents.map((item, idx) => {
-                    const parts = item.date.split('-');
-                    const evDate = parts.length === 3 ? new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)) : new Date();
-                    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
-                    const dayName = dayNames[evDate.getDay()];
-                    const month = evDate.getMonth() + 1;
-                    const day = evDate.getDate();
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    evDate.setHours(0, 0, 0, 0);
-                    const diffDays = Math.round((evDate.getTime() - today.getTime()) / 86400000);
-                    const dDayStr = diffDays === 0 ? '오늘!' : diffDays === 1 ? '내일' : `D-${diffDays}`;
-                    const dDayColor = diffDays === 0 ? '#ef4444' : diffDays <= 2 ? '#f59e0b' : '#22c55e';
-                    const isPromoted = item.event.promoted === true;
-                    const promoLabel = sanitizeText(item.event.promotionLabel, 20) || 'AD';
-                    const promoColor = sanitizeColor(item.event.promotionColor, '#f59e0b');
-                    const borderColor = isPromoted ? promoColor : dDayColor;
-
-                    return (
-                      <TouchableOpacity
-                        key={`hot-${item.event.id || idx}-${item.date}`}
-                        activeOpacity={0.8}
-                        onPress={() => navigation.navigate('EventDetail', { event: item.event, date: item.date })}
-                        style={{
-                          backgroundColor: isPromoted ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.15)',
-                          borderRadius: 16,
-                          padding: 14,
-                          marginBottom: 8,
-                          borderLeftWidth: 3,
-                          borderLeftColor: borderColor,
-                        }}
-                      >
-                        {/* 프로모션 뱃지 */}
-                        {isPromoted && (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                            <View style={{
-                              backgroundColor: promoColor,
-                              paddingHorizontal: 8,
-                              paddingVertical: 2,
-                              borderRadius: 6,
-                            }}>
-                              <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: '800' }}>
-                                {promoLabel}
-                              </Text>
-                            </View>
-                            {item.event.organizer && (
-                              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
-                                {item.event.organizer}
-                              </Text>
-                            )}
-                          </View>
-                        )}
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }} numberOfLines={1}>
-                              {sanitizeText(item.event.title, 100)}
-                            </Text>
-                            <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 }}>
-                              {month}/{day}({dayName}) · {sanitizeText(item.event.time, 30) || '시간 미정'}
-                              {item.event.location ? ` · ${sanitizeText(item.event.location, 100)}` : ''}
-                            </Text>
-                            {isPromoted && item.event.price !== undefined && (
-                              <Text style={{ fontSize: 12, color: '#f59e0b', marginTop: 2, fontWeight: '600' }}>
-                                {item.event.price === 0 ? '무료' : `${item.event.price.toLocaleString()}원`}
-                              </Text>
-                            )}
-                          </View>
-                          <View style={{
-                            backgroundColor: dDayColor,
-                            paddingHorizontal: 10,
-                            paddingVertical: 4,
-                            borderRadius: 10,
-                            marginLeft: 8,
-                          }}>
-                            <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '800' }}>
-                              {dDayStr}
-                            </Text>
-                          </View>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              ) : null;
-
-              // 전체 일정 보기: 날짜별로 그룹화 (useMemo에서 미리 계산)
               if (!selectedDate) {
-                const groupedByDate = groupedUpcoming || {};
-
-                const dates = Object.keys(groupedByDate);
-
-                const dateElements = dates.map((date, dateIndex) => {
-                  const eventsForDate = groupedByDate[date];
-                  const eventDate = parseLocalDate(date);
-                  const day = eventDate.getDate();
-                  const monthName = MONTH_NAMES[eventDate.getMonth()];
-                  const isLastDate = dateIndex === dates.length - 1;
-
-                  const bubbleSize = 44;
-                  const bubbleToLineGap = 8;
-                  const betweenDatesGap = 24;
-                  const measuredListHeight =
-                    eventListHeightsRef.current[date] || 0;
-                  const baseLineHeight = Math.max(
-                    0,
-                    measuredListHeight - bubbleSize - bubbleToLineGap
-                  );
-                  const dashedLineHeight =
-                    baseLineHeight + (isLastDate ? 0 : betweenDatesGap);
-                  const dashLength = 6;
-                  const dashGap = 6;
-                  const dashCount =
-                    dashedLineHeight > 0
-                      ? Math.floor(
-                          (dashedLineHeight + dashGap) / (dashLength + dashGap)
-                        )
-                      : 0;
-
-                  return (
-                    <View
-                      key={date}
-                      style={{
-                        flexDirection: "row",
-                        marginBottom: isLastDate ? 0 : 24,
-                      }}
-                    >
-                      {/* [왼쪽] 날짜 버블 + 점선 트랙 */}
-                      <View style={{ alignItems: "center", marginRight: 16 }}>
-                        <View
-                          style={{
-                            width: 44,
-                            height: 44,
-                            borderRadius: 22,
-                            backgroundColor: isDark ? "#334155" : "#ffffff",
-                            justifyContent: "center",
-                            alignItems: "center",
-                            zIndex: 1,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 16,
-                              fontWeight: "800",
-                              color: isDark ? "#a78bfa" : "#ec4899",
-                            }}
-                          >
-                            {day}
-                          </Text>
-                          <Text
-                            style={{
-                              fontSize: 9,
-                              fontWeight: "600",
-                              color: isDark ? "#a78bfa" : "#ec4899",
-                              marginTop: -2,
-                            }}
-                          >
-                            {monthName}
-                          </Text>
-                        </View>
-
-                        {dashCount > 0 && (
-                          <View
-                            style={{
-                              width: 2,
-                              marginTop: bubbleToLineGap,
-                              height: dashedLineHeight,
-                              marginBottom: isLastDate ? 0 : -betweenDatesGap,
-                              alignItems: "center",
-                            }}
-                          >
-                            {Array.from({ length: dashCount }).map((_, i) => (
-                              <View
-                                key={i}
-                                style={{
-                                  width: 2,
-                                  height: dashLength,
-                                  backgroundColor: "rgba(255,255,255,0.4)",
-                                  borderRadius: 1,
-                                  marginBottom:
-                                    i === dashCount - 1 ? 0 : dashGap,
-                                }}
-                              />
-                            ))}
-                          </View>
-                        )}
-                      </View>
-
-                      {/* [오른쪽] 이벤트 리스트 */}
-                      <View
-                        style={{ flex: 1 }}
-                        onLayout={(e) => {
-                          const nextHeight = e.nativeEvent.layout.height;
-                          const prevHeight = eventListHeightsRef.current[date];
-                          if (
-                            !prevHeight ||
-                            Math.abs(prevHeight - nextHeight) > 2
-                          ) {
-                            eventListHeightsRef.current[date] = nextHeight;
-                            // 배치 처리: 연쇄 리렌더링 방지
-                            if (!pendingHeightUpdateRef.current) {
-                              pendingHeightUpdateRef.current = true;
-                              requestAnimationFrame(() => {
-                                pendingHeightUpdateRef.current = false;
-                                setHeightUpdateTrigger((prev) => prev + 1);
-                              });
-                            }
-                          }
-                        }}
-                      >
-                        {(() => {
-                          const isDateExpanded = expandedDates.has(date);
-                          const totalCount = eventsForDate.length;
-                          const shouldCollapse = totalCount > MAX_COLLAPSED_EVENTS && !isDateExpanded;
-                          const visibleEvents = shouldCollapse ? eventsForDate.slice(0, MAX_COLLAPSED_EVENTS) : eventsForDate;
-                          const hiddenCount = totalCount - MAX_COLLAPSED_EVENTS;
-                          return (
-                            <>
-                              {/* 일정 개수 뱃지 (5개 이상일 때) */}
-                              {totalCount >= 5 && (
-                                <View style={{ marginBottom: 8 }}>
-                                  <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>
-                                    {totalCount}개 일정
-                                  </Text>
-                                </View>
-                              )}
-                              {visibleEvents.map((item, eventIndex) => (
-                          <React.Fragment key={`${date}-${item.event.id}-${eventIndex}`}>
-                          <View
-                            style={{
-                              backgroundColor: "rgba(255, 255, 255, 0.15)",
-                              borderRadius: 16,
-                              padding: 16,
-                              paddingTop: 12,
-                              marginBottom:
-                                eventIndex < visibleEvents.length - 1 || shouldCollapse ? 12 : 0,
-                            }}
-                          >
-                            <View
-                              style={{
-                                flexDirection: "row",
-                                justifyContent: "space-between",
-                                alignItems: "flex-start",
-                                marginBottom: 6,
-                              }}
-                            >
-                              <Text
-                                style={{
-                                  fontSize: 15,
-                                  fontWeight: "700",
-                                  color: "#ffffff",
-                                  flex: 1,
-                                }}
-                              >
-                                {sanitizeText(item.event.title, 100)}
-                              </Text>
-                            </View>
-                            {/* 지점 뱃지 */}
-                            {item.event.subEvents && item.event.subEvents.length > 1 ? (
-                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-                                {item.event.subEvents.slice(0, 3).map((sub: Event, si: number) => (
-                                  <View key={si} style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                                    <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
-                                      {sub.location || sub.venue || `지점${si + 1}`}
-                                    </Text>
-                                  </View>
-                                ))}
-                                {item.event.subEvents.length > 3 && (
-                                  <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>+{item.event.subEvents.length - 3}</Text>
-                                  </View>
-                                )}
-                              </View>
-                            ) : item.event.location ? (
-                              <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                                <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                                  <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
-                                    {sanitizeText(item.event.location, 100)}
-                                  </Text>
-                                </View>
-                              </View>
-                            ) : null}
-                            <Text
-                              style={{
-                                fontSize: 13,
-                                fontWeight: "600",
-                                color: "#e0e7ff",
-                              }}
-                            >
-                              {item.event.time || "시간 미정"}
-                            </Text>
-                            <TouchableOpacity
-                              onPress={() =>
-                                navigation.navigate('EventDetail', { event: item.event, date: item.date })
-                              }
-                              style={{
-                                marginTop: 10,
-                                paddingVertical: 6,
-                                paddingHorizontal: 12,
-                                backgroundColor: "rgba(255, 255, 255, 0.2)",
-                                borderRadius: 8,
-                                alignSelf: "flex-start",
-                              }}
-                            >
-                              <Text
-                                style={{
-                                  color: "#ffffff",
-                                  fontSize: 12,
-                                  fontWeight: "600",
-                                }}
-                              >
-                                자세히 보기
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                          {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
-                          {eventsForDate.length >= 3
-                            ? (eventIndex + 1) % 3 === 0 && (
-                                <InFeedAdBanner index={eventIndex} isDark={isDark} />
-                              )
-                            : eventIndex === eventsForDate.length - 1 && (
-                                <InFeedAdBanner index={eventIndex} isDark={isDark} />
-                              )
-                          }
-                          */}
-                          </React.Fragment>
-                        ))}
-                              {shouldCollapse && (
-                                <TouchableOpacity
-                                  activeOpacity={0.7}
-                                  onPress={() => handleToggleDateExpand(date)}
-                                  style={{
-                                    paddingVertical: 10,
-                                    borderRadius: 12,
-                                    backgroundColor: 'rgba(255,255,255,0.08)',
-                                    alignItems: 'center',
-                                  }}
-                                >
-                                  <Text style={{ fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>
-                                    +{hiddenCount}개 더 보기
-                                  </Text>
-                                </TouchableOpacity>
-                              )}
-                              {isDateExpanded && totalCount > MAX_COLLAPSED_EVENTS && (
-                                <TouchableOpacity
-                                  activeOpacity={0.7}
-                                  onPress={() => handleToggleDateExpand(date)}
-                                  style={{
-                                    paddingVertical: 8,
-                                    alignItems: 'center',
-                                    marginTop: 4,
-                                  }}
-                                >
-                                  <Text style={{ fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>
-                                    접기
-                                  </Text>
-                                </TouchableOpacity>
-                              )}
-                            </>
-                          );
-                        })()}
-                      </View>
-                    </View>
-                  );
-                });
-                return (
-                  <>
-                    {/* hotSection - 추후 유료 광고 모델 활성화 시 복원 */}
-                    {/* {hotSection} */}
-                    {dateElements}
-                  </>
-                );
-              } else {
-                // 특정 날짜 선택: 카드 스타일
-                const selectedDateKey = selectedDate || '_selected';
-                const isSelectedExpanded = expandedDates.has(selectedDateKey);
-                const totalSelected = upcomingEvents.length;
-                const shouldCollapseSelected = totalSelected > MAX_COLLAPSED_EVENTS && !isSelectedExpanded;
-                const visibleSelected = shouldCollapseSelected ? upcomingEvents.slice(0, MAX_COLLAPSED_EVENTS) : upcomingEvents;
-                const hiddenSelectedCount = totalSelected - MAX_COLLAPSED_EVENTS;
-                return (
-                  <>
-                    {/* 일정 개수 표시 */}
-                    {totalSelected >= 5 && (
-                      <View style={{ marginBottom: 8 }}>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>
-                          {totalSelected}개 일정
-                        </Text>
-                      </View>
-                    )}
-                    {visibleSelected.map(({ date, event }, index) => (
-                  <React.Fragment key={`${date}-${event.id}-${index}`}>
-                  <View
-                    style={{
-                      backgroundColor: "rgba(255, 255, 255, 0.15)",
-                      borderRadius: 16,
-                      padding: 16,
-                      marginBottom: 12,
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        marginBottom: 8,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 16,
-                          fontWeight: "700",
-                          color: "#ffffff",
-                          flex: 1,
-                        }}
-                      >
-                        {event.title}
-                      </Text>
-                    </View>
-                    {/* 지점 뱃지 */}
-                    {event.subEvents && event.subEvents.length > 1 ? (
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                        {(event.subEvents as Event[]).slice(0, 3).map((sub: Event, si: number) => (
-                          <View key={si} style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                            <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
-                              {sub.location || sub.venue || `지점${si + 1}`}
-                            </Text>
-                          </View>
-                        ))}
-                        {event.subEvents.length > 3 && (
-                          <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                            <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' }}>+{event.subEvents.length - 3}</Text>
-                          </View>
-                        )}
-                      </View>
-                    ) : event.location ? (
-                      <View style={{ flexDirection: 'row', marginBottom: 8 }}>
-                        <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }} numberOfLines={1}>
-                            {event.location}
-                          </Text>
-                        </View>
-                      </View>
-                    ) : null}
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        fontWeight: "600",
-                        color: "#e0e7ff",
-                        marginBottom: 12,
-                      }}
-                    >
-                      {event.time || "시간 미정"}
-                    </Text>
-
-                    <TouchableOpacity
-                      onPress={() => navigation.navigate('EventDetail', { event, date })}
-                      style={{
-                        paddingVertical: 8,
-                        paddingHorizontal: 14,
-                        backgroundColor: "rgba(255, 255, 255, 0.25)",
-                        borderRadius: 10,
-                        alignSelf: "flex-start",
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: "#ffffff",
-                          fontSize: 13,
-                          fontWeight: "700",
-                        }}
-                      >
-                        자세히 보기
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  {/* [광고 비활성화] 나중에 활성화 시 아래 주석 해제
-                  {upcomingEvents.length >= 3
-                    ? (index + 1) % 3 === 0 && (
-                        <InFeedAdBanner index={index} isDark={isDark} />
-                      )
-                    : index === upcomingEvents.length - 1 && (
-                        <InFeedAdBanner index={index} isDark={isDark} />
-                      )
-                  }
-                  */}
-                  </React.Fragment>
-                ))}
-                    {shouldCollapseSelected && (
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={() => handleToggleDateExpand(selectedDateKey)}
-                        style={{
-                          paddingVertical: 10,
-                          borderRadius: 12,
-                          backgroundColor: 'rgba(255,255,255,0.08)',
-                          alignItems: 'center',
-                          marginBottom: 12,
-                        }}
-                      >
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>
-                          +{hiddenSelectedCount}개 더 보기
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                    {isSelectedExpanded && totalSelected > MAX_COLLAPSED_EVENTS && (
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={() => handleToggleDateExpand(selectedDateKey)}
-                        style={{
-                          paddingVertical: 8,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <Text style={{ fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>
-                          접기
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </>
-                );
+                return <>{groupedDateElements}</>;
               }
+              return selectedDateElements;
             })()
           )
           )}
