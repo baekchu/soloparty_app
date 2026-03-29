@@ -105,23 +105,28 @@ async function _loadFromStorage(): Promise<void> {
   try {
     let parsed: BookmarkedEvent[] | null = null;
 
-    // 1. AsyncStorage에서 로드
-    try {
-      const stored = await safeGetItem(BOOKMARKS_KEY);
-      if (stored && stored.length < 500000) {
-        const data = JSON.parse(stored);
+    // 1+2. AsyncStorage + SecureStore 병렬 로드
+    const [asyncResult, secureResult] = await Promise.allSettled([
+      safeGetItem(BOOKMARKS_KEY),
+      SecureStore.getItemAsync(BOOKMARKS_SECURE_KEY),
+    ]);
+
+    // AsyncStorage 결과 처리
+    if (asyncResult.status === 'fulfilled' && asyncResult.value && asyncResult.value.length < 500000) {
+      try {
+        const data = JSON.parse(asyncResult.value);
         if (Array.isArray(data)) {
           parsed = data;
         }
+      } catch {
+        secureLog.warn('AsyncStorage 찜 로드 실패');
       }
-    } catch {
-      secureLog.warn('AsyncStorage 찜 로드 실패');
     }
 
-    // 2. SecureStore에서 로드 (폴백/검증)
-    try {
-      const secureStored = await SecureStore.getItemAsync(BOOKMARKS_SECURE_KEY);
-      if (secureStored) {
+    // SecureStore 결과 처리 (폴백/검증)
+    const secureStored = secureResult.status === 'fulfilled' ? secureResult.value : null;
+    if (secureStored) {
+      try {
         const secureData = JSON.parse(secureStored);
         if (Array.isArray(secureData)) {
           // SecureStore는 축소 형태 {eventId, date, title}로 저장됨 → BookmarkedEvent로 변환
@@ -146,9 +151,9 @@ async function _loadFromStorage(): Promise<void> {
             }
           }
         }
+      } catch {
+        // SecureStore 실패는 무시 (보조 저장소)
       }
-    } catch {
-      // SecureStore 실패는 무시 (보조 저장소)
     }
 
     // 3. v3에 데이터 없으면 레거시 키에서 마이그레이션 시도

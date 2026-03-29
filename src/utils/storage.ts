@@ -18,6 +18,24 @@ let _memCacheTime = 0;
 const MEM_CACHE_DURATION = 300000; // 5분 메모리 캐시 (디스크보다 짧게)
 const MAX_JSON_SIZE = 5 * 1024 * 1024; // 5MB 최대 JSON 크기 (DoS 방지)
 
+// 데이터 변경 감지: 네트워크 fetch 후 기존 캐시와 빠른 비교 (O(날짜 수))
+// 동일하면 기존 참조를 반환 → 하류 useMemo 재계산 전부 방지
+const isDataUnchanged = (newData: EventsByDate, existing: EventsByDate): boolean => {
+  const newKeys = Object.keys(newData);
+  const existingKeys = Object.keys(existing);
+  if (newKeys.length !== existingKeys.length) return false;
+  for (const key of newKeys) {
+    const ne = newData[key];
+    const ex = existing[key];
+    if (!ex || ne.length !== ex.length) return false;
+    // 스팟 체크: 첫 번째 + 마지막 이벤트 id+title (O(1))
+    if (ne[0]?.id !== ex[0]?.id || ne[0]?.title !== ex[0]?.title) return false;
+    const last = ne.length - 1;
+    if (last > 0 && (ne[last]?.id !== ex[last]?.id || ne[last]?.title !== ex[last]?.title)) return false;
+  }
+  return true;
+};
+
 // ==================== 보안 강화 JSON 처리 ====================
 
 /**
@@ -163,6 +181,34 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
     // 공휴일 자동 할당에서 중복 방지를 위해 이미 생성된 날짜 추적
     const generatedDates = new Set<string>();
 
+    // rule 공통 필드를 한 번만 추출 (GC 압력 감소)
+    const baseEvent: Omit<Event, 'id'> = {
+      groupId: rule.groupId || rule.id,
+      title: rule.title,
+      time: rule.time,
+      location: rule.location,
+      region: rule.region,
+      description: rule.description,
+      link: rule.link,
+      coordinates: rule.coordinates,
+      maleCapacity: rule.maleCapacity,
+      femaleCapacity: rule.femaleCapacity,
+      maleCount: rule.maleCount,
+      femaleCount: rule.femaleCount,
+      price: rule.price,
+      ageRange: rule.ageRange,
+      organizer: rule.organizer,
+      contact: rule.contact,
+      detailDescription: rule.detailDescription,
+      venue: rule.venue,
+      address: rule.address,
+      tags: rule.tags,
+      promoted: rule.promoted,
+      promotionPriority: rule.promotionPriority,
+      promotionLabel: rule.promotionLabel,
+      promotionColor: rule.promotionColor,
+    };
+
     // 요일별로 직접 점프 (7일 단위) → 날짜 하나씩 순회 대비 ~7배 빠름
     for (const targetDay of targetDays) {
       // start~end 안에서 첫 번째 해당 요일 찾기
@@ -178,36 +224,8 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
         const dateStr = `${year}-${month}-${day}`;
 
         if (!excludeSet.has(dateStr)) {
-          const event: Event = {
-            id: `${rule.id}_${dateStr}`,
-            groupId: rule.groupId || rule.id,
-            title: rule.title,
-            time: rule.time,
-            location: rule.location,
-            region: rule.region,
-            description: rule.description,
-            link: rule.link,
-            coordinates: rule.coordinates,
-            maleCapacity: rule.maleCapacity,
-            femaleCapacity: rule.femaleCapacity,
-            maleCount: rule.maleCount,
-            femaleCount: rule.femaleCount,
-            price: rule.price,
-            ageRange: rule.ageRange,
-            organizer: rule.organizer,
-            contact: rule.contact,
-            detailDescription: rule.detailDescription,
-            venue: rule.venue,
-            address: rule.address,
-            tags: rule.tags,
-            promoted: rule.promoted,
-            promotionPriority: rule.promotionPriority,
-            promotionLabel: rule.promotionLabel,
-            promotionColor: rule.promotionColor,
-          };
-
           if (!result[dateStr]) result[dateStr] = [];
-          result[dateStr].push(event);
+          result[dateStr].push({ ...baseEvent, id: `${rule.id}_${dateStr}` });
           generatedDates.add(dateStr);
         }
 
@@ -227,36 +245,8 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
         if (excludeSet.has(dateStr)) continue;
         if (generatedDates.has(dateStr)) continue; // 이미 요일 패턴으로 생성됨
 
-        const holidayEvent: Event = {
-          id: `${rule.id}_${dateStr}`,
-          groupId: rule.groupId || rule.id,
-          title: rule.title,
-          time: rule.time,
-          location: rule.location,
-          region: rule.region,
-          description: rule.description,
-          link: rule.link,
-          coordinates: rule.coordinates,
-          maleCapacity: rule.maleCapacity,
-          femaleCapacity: rule.femaleCapacity,
-          maleCount: rule.maleCount,
-          femaleCount: rule.femaleCount,
-          price: rule.price,
-          ageRange: rule.ageRange,
-          organizer: rule.organizer,
-          contact: rule.contact,
-          detailDescription: rule.detailDescription,
-          venue: rule.venue,
-          address: rule.address,
-          tags: rule.tags,
-          promoted: rule.promoted,
-          promotionPriority: rule.promotionPriority,
-          promotionLabel: rule.promotionLabel,
-          promotionColor: rule.promotionColor,
-        };
-
         if (!result[dateStr]) result[dateStr] = [];
-        result[dateStr].push(holidayEvent);
+        result[dateStr].push({ ...baseEvent, id: `${rule.id}_${dateStr}` });
       }
     }
   }
@@ -445,6 +435,9 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
 
 // ==================== 공개 API ====================
 
+// 네트워크 요청 중복 방지 (동시 호출 시 단일 요청만 실행)
+let _pendingLoadPromise: Promise<EventsByDate> | null = null;
+
 export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsByDate> => {
   // 1순위: 인메모리 캐시 (AsyncStorage보다 100배 빠름)
   if (!forceRefresh) {
@@ -465,6 +458,12 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     }
   }
   
+  // 이미 진행 중인 네트워크 요청이 있으면 재사용 (중복 fetch 방지)
+  if (_pendingLoadPromise) {
+    return _pendingLoadPromise;
+  }
+
+  const doLoad = async (): Promise<EventsByDate> => {
   try {
     secureLog.info('🔄 데이터 로딩...');
     const url = GIST_RAW_URL; // 캐시버스팅 파라미터 제거: Cache-Control 헤더로 처리
@@ -540,6 +539,12 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     
     secureLog.info('✅ 로딩 완료');
 
+    // 데이터 변경이 없으면 기존 memCache 참조 반환 → CalendarScreen 전체 useMemo 체인 재계산 방지
+    if (_memCache && isDataUnchanged(processed, _memCache)) {
+      _memCacheTime = Date.now();
+      return _memCache;
+    }
+
     // 인메모리 캐시 갱신 (저장보다 먼저)
     _memCache = processed;
     _memCacheTime = Date.now();
@@ -574,6 +579,14 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     secureLog.warn('❌ 빈 데이터 반환');
     return {};
   }
+  };
+
+  _pendingLoadPromise = doLoad();
+  try {
+    return await _pendingLoadPromise;
+  } finally {
+    _pendingLoadPromise = null;
+  }
 };
 
 export const saveEvents = async (events: EventsByDate): Promise<void> => {
@@ -587,6 +600,12 @@ export const saveEvents = async (events: EventsByDate): Promise<void> => {
   }
   
   await saveToCache(sanitized);
+};
+
+// 인메모리 캐시 존재 여부 동기 확인 (CalendarScreen 초기 로딩 스킵용)
+export const hasMemCache = (): boolean => {
+  const memAge = Date.now() - _memCacheTime;
+  return _memCache !== null && memAge >= 0 && memAge < MEM_CACHE_DURATION;
 };
 
 // 캐시 삭제 (디버깅용)

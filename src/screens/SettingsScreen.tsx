@@ -258,6 +258,22 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
        
 
+        {/* 데이터 관리 */}
+        {/* <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
+          <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
+            데이터 관리
+          </Text>
+          <TouchableOpacity onPress={handleClearCache} style={settingsStyles.menuItem}>
+            <View style={settingsStyles.flex1}>
+              <Text style={[settingsStyles.menuText, { color: colors.text }]}>캐시 삭제</Text>
+              <Text style={[settingsStyles.itemDesc, { color: colors.subtext }]}>
+                캐시된 이벤트 데이터를 초기화합니다
+              </Text>
+            </View>
+            <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
+          </TouchableOpacity>
+        </View> */}
+
         {/* 앱 정보 */}
         <View style={[settingsStyles.section, { backgroundColor: colors.card }]}>
           <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
@@ -351,7 +367,7 @@ const settingsStyles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    marginVertical: 4,
+    marginVertical: 2,
   },
   menuItem: {
     flexDirection: 'row',

@@ -98,28 +98,26 @@ function AppContent() {
 
   useEffect(() => {
     let mounted = true;
-    let timeoutId: NodeJS.Timeout | null = null;
     
     // AsyncStorage 초기화 후 앱 시작
     const initApp = async () => {
       try {
         await initAsyncStorage();
         
-        // AsyncStorage 준비 후 EventColorManager 초기화
+        // 병렬 초기화: EventColorManager, AdManager, 딥링크, 리뷰 프리페치 동시 실행
         const EventColorManager = require('./src/utils/eventColorManager').default;
-        EventColorManager.initialize().catch(() => {});
+        const { preWarmReviews } = require('./src/hooks/useReviews');
+        const [initialUrl] = await Promise.all([
+          Linking.getInitialURL(),
+          EventColorManager.initialize().catch(() => {}),
+          AdManager.initialize().catch(() => {}),
+          // 데이터 프리페치: CalendarScreen 마운트 전에 인메모리 캐시 준비
+          require('./src/utils/storage').loadEvents(false).catch(() => {}),
+          // 리뷰 프리페치: EventDetailScreen 진입 시 즉시 사용 가능
+          Promise.resolve().then(() => { preWarmReviews(); }).catch(() => {}),
+        ]);
         
-        // 광고 시스템 초기화 (백그라운드)
-        AdManager.initialize().catch(() => {});
-        
-        // 딥링크 체크 (앱이 꺼져있다가 열릴 때)
-        const initialUrl = await Linking.getInitialURL();
         handleDeepLink(initialUrl);
-        
-        // 1초 추가 대기 (스플래시 화면 표시)
-        await new Promise(resolve => {
-          timeoutId = setTimeout(resolve, 1000);
-        });
         
         if (mounted) {
           setIsReady(true);
@@ -141,7 +139,6 @@ function AppContent() {
 
     return () => {
       mounted = false;
-      if (timeoutId) clearTimeout(timeoutId);
       linkSubscription.remove();
     };
   }, [handleDeepLink]);

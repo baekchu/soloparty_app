@@ -274,6 +274,8 @@ export const HostProfileModal = memo<HostProfileModalProps>(
                   onPress={handleClose}
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   activeOpacity={0.6}
+                  accessibilityLabel="닫기"
+                  accessibilityRole="button"
                 >
                   <Text style={[styles.closeBtnText, { color: t.textSec }]}>✕</Text>
                 </TouchableOpacity>
@@ -383,11 +385,11 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     position: 'absolute',
-    top: 12,
-    right: 16,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    top: 10,
+    right: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,

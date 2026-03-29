@@ -179,8 +179,12 @@ async function _loadFromStorage(): Promise<void> {
   if (_loaded || _loading) return;
   _loading = true;
   try {
-    // 체크인 로드
-    const storedCheckIns = await safeGetItem(CHECKINS_KEY);
+    // 체크인 + 후기 병렬 로드 (순차 2회 → 동시 1회)
+    const [storedCheckIns, storedReviews] = await Promise.all([
+      safeGetItem(CHECKINS_KEY),
+      safeGetItem(REVIEWS_KEY),
+    ]);
+
     if (storedCheckIns && storedCheckIns.length < 200000) {
       try {
         const parsed = JSON.parse(storedCheckIns);
@@ -194,14 +198,12 @@ async function _loadFromStorage(): Promise<void> {
               Array.isArray(c.verifiedBy),
           );
           if (_checkIns.length < parsed.length) {
-            await safeSetItem(CHECKINS_KEY, JSON.stringify(_checkIns));
+            safeSetItem(CHECKINS_KEY, JSON.stringify(_checkIns)).catch(() => {});
           }
         }
       } catch { /* 파싱 실패 */ }
     }
 
-    // 후기 로드
-    const storedReviews = await safeGetItem(REVIEWS_KEY);
     if (storedReviews && storedReviews.length < 500000) {
       try {
         const parsed = JSON.parse(storedReviews);
@@ -222,6 +224,13 @@ async function _loadFromStorage(): Promise<void> {
   _loading = false;
   _setupAppStateListener();
   _notify();
+}
+
+/** EventDetailScreen 이동 전 데이터를 미리 로드 (CalendarScreen에서 호출) */
+export function preWarmReviews(): void {
+  if (!_loaded && !_loading) {
+    _loadFromStorage().catch(() => {});
+  }
 }
 
 async function _saveCheckIns(): Promise<void> {

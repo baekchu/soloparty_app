@@ -32,6 +32,77 @@ const getTodayStr = () => {
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 };
 
+// 성능 최적화: 빈 배열 상수 (참조 안정성 보장 → React.memo 비교 최적화)
+const EMPTY_EVENTS: Event[] = [];
+const EMPTY_COLORS: string[] = [];
+
+// 성능 최적화: 개별 셀을 React.memo로 분리 → 변경되지 않은 셀 재렌더 방지
+const DayCell = React.memo(function DayCell({
+  day, weekIndex, dayIndex, dateString, dayEvents, dayColors,
+  isToday, onDatePress, cellStyles, dateTextStyles,
+  holidayTextStyle, eventTextStyle, todayCircleStyle, themeColors,
+}: {
+  day: number; weekIndex: number; dayIndex: number;
+  dateString: string; dayEvents: Event[]; dayColors: string[];
+  isToday: boolean; onDatePress?: (date: string) => void;
+  cellStyles: any; dateTextStyles: any; holidayTextStyle: any;
+  eventTextStyle: any; todayCircleStyle: any; themeColors: any;
+}) {
+  const isSunday = dayIndex === 0;
+  const isSaturday = dayIndex === 6;
+  const holidayName = getHolidayName(dateString);
+  const isHolidayDay = !!holidayName && !isSunday;
+
+  const dateStyle = isToday
+    ? dateTextStyles.today
+    : (isSunday || isHolidayDay)
+      ? dateTextStyles.sunday
+      : isSaturday
+        ? dateTextStyles.saturday
+        : dateTextStyles.normal;
+
+  return (
+    <TouchableOpacity
+      key={`${weekIndex}-${dayIndex}`}
+      style={cellStyles.cell}
+      onPress={() => onDatePress?.(dateString)}
+      activeOpacity={0.7}
+    >
+      <View style={cellStyles.innerView}>
+        <View style={monthStyles.dateHeader}>
+          <View style={isToday ? todayCircleStyle : undefined}>
+            <Text style={dateStyle}>{day}</Text>
+          </View>
+          {holidayName && (
+            <Text numberOfLines={1} style={holidayTextStyle}>
+              {holidayName.length > 5 ? holidayName.substring(0, 5) : holidayName}
+            </Text>
+          )}
+        </View>
+        <View style={monthStyles.eventList}>
+          {dayEvents.slice(0, 3).map((event, idx) => (
+            <View
+              key={event.id}
+              style={[monthStyles.eventItem, { backgroundColor: dayColors[idx], height: cellStyles.eventHeight }]}
+            >
+              <Text style={eventTextStyle} numberOfLines={1}>
+                {event.title}
+              </Text>
+            </View>
+          ))}
+          {dayEvents.length > 3 && (
+            <View style={[monthStyles.moreEventsContainer, { backgroundColor: themeColors.moreIndicatorBg }]}>
+              <Text style={[monthStyles.moreEventsText, { fontSize: cellStyles.moreFontSize, color: themeColors.moreTextColor }]}>
+                +{dayEvents.length - 3}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 export default React.memo(function MonthCalendar({ year, month, events, isDark, onDatePress, selectedLocation, selectedRegion }: MonthCalendarProps) {
   
   // location과 region으로 필터링된 이벤트 (최적화)
@@ -109,6 +180,49 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     moreTextColor: isDark ? '#d1d5db' : '#4b5563',
   }), [isDark]);
 
+  // renderDay 내부 반복 생성 방지: 텍스트 스타일을 미리 계산
+  const dateTextStyles = useMemo(() => ({
+    today: { fontSize: cellStyles.fontSize, fontWeight: '800' as const, color: '#ffffff' },
+    normal: { fontSize: cellStyles.fontSize, fontWeight: '500' as const, color: themeColors.text },
+    sunday: { fontSize: cellStyles.fontSize, fontWeight: '500' as const, color: '#ef4444' },
+    saturday: { fontSize: cellStyles.fontSize, fontWeight: '500' as const, color: '#3b82f6' },
+  }), [cellStyles.fontSize, themeColors.text]);
+
+  const holidayTextStyle = useMemo(() => ({
+    fontSize: cellStyles.holidayFontSize,
+    color: '#ef4444' as const,
+    fontWeight: '700' as const,
+    lineHeight: 8,
+    textAlign: 'center' as const,
+    maxWidth: dimensions.cellWidth - 4,
+  }), [cellStyles.holidayFontSize, dimensions.cellWidth]);
+
+  const eventTextStyle = useMemo(() => ({
+    color: themeColors.eventText,
+    fontSize: cellStyles.eventFontSize,
+    fontWeight: '700' as const,
+    letterSpacing: -0.2,
+  }), [themeColors.eventText, cellStyles.eventFontSize]);
+
+  const todayCircleStyle = useMemo(() => (
+    [cellStyles.todayCircle, { backgroundColor: themeColors.todayBg }]
+  ), [cellStyles.todayCircle, themeColors.todayBg]);
+
+  // 성능 최적화: EventColorManager 색상을 부모에서 한 번만 계산 (셀별 반복 계산 제거)
+  const dayColorsMap = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const dateString of Object.keys(filteredEvents)) {
+      const dayEvents = filteredEvents[dateString];
+      map[dateString] = dayEvents.slice(0, 3).map((event, idx) =>
+        EventColorManager.getColorForEvent(
+          event.id || `${dateString}-${idx}`,
+          event.title, dateString, filteredEvents, dayEvents, idx, isDark, event.groupId
+        )
+      );
+    }
+    return map;
+  }, [filteredEvents, isDark]);
+
   React.useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       const { width, height } = window;
@@ -148,113 +262,6 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     }, msUntilMidnight + 500);
     return () => clearTimeout(timer);
   }, [todayString]);
-
-  const renderDay = useCallback((day: number | null, weekIndex: number, dayIndex: number, isOtherMonth: boolean = false) => {
-    if (!day || isOtherMonth) {
-      return <View key={`empty-${weekIndex}-${dayIndex}`} style={cellStyles.emptyCell} />;
-    }
-
-    const dateString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const dayEvents = filteredEvents[dateString] || [];
-    const isToday = dateString === todayString;
-    const isSunday = dayIndex === 0;
-    const isSaturday = dayIndex === 6;
-    const holidayName = getHolidayName(dateString);
-    const isHolidayDay = !!holidayName && !isSunday;
-
-    const dateTextColor = isToday
-      ? '#ffffff'
-      : (isSunday || isHolidayDay)
-        ? '#ef4444'
-        : isSaturday
-          ? '#3b82f6'
-          : themeColors.text;
-
-    return (
-      <TouchableOpacity
-        key={`${weekIndex}-${dayIndex}`}
-        style={cellStyles.cell}
-        onPress={() => onDatePress?.(dateString)}
-        activeOpacity={0.7}
-      >
-        <View style={cellStyles.innerView}>
-          {/* 날짜 숫자 - 상단 중앙 (고정 높이로 정렬 보장) */}
-          <View style={monthStyles.dateHeader}>
-            {/* 오늘 날짜: 작은 원형 배경 */}
-            <View style={isToday ? [cellStyles.todayCircle, { backgroundColor: themeColors.todayBg }] : undefined}>
-              <Text
-                style={{
-                  fontSize: cellStyles.fontSize,
-                  fontWeight: isToday ? '800' : '500',
-                  color: dateTextColor,
-                }}
-              >
-                {day}
-              </Text>
-            </View>
-            {holidayName && (
-              <Text
-                numberOfLines={1}
-                style={{
-                  fontSize: cellStyles.holidayFontSize,
-                  color: '#ef4444',
-                  fontWeight: '700',
-                  lineHeight: 8,
-                  textAlign: 'center',
-                  maxWidth: dimensionsRef.current.cellWidth - 4,
-                }}
-              >
-                {holidayName.length > 5 ? holidayName.substring(0, 5) : holidayName}
-              </Text>
-            )}
-          </View>
-
-          {/* 일정 목록 - 최대 3개만 표시 */}
-          <View style={monthStyles.eventList}>
-            {dayEvents.slice(0, 3).map((event, idx) => {
-              const groupId = event.groupId;
-              const colorBg = EventColorManager.getColorForEvent(
-                event.id || `${dateString}-${idx}`,
-                event.title,
-                dateString,
-                filteredEvents,
-                dayEvents,
-                idx,
-                isDark,
-                groupId,
-              );
-
-              return (
-                <View
-                  key={event.id}
-                  style={[monthStyles.eventItem, { backgroundColor: colorBg, height: cellStyles.eventHeight }]}
-                >
-                  <Text
-                    style={{
-                      color: themeColors.eventText,
-                      fontSize: cellStyles.eventFontSize,
-                      fontWeight: '700',
-                      letterSpacing: -0.2,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {event.title}
-                  </Text>
-                </View>
-              );
-            })}
-            {dayEvents.length > 3 && (
-              <View style={[monthStyles.moreEventsContainer, { backgroundColor: themeColors.moreIndicatorBg }]}>
-                <Text style={[monthStyles.moreEventsText, { fontSize: cellStyles.moreFontSize, color: themeColors.moreTextColor }]}>
-                  +{dayEvents.length - 3}
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  }, [filteredEvents, isDark, todayString, year, month, onDatePress, cellStyles, themeColors]);
 
   const renderWeeks = useCallback(() => {
     const weeks: Array<Array<{ day: number; isOtherMonth: boolean }>> = [];
@@ -311,7 +318,31 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
       <View>
         {weeks.map((week, weekIndex) => (
           <View key={weekIndex} style={monthStyles.weekRow}>
-            {week.map((cell, dayIndex) => renderDay(cell.day, weekIndex, dayIndex, cell.isOtherMonth))}
+            {week.map((cell, dayIndex) => {
+              if (cell.isOtherMonth) {
+                return <View key={`empty-${weekIndex}-${dayIndex}`} style={cellStyles.emptyCell} />;
+              }
+              const dateString = `${year}-${String(month).padStart(2, '0')}-${String(cell.day).padStart(2, '0')}`;
+              return (
+                <DayCell
+                  key={`${weekIndex}-${dayIndex}`}
+                  day={cell.day}
+                  weekIndex={weekIndex}
+                  dayIndex={dayIndex}
+                  dateString={dateString}
+                  dayEvents={filteredEvents[dateString] || EMPTY_EVENTS}
+                  dayColors={dayColorsMap[dateString] || EMPTY_COLORS}
+                  isToday={dateString === todayString}
+                  onDatePress={onDatePress}
+                  cellStyles={cellStyles}
+                  dateTextStyles={dateTextStyles}
+                  holidayTextStyle={holidayTextStyle}
+                  eventTextStyle={eventTextStyle}
+                  todayCircleStyle={todayCircleStyle}
+                  themeColors={themeColors}
+                />
+              );
+            })}
           </View>
         ))}
       </View>

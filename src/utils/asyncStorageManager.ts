@@ -33,10 +33,7 @@ export const initAsyncStorage = async (): Promise<void> => {
     try {
       secureLog.info('🔧 AsyncStorage 초기화 시작...');
       
-      // 100ms 대기 (네이티브 모듈 완전 로드)
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // 테스트 쓰기/읽기
+      // 테스트 쓰기/읽기 (불필요한 100ms 대기 제거)
       await AsyncStorage.setItem('@storage_init_test', 'ok');
       const test = await AsyncStorage.getItem('@storage_init_test');
       
@@ -49,8 +46,7 @@ export const initAsyncStorage = async (): Promise<void> => {
       }
     } catch (error) {
       secureLog.error('❌ AsyncStorage 초기화 실패');
-      // 500ms 추가 대기 후 강제 진행 (더 단축)
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // 강제 진행 (대기 없이)
       isReady = true;
     }
   })();

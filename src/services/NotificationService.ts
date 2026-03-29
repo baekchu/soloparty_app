@@ -11,7 +11,7 @@
 
 import * as Notifications from 'expo-notifications';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
-import { Platform } from 'react-native';
+import { Platform, AppState, AppStateStatus } from 'react-native';
 import Constants from 'expo-constants';
 import { secureLog } from '../utils/secureStorage';
 
@@ -31,6 +31,17 @@ const SETTINGS_CACHE_TTL = 30000; // 30초 캐시
 let _permissionGranted: boolean | null = null;
 let _permissionCheckTime = 0;
 const PERMISSION_CACHE_TTL = 60000; // 60초 캐시
+
+// AppState listener — 포그라운드 복귀 시 권한 캐시 무효화
+// (사용자가 설정 앱에서 권한을 변경했을 수 있음)
+AppState.addEventListener('change', (state: AppStateStatus) => {
+  if (state === 'active') {
+    // 권한만 무효화 (사용자가 설정 앱에서 변경했을 수 있음)
+    // 설정 캐시는 TTL(30초)에 의존 → 불필요한 AsyncStorage 재읽기 방지
+    _permissionGranted = null;
+    _permissionCheckTime = 0;
+  }
+});
 
 export interface NotificationSettings {
   enabled: boolean;

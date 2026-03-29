@@ -81,8 +81,10 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
     setSelectedLocationState(null);
     setSelectedRegionState(null);
     try {
-      await safeRemoveItem(SELECTED_LOCATION_KEY);
-      await safeRemoveItem(SELECTED_REGION_KEY);
+      await Promise.all([
+        safeRemoveItem(SELECTED_LOCATION_KEY),
+        safeRemoveItem(SELECTED_REGION_KEY),
+      ]);
     } catch (error) {
       // 삭제 실패해도 상태는 초기화됨
     }

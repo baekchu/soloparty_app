@@ -247,13 +247,15 @@ export const usePoints = () => {
     
     const initializeData = async () => {
       try {
-        // 1. 기기 ID 로드
-        const id = await PointsSecurityService.getDeviceId();
+        // 1+2+3. 상호 의존성 없는 세 단계를 병렬 실행 (직렬 대비 ~2배 빠름)
+        const [id, rawPointsData, adLimitData] = await Promise.all([
+          PointsSecurityService.getDeviceId(),
+          PointsSecurityService.loadSecurePointsData(),
+          loadAdLimitData(),
+        ]);
         if (isMountedRef.current) setDeviceId(id);
         
-        // 2. 포인트 데이터 로드
-        let pointsData = await PointsSecurityService.loadSecurePointsData();
-        
+        let pointsData = rawPointsData;
         if (!pointsData) {
           // 자동 복원 시도 (앱 재설치 등)
           const restoredBalance = await PointsAutoSyncService.tryAutoRestore();
@@ -267,9 +269,6 @@ export const usePoints = () => {
             secureLog.info('🎉 신규 사용자 - 초기 포인트 생성');
           }
         }
-        
-        // 3. 광고 제한 데이터 로드
-        const adLimitData = await loadAdLimitData();
         
         // 4. 일일 광고 리셋 확인
         const today = new Date();

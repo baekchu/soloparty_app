@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, TextInput, ScrollView, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useRegion } from '../contexts/RegionContext';
@@ -83,6 +83,8 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   const [allLocations, setAllLocations] = useState<LocationData[]>(DEFAULT_LOCATIONS);
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string | null>(null);
   const [availableRegions, setAvailableRegions] = useState<string[]>([]);
+  const [isLoadingLocations, setIsLoadingLocations] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const isMountedRef = useRef(true);
 
   const [dimensions, setDimensions] = useState(() => ({
@@ -145,6 +147,11 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
     unmountControllerRef.current = controller;
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
     
+    if (isMountedRef.current) {
+      setIsLoadingLocations(true);
+      setLoadError(false);
+    }
+
     try {
       const response = await fetch(`${EVENTS_GIST_URL}?t=${Date.now()}`, {
         signal: controller.signal,
@@ -153,6 +160,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       
       if (!response.ok) {
         await loadLocalStats();
+        if (isMountedRef.current) { setLoadError(true); setIsLoadingLocations(false); }
         return;
       }
       
@@ -256,10 +264,15 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       if (isMountedRef.current) {
         setAvailableRegions(regions.sort());
         setAllLocations(mergedLocations);
+        setIsLoadingLocations(false);
       }
     } catch (error) {
       clearTimeout(timeoutId);
       await loadLocalStats();
+      if (isMountedRef.current) {
+        setLoadError(true);
+        setIsLoadingLocations(false);
+      }
     }
   }, []);
   
@@ -390,46 +403,33 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   }, [selectedLocation, allLocations, saveLocationStats, setContextLocation, setContextRegion, route, navigation]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff' }}>
+    <SafeAreaView style={[lpStyles.root, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 헤더 */}
-      <View style={{ 
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20, 
-        paddingTop: 20,
-        paddingBottom: 20, 
+      <View style={[lpStyles.header, {
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
-        borderBottomWidth: 1,
         borderBottomColor: isDark ? '#334155' : '#e5e7eb',
-      }}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={{ padding: 8 }}
-        >
-          <Text style={{ fontSize: 24, color: isDark ? '#f8fafc' : '#0f172a' }}>‹</Text>
+      }]}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={lpStyles.headerBtn}>
+          <Text style={[lpStyles.headerBtnText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: 20, fontWeight: '700', color: isDark ? '#f8fafc' : '#0f172a' }}>
+        <Text style={[lpStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
           위치 선택
         </Text>
-        <View style={{ width: 40 }} />
+        <View style={lpStyles.headerSpacer} />
       </View>
 
       {/* 검색 및 위치 목록 */}
       <ScrollView 
-        style={{ flex: 1 }}
+        style={lpStyles.flex1}
         contentContainerStyle={{ paddingBottom: insets.bottom }}
       >
         {/* 검색창 */}
-        <View style={{ padding: 20, paddingBottom: 12 }}>
+        <View style={lpStyles.searchWrap}>
           <TextInput
-            style={{
+            style={[lpStyles.searchInput, {
               backgroundColor: isDark ? '#1e293b' : '#f3f4f6',
-              borderRadius: 12,
-              padding: 16,
-              fontSize: 16,
               color: isDark ? '#f8fafc' : '#0f172a',
-            }}
+            }]}
             placeholder="장소 검색..."
             placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
             value={searchQuery}
@@ -441,27 +441,19 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
-          style={{ paddingHorizontal: 16, marginBottom: 16 }}
+          style={lpStyles.filterRow}
         >
           <TouchableOpacity
             onPress={() => setSelectedRegionFilter(null)}
-            style={{
-              paddingHorizontal: 16,
-              paddingVertical: 8,
-              borderRadius: 20,
+            style={[lpStyles.filterChip, {
               backgroundColor: selectedRegionFilter === null 
                 ? (isDark ? '#a78bfa' : '#ec4899') 
                 : (isDark ? '#334155' : '#f1f5f9'),
-              marginRight: 8,
-            }}
+            }]}
           >
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '600',
-              color: selectedRegionFilter === null 
-                ? '#ffffff' 
-                : (isDark ? '#94a3b8' : '#64748b'),
-            }}>
+            <Text style={[lpStyles.filterChipText, {
+              color: selectedRegionFilter === null ? '#ffffff' : (isDark ? '#94a3b8' : '#64748b'),
+            }]}>
               전체
             </Text>
           </TouchableOpacity>
@@ -469,23 +461,15 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
             <TouchableOpacity
               key={region}
               onPress={() => setSelectedRegionFilter(region)}
-              style={{
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                borderRadius: 20,
+              style={[lpStyles.filterChip, {
                 backgroundColor: selectedRegionFilter === region 
                   ? (isDark ? '#a78bfa' : '#ec4899') 
                   : (isDark ? '#334155' : '#f1f5f9'),
-                marginRight: 8,
-              }}
+              }]}
             >
-              <Text style={{
-                fontSize: 14,
-                fontWeight: '600',
-                color: selectedRegionFilter === region 
-                  ? '#ffffff' 
-                  : (isDark ? '#94a3b8' : '#64748b'),
-              }}>
+              <Text style={[lpStyles.filterChipText, {
+                color: selectedRegionFilter === region ? '#ffffff' : (isDark ? '#94a3b8' : '#64748b'),
+              }]}>
                 {region}
               </Text>
             </TouchableOpacity>
@@ -493,90 +477,87 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
         </ScrollView>
 
         {/* 인기 위치 목록 */}
-        <View style={{ paddingHorizontal: 20, paddingBottom: 20, paddingTop: 8 }}>
-          <Text style={{
-            fontSize: 16,
-            fontWeight: '700',
-            color: isDark ? '#f8fafc' : '#0f172a',
-            marginBottom: 12,
-          }}>
+        <View style={lpStyles.listSection}>
+          {isLoadingLocations ? (
+            <View style={lpStyles.loadingWrap}>
+              <ActivityIndicator size="large" color={isDark ? '#a78bfa' : '#ec4899'} />
+              <Text style={[lpStyles.loadingText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+                장소 데이터를 불러오는 중...
+              </Text>
+            </View>
+          ) : (
+          <>
+          {loadError && (
+            <View style={lpStyles.errorBanner}>
+              <Text style={lpStyles.errorBannerText}>
+                ⚠️ 최신 데이터를 불러오지 못했습니다. 기본 장소만 표시됩니다.
+              </Text>
+            </View>
+          )}
+          <Text style={[lpStyles.listTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
             {selectedRegionFilter ? `${selectedRegionFilter} 지역 장소` : '인기 장소'}
+            {searchQuery.trim() ? ` (${filteredLocations.length}건)` : ''}
           </Text>
           {filteredLocations.length === 0 ? (
-            <View style={{
-              padding: 20,
-              alignItems: 'center',
-            }}>
-              <Text style={{
-                fontSize: 14,
-                color: isDark ? '#94a3b8' : '#64748b',
-              }}>
+            <View style={lpStyles.emptyWrap}>
+              <Text style={[lpStyles.emptyText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
                 검색 결과가 없습니다
               </Text>
             </View>
           ) : (
-            filteredLocations.map((location, index) => (
+            filteredLocations.map((location) => {
+            const isSelected = selectedLocation?.name === location.name;
+            return (
             <TouchableOpacity
               key={`${location.name}_${location.region}`}
               onPress={() => handleSelectLocation(location)}
-              style={{
-                backgroundColor: selectedLocation?.name === location.name 
+              style={[lpStyles.locItem, {
+                backgroundColor: isSelected
                   ? (isDark ? 'rgba(167, 139, 250, 0.15)' : 'rgba(236, 72, 153, 0.08)')
                   : (isDark ? '#1e293b' : '#f9fafb'),
-                padding: 16,
-                borderRadius: 12,
-                marginBottom: 8,
-                borderWidth: selectedLocation?.name === location.name ? 2 : 1,
-                borderColor: selectedLocation?.name === location.name 
+                borderWidth: isSelected ? 2 : 1,
+                borderColor: isSelected
                   ? (isDark ? '#a78bfa' : '#ec4899')
                   : (isDark ? '#334155' : '#e5e7eb'),
-              }}
+              }]}
             >
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: isDark ? '#f8fafc' : '#0f172a',
-                  }}>
+              <View style={lpStyles.locRow}>
+                <View style={lpStyles.flex1}>
+                  <Text style={[lpStyles.locName, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
                     {normalizeDisplayName(location.region)} {normalizeDisplayName(location.name)}
                   </Text>
                 </View>
-                {selectedLocation?.name === location.name && (
-                  <Text style={{ fontSize: 24 }}>✓</Text>
+                {isSelected && (
+                  <Text style={lpStyles.checkMark}>✓</Text>
                 )}
               </View>
             </TouchableOpacity>
-          ))
+            );
+          })
+          )}
+          </>
           )}
         </View>
       </ScrollView>
 
       {/* 하단 버튼 */}
-      <View style={{
-        padding: 20,
+      <View style={[lpStyles.bottomBar, {
         paddingBottom: Math.max(20, insets.bottom),
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
-        borderTopWidth: 1,
         borderTopColor: isDark ? '#334155' : '#e5e7eb',
-      }}>
+      }]}>
         <TouchableOpacity
           onPress={handleConfirm}
           disabled={!selectedLocation}
-          style={{
+          style={[lpStyles.confirmBtn, {
             backgroundColor: selectedLocation 
               ? (isDark ? '#a78bfa' : '#ec4899')
               : (isDark ? '#374151' : '#e5e7eb'),
-            paddingVertical: 16,
-            borderRadius: 12,
-            alignItems: 'center',
-          }}
+          }]}
         >
-          <Text style={{ 
+          <Text style={[lpStyles.confirmBtnText, {
             color: selectedLocation ? '#ffffff' : (isDark ? '#6b7280' : '#9ca3af'),
-            fontSize: 16,
-            fontWeight: '700',
-          }}>
+          }]}>
             {selectedLocation ? `${selectedLocation.name} 선택` : '위치를 선택하세요'}
           </Text>
         </TouchableOpacity>
@@ -584,3 +565,42 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
     </SafeAreaView>
   );
 }
+
+// ==================== 스타일시트 ====================
+const lpStyles = StyleSheet.create({
+  root: { flex: 1 },
+  flex1: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+  },
+  headerBtn: { padding: 8 },
+  headerBtnText: { fontSize: 24 },
+  headerTitle: { fontSize: 20, fontWeight: '700' },
+  headerSpacer: { width: 40 },
+  searchWrap: { padding: 20, paddingBottom: 12 },
+  searchInput: { borderRadius: 12, padding: 16, fontSize: 16 },
+  filterRow: { paddingHorizontal: 16, marginBottom: 16 },
+  filterChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 8 },
+  filterChipText: { fontSize: 14, fontWeight: '600' },
+  listSection: { paddingHorizontal: 20, paddingBottom: 20, paddingTop: 8 },
+  listTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  emptyWrap: { padding: 20, alignItems: 'center' },
+  emptyText: { fontSize: 14 },
+  loadingWrap: { padding: 40, alignItems: 'center', gap: 12 },
+  loadingText: { fontSize: 14 },
+  errorBanner: { backgroundColor: '#fef3c7', borderRadius: 8, padding: 12, marginBottom: 12 },
+  errorBannerText: { fontSize: 13, color: '#92400e', textAlign: 'center' },
+  locItem: { padding: 16, borderRadius: 12, marginBottom: 8 },
+  locRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  locName: { fontSize: 16, fontWeight: '600' },
+  checkMark: { fontSize: 24 },
+  bottomBar: { padding: 20, borderTopWidth: 1 },
+  confirmBtn: { paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
+  confirmBtnText: { fontSize: 16, fontWeight: '700' },
+});

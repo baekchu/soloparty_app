@@ -15,8 +15,8 @@
  * ========================================================================
  */
 
-import React, { memo, useState } from 'react';
-import { View, Text, Platform } from 'react-native';
+import React, { memo, useState, useMemo } from 'react';
+import { View, Text, Platform, StyleSheet } from 'react-native';
 import { AD_CONFIG } from '../services/AdService';
 
 // ==================== 설정 ====================
@@ -52,18 +52,18 @@ interface InFeedAdBannerProps {
 const InFeedAdBanner = memo(({ index = 0, isDark = false }: InFeedAdBannerProps) => {
   const [adError, setAdError] = useState(false);
 
+  const realAdWrapStyle = useMemo(() => [
+    adStyles.realAdWrap,
+    { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' },
+  ], [isDark]);
+
   // 실제 AdMob 배너 (네이티브 빌드 후)
   if (USE_REAL_ADS && !AD_CONFIG.disableAll && !adError) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { BannerAd, BannerAdSize } = require('react-native-google-mobile-ads');
       return (
-        <View style={{
-          borderRadius: 12,
-          overflow: 'hidden',
-          marginBottom: 12,
-          backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-        }}>
+        <View style={realAdWrapStyle}>
           <BannerAd
             unitId={BANNER_AD_UNIT_ID}
             size={BannerAdSize.MEDIUM_RECTANGLE}
@@ -81,58 +81,24 @@ const InFeedAdBanner = memo(({ index = 0, isDark = false }: InFeedAdBannerProps)
   const ad = PLACEHOLDER_ADS[index % PLACEHOLDER_ADS.length];
   
   return (
-    <View style={{
-      backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(255, 255, 255, 0.12)',
-      borderRadius: 14,
-      marginBottom: 12,
-      overflow: 'hidden',
-    }}>
+    <View style={[adStyles.container, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(255, 255, 255, 0.12)' }]}>
       {/* 광고 컨텐츠 영역 */}
-      <View style={{
-        height: 100,
-        backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.08)',
-        justifyContent: 'center',
-        alignItems: 'center',
-      }}>
-        <View style={{
-          width: 48,
-          height: 48,
-          borderRadius: 24,
-          backgroundColor: ad.color,
-          justifyContent: 'center',
-          alignItems: 'center',
-          marginBottom: 8,
-          opacity: 0.8,
-        }}>
-          <Text style={{ fontSize: 20, color: '#fff', fontWeight: '900' }}>G</Text>
+      <View style={[adStyles.contentArea, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.08)' }]}>
+        <View style={[adStyles.iconCircle, { backgroundColor: ad.color }]}>
+          <Text style={adStyles.iconText}>G</Text>
         </View>
-        <Text style={{ 
-          fontSize: 12, 
-          color: 'rgba(255, 255, 255, 0.4)', 
-          fontWeight: '500',
-        }}>
+        <Text style={adStyles.descText}>
           {ad.desc}
         </Text>
       </View>
       
       {/* 하단 AD 라벨 */}
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-      }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{
-            paddingHorizontal: 5,
-            paddingVertical: 1.5,
-            backgroundColor: 'rgba(255, 255, 255, 0.15)',
-            borderRadius: 3,
-          }}>
-            <Text style={{ fontSize: 8, fontWeight: '800', color: 'rgba(255, 255, 255, 0.5)' }}>AD</Text>
+      <View style={adStyles.labelRow}>
+        <View style={adStyles.labelInner}>
+          <View style={adStyles.adBadge}>
+            <Text style={adStyles.adBadgeText}>AD</Text>
           </View>
-          <Text style={{ fontSize: 11, color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500' }}>
+          <Text style={adStyles.adMobText}>
             Google AdMob
           </Text>
         </View>
@@ -144,3 +110,17 @@ const InFeedAdBanner = memo(({ index = 0, isDark = false }: InFeedAdBannerProps)
 InFeedAdBanner.displayName = 'InFeedAdBanner';
 
 export default InFeedAdBanner;
+
+const adStyles = StyleSheet.create({
+  realAdWrap: { borderRadius: 12, overflow: 'hidden', marginBottom: 12 },
+  container: { borderRadius: 14, marginBottom: 12, overflow: 'hidden' },
+  contentArea: { height: 100, justifyContent: 'center', alignItems: 'center' },
+  iconCircle: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginBottom: 8, opacity: 0.8 },
+  iconText: { fontSize: 20, color: '#fff', fontWeight: '900' },
+  descText: { fontSize: 12, color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500' },
+  labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8 },
+  labelInner: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  adBadge: { paddingHorizontal: 5, paddingVertical: 1.5, backgroundColor: 'rgba(255, 255, 255, 0.15)', borderRadius: 3 },
+  adBadgeText: { fontSize: 8, fontWeight: '800', color: 'rgba(255, 255, 255, 0.5)' },
+  adMobText: { fontSize: 11, color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500' },
+});

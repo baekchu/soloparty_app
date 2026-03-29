@@ -63,13 +63,16 @@ const PointsModal = memo(({
   const [isProcessing, setIsProcessing] = useState(false);
   const [dailyShareCount, setDailyShareCount] = useState(0);
   const shareStartTimeRef = React.useRef(0);
+  const lastLoadDateRef = React.useRef('');
   const remainingShares = MAX_DAILY_SHARES - dailyShareCount;
   const canShare = remainingShares > 0;
   const { isShowing: isAdShowing, skipCountdown, canSkip, showAfterShare, dismiss: dismissAd } = useShareInterstitialAd();
 
-  // 일일 공유 횟수 로드
+  // 일일 공유 횟수 로드 (날짜가 바뀌었을 때만 AsyncStorage 조회)
   useEffect(() => {
     if (!visible) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (lastLoadDateRef.current === today) return; // 같은 날이면 재조회 불필요
     (async () => {
       try {
         const stored = await safeGetItem(SHARE_COUNT_KEY);
@@ -78,10 +81,10 @@ const PointsModal = memo(({
           // 타입 검증: 변조된 데이터 방어
           if (typeof parsed.count === 'number' && parsed.count >= 0 &&
               typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) {
-            const today = new Date().toISOString().slice(0, 10);
             setDailyShareCount(parsed.date === today ? Math.min(parsed.count, MAX_DAILY_SHARES) : 0);
           }
         }
+        lastLoadDateRef.current = today;
       } catch { /* ignore */ }
     })();
   }, [visible]);

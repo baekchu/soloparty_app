@@ -84,15 +84,19 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
   const [showCouponModal, setShowCouponModal] = useState(false);
   const [isExchanging, setIsExchanging] = useState(false);
   const [isWatchingAd, setIsWatchingAd] = useState(false);
+  const resetTimeDisplayRef = useRef('');
   const [resetTimeDisplay, setResetTimeDisplay] = useState('');
   const [verifyCode, setVerifyCode] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
   const adTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
 
-  // 언마운트 시 광고 타이머 정리
+  // 언마운트 시 광고 타이머 정리 + 상태 리셋
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
     };
   }, []);
@@ -108,6 +112,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         adTimeoutRef.current = null;
       }
       const result = await watchAdForPoints();
+      if (!isMountedRef.current) return;
       setIsWatchingAd(false);
       
       Alert.alert(
@@ -125,8 +130,10 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
       if (remaining > 0) {
         const hours = Math.floor(remaining / (60 * 60 * 1000));
         const minutes = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
-        setResetTimeDisplay(`${hours}시간 ${minutes}분`);
+        resetTimeDisplayRef.current = `${hours}시간 ${minutes}분`;
+        setResetTimeDisplay(resetTimeDisplayRef.current);
       } else {
+        resetTimeDisplayRef.current = '';
         setResetTimeDisplay('');
       }
     };
@@ -142,7 +149,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
     if (!canWatchAd) {
       Alert.alert(
         '🚫 광고 한도 초과',
-        `6시간당 최대 ${maxAds}개까지 시청 가능합니다.\n\n⏰ 리셋까지: ${resetTimeDisplay}`,
+        `6시간당 최대 ${maxAds}개까지 시청 가능합니다.\n\n⏰ 리셋까지: ${resetTimeDisplayRef.current}`,
         [{ text: '확인' }]
       );
       return;
@@ -156,8 +163,14 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         // 타임아웃: 60초 후에도 완료되지 않으면 자동 해제
         if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
         adTimeoutRef.current = setTimeout(() => {
+          if (!isMountedRef.current) return;
           setIsWatchingAd(false);
           adTimeoutRef.current = null;
+          Alert.alert(
+            '⏰ 광고 로드 실패',
+            '광고를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.',
+            [{ text: '확인' }]
+          );
         }, 60000);
       } else {
         // 광고 SDK 비활성화 상태: watchAdForPoints로 직접 포인트 적립
@@ -173,7 +186,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
       Alert.alert('오류', '광고 로드 중 오류가 발생했습니다.');
       setIsWatchingAd(false);
     }
-  }, [canWatchAd, adLoaded, maxAds, resetTimeDisplay, showRewardedAd, watchAdForPoints]);
+  }, [canWatchAd, adLoaded, maxAds, showRewardedAd, watchAdForPoints]);
 
   // 쿠폰 교환 핸들러
   const handleExchange = useCallback(async () => {
@@ -408,7 +421,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
             광고 1회 시청 시 {adRewardPoints}P 적립 • 6시간마다 {maxAds}회 가능
           </Text>
           
-          {!canWatchAd && resetTimeDisplay && (
+          {!canWatchAd && resetTimeDisplay !== '' && (
             <Text style={[styles.adResetText, { color: isDark ? '#f59e0b' : '#d97706' }]}>
               ⏰ 리셋까지: {resetTimeDisplay}
             </Text>
@@ -542,40 +555,58 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
           ) : (
             availableCoupons.map((coupon) => {
               const daysLeft = getDaysLeft(coupon.expiresAt);
-              const isExpiringSoon = daysLeft <= 7;
+              const isExpired = daysLeft <= 0;
+              const isExpiringSoon = daysLeft > 0 && daysLeft <= 7;
               
               return (
                 <TouchableOpacity
                   key={coupon.id}
-                  onPress={() => handleSelectCoupon(coupon)}
+                  onPress={() => !isExpired && handleSelectCoupon(coupon)}
+                  disabled={isExpired}
                   style={[
                     styles.couponItem,
                     { 
-                      backgroundColor: isDark ? '#0f172a' : '#ffffff',
-                      borderColor: isExpiringSoon 
-                        ? '#f59e0b' 
-                        : (isDark ? '#334155' : '#e5e7eb'),
+                      backgroundColor: isExpired
+                        ? (isDark ? '#1a1a2e' : '#f1f5f9')
+                        : (isDark ? '#0f172a' : '#ffffff'),
+                      borderColor: isExpired
+                        ? (isDark ? '#4b5563' : '#d1d5db')
+                        : isExpiringSoon 
+                          ? '#f59e0b' 
+                          : (isDark ? '#334155' : '#e5e7eb'),
+                      opacity: isExpired ? 0.6 : 1,
                     }
                   ]}
                 >
                   <View style={styles.couponLeft}>
-                    <Text style={styles.couponIcon}>🎟️</Text>
+                    <Text style={styles.couponIcon}>{isExpired ? '🚫' : '🎟️'}</Text>
                   </View>
                   <View style={styles.couponContent}>
-                    <Text style={[styles.couponName, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
-                      {coupon.name}
-                    </Text>
+                    <View style={styles.couponNameRow}>
+                      <Text style={[
+                        styles.couponName,
+                        { color: isDark ? '#f8fafc' : '#0f172a' },
+                        isExpired && { textDecorationLine: 'line-through' },
+                      ]}>
+                        {coupon.name}
+                      </Text>
+                      {isExpired && (
+                        <View style={styles.expiredBadge}>
+                          <Text style={styles.expiredBadgeText}>만료됨</Text>
+                        </View>
+                      )}
+                    </View>
                     <TouchableOpacity onPress={() => handleCopyCode(coupon.secretCode)} activeOpacity={0.7}>
                       <Text style={[styles.couponCode, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
                         🔑 {coupon.secretCode}
                       </Text>
                     </TouchableOpacity>
-                    <Text style={[styles.couponExpiry, { color: isExpiringSoon ? '#f59e0b' : (isDark ? '#94a3b8' : '#64748b') }]}>
-                      {isExpiringSoon ? `⚠️ ${daysLeft}일 후 만료` : `만료: ${formatDate(coupon.expiresAt)}`}
+                    <Text style={[styles.couponExpiry, { color: isExpired ? '#ef4444' : isExpiringSoon ? '#f59e0b' : (isDark ? '#94a3b8' : '#64748b') }]}>
+                      {isExpired ? '❌ 만료됨' : isExpiringSoon ? `⚠️ ${daysLeft}일 후 만료` : `만료: ${formatDate(coupon.expiresAt)}`}
                     </Text>
                   </View>
                   <View style={styles.couponRight}>
-                    <Text style={{ color: isDark ? '#94a3b8' : '#64748b', fontSize: 20 }}>›</Text>
+                    <Text style={[styles.couponArrow, { color: isDark ? '#94a3b8' : '#64748b' }]}>›</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -843,13 +874,32 @@ const styles = StyleSheet.create({
   couponName: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  couponNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 4,
+  },
+  expiredBadge: {
+    backgroundColor: '#ef4444',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  expiredBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   couponExpiry: {
     fontSize: 13,
   },
   couponRight: {
     paddingLeft: 8,
+  },
+  couponArrow: {
+    fontSize: 20,
   },
   historyItem: {
     flexDirection: 'row',

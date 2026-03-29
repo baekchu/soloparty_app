@@ -14,6 +14,7 @@ import {
   Share,
   Platform,
   TextInput,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -102,7 +103,6 @@ const InfoCard = memo(({
   if (!content) return null;
   
   const Wrapper = onPress ? TouchableOpacity : View;
-  const safeContent = sanitizeText(content);
   
   return (
     <Wrapper 
@@ -118,7 +118,7 @@ const InfoCard = memo(({
           style={[styles.infoText, { color: isDark ? '#f8fafc' : '#0f172a' }, onPress && styles.linkText]}
           numberOfLines={2}
         >
-          {safeContent}
+          {content}
         </Text>
       </View>
       {onPress && <Text style={styles.arrowIcon}>›</Text>}
@@ -131,6 +131,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const isDark = theme === 'dark';
+  const scrollViewRef = useRef<ScrollView>(null);
 
   // 지점 선택 (subEvents가 있으면 지점 탭 표시)
   const hasSubEvents = routeEvent.subEvents && routeEvent.subEvents.length > 1;
@@ -194,6 +195,23 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       total: male + female,
     };
   }, [event.maleCapacity, event.femaleCapacity]);
+
+  // 테마 의존 색상 캐싱 (isDark 변경 시에만 재계산)
+  const themeColors = useMemo(() => ({
+    bg: isDark ? '#0f172a' : '#ffffff',
+    headerBg: isDark ? '#1e293b' : '#ffffff',
+    headerBorder: isDark ? '#334155' : '#e5e7eb',
+    text: isDark ? '#f8fafc' : '#0f172a',
+    subText: isDark ? '#cbd5e1' : '#64748b',
+    bodyText: isDark ? '#e2e8f0' : '#374151',
+    cardBg: isDark ? '#1e293b' : '#ffffff',
+    accent: isDark ? '#a78bfa' : '#ec4899',
+    inactiveBg: isDark ? '#374151' : '#f1f5f9',
+    inactiveBorder: isDark ? '#475569' : '#e5e7eb',
+    buttonBg: isDark ? '#374151' : '#f1f5f9',
+    tagBg: isDark ? '#374151' : '#fce7f3',
+    tagText: isDark ? '#f472b6' : '#ec4899',
+  }), [isDark]);
   
   // 안전한 URL 생성 (memoized) - http/https만 허용
   const safeLink = useMemo(() => {
@@ -290,10 +308,17 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     ]);
   }, [safeLink, handleOpenLink]);
 
-  // 찜 토글 핸들러 (useCallback으로 최적화)
+  // 찜 토글 핸들러 (useCallback으로 최적화 + 해제 시 확인)
   const handleToggleBookmark = useCallback(() => {
-    toggleBookmark(event, date);
-  }, [event, date, toggleBookmark]);
+    if (bookmarked) {
+      Alert.alert('찜 해제', '이 파티의 찜을 해제할까요?', [
+        { text: '취소', style: 'cancel' },
+        { text: '해제', style: 'destructive', onPress: () => toggleBookmark(event, date) },
+      ]);
+    } else {
+      toggleBookmark(event, date);
+    }
+  }, [event, date, bookmarked, toggleBookmark]);
 
   // 뒤로가기 핸들러
   const handleGoBack = useCallback(() => navigation.goBack(), [navigation]);
@@ -350,6 +375,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         setShowReviewForm(false);
         setReviewRating(0);
         setReviewComment('');
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
       }
     } finally {
       isProcessing.current = false;
@@ -361,6 +387,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     setShowReviewForm(false);
     setReviewRating(0);
     setReviewComment('');
+    Keyboard.dismiss();
   }, []);
 
   // 안전한 프로모션 색상 (memoized)
@@ -368,6 +395,16 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     () => sanitizeColor(event.promotionColor, '#f59e0b'),
     [event.promotionColor]
   );
+
+  // 사전 sanitize (InfoCard 내부 렌더에서 매번 호출 방지)
+  const sanitized = useMemo(() => ({
+    venue: event.venue || event.location ? sanitizeText((event.venue || event.location)!) : undefined,
+    address: event.address ? sanitizeText(event.address) : undefined,
+    region: event.region ? sanitizeText(event.region) : undefined,
+    description: event.detailDescription || event.description ? sanitizeText((event.detailDescription || event.description)!) : undefined,
+    organizer: event.organizer ? sanitizeText(event.organizer, 50) : undefined,
+    contact: event.contact ? sanitizeText(event.contact) : undefined,
+  }), [event.venue, event.location, event.address, event.region, event.detailDescription, event.description, event.organizer, event.contact]);
 
   // 주최자 리뷰 (memoized)
   const organizerReviews = useMemo(
@@ -392,7 +429,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         <Text style={[styles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]} numberOfLines={1}>
           파티 상세
         </Text>
-        <TouchableOpacity style={styles.backButton} onPress={handleGoBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+        <TouchableOpacity style={styles.backButton} onPress={handleGoBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
           <Text style={[styles.backIcon, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerActions}>
@@ -401,6 +438,8 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             style={[styles.shareButton, { backgroundColor: reminderSet ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#374151' : '#f1f5f9') }]}
             onPress={handleToggleReminder}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel={reminderSet ? '알림 해제' : '알림 등록'}
+            accessibilityRole="button"
           >
             <Text style={[styles.shareIcon, { color: reminderSet ? '#ffffff' : (isDark ? '#f8fafc' : '#374151') }]}>
               {reminderSet ? '🔔' : '🔕'}
@@ -411,6 +450,8 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             style={[styles.shareButton, { backgroundColor: bookmarked ? '#ec4899' : (isDark ? '#374151' : '#f1f5f9') }]}
             onPress={handleToggleBookmark}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel={bookmarked ? '찜 해제' : '찜'}
+            accessibilityRole="button"
           >
             <Text style={[styles.shareIcon, { color: bookmarked ? '#ffffff' : (isDark ? '#f8fafc' : '#374151') }]}>
               {bookmarked ? '♥' : '♡'}
@@ -421,6 +462,8 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             style={[styles.shareButton, { backgroundColor: isDark ? '#374151' : '#f1f5f9' }]} 
             onPress={handleShare}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="공유"
+            accessibilityRole="button"
           >
             <Text style={[styles.shareIcon, { color: isDark ? '#f8fafc' : '#374151' }]}>공유</Text>
           </TouchableOpacity>
@@ -428,14 +471,15 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       </View>
       
       <ScrollView 
+        ref={scrollViewRef}
         style={styles.scrollView}
         contentContainerStyle={[styles.contentContainer, { paddingBottom: insets.bottom + 100 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* 지점 선택 탭 (subEvents가 2개 이상일 때만 표시) */}
         {hasSubEvents && (
-          <View style={[styles.branchTabContainer, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
-            <Text style={[styles.branchTabTitle, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+          <View style={[styles.branchTabContainer, { backgroundColor: themeColors.cardBg }]}>
+            <Text style={[styles.branchTabTitle, { color: themeColors.subText }]}>
               지점 선택
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.branchTabScroll}>
@@ -448,19 +492,19 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                       styles.branchTab,
                       { 
                         backgroundColor: isActive 
-                          ? (isDark ? '#a78bfa' : '#ec4899')
-                          : (isDark ? '#374151' : '#f1f5f9'),
+                          ? themeColors.accent
+                          : themeColors.inactiveBg,
                         borderColor: isActive
-                          ? (isDark ? '#a78bfa' : '#ec4899')
-                          : (isDark ? '#475569' : '#e5e7eb'),
+                          ? themeColors.accent
+                          : themeColors.inactiveBorder,
                       },
                     ]}
-                    onPress={() => setSelectedBranchIdx(idx)}
+                    onPress={() => { setSelectedBranchIdx(idx); scrollViewRef.current?.scrollTo({ y: 0, animated: true }); }}
                     activeOpacity={0.7}
                   >
                     <Text style={[
                       styles.branchTabText,
-                      { color: isActive ? '#ffffff' : (isDark ? '#e2e8f0' : '#374151') },
+                      { color: isActive ? '#ffffff' : themeColors.bodyText },
                     ]}>
                       {sanitizeText(sub.location || sub.venue || `지점 ${idx + 1}`, 20)}
                     </Text>
@@ -495,8 +539,8 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {event.tags && event.tags.length > 0 && (
             <View style={styles.tagsContainer}>
               {event.tags.slice(0, 5).map((tag, index) => (
-                <View key={index} style={[styles.tag, { backgroundColor: isDark ? '#374151' : '#fce7f3' }]}>
-                  <Text style={[styles.tagText, { color: isDark ? '#f472b6' : '#ec4899' }]}>
+                <View key={index} style={[styles.tag, { backgroundColor: themeColors.tagBg }]}>
+                  <Text style={[styles.tagText, { color: themeColors.tagText }]}>
                     #{sanitizeText(tag)}
                   </Text>
                 </View>
@@ -528,9 +572,9 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           </View>
           
           {/* 상세 설명 */}
-          {(event.detailDescription || event.description) && (
+          {sanitized.description && (
             <Text style={[styles.description, { color: isDark ? '#cbd5e1' : '#475569' }]}>
-              {sanitizeText(event.detailDescription || event.description)}
+              {sanitized.description}
             </Text>
           )}
         </View>
@@ -590,20 +634,20 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           <InfoCard 
 
             title="장소명" 
-            content={event.venue || event.location} 
+            content={sanitized.venue} 
             isDark={isDark}
           />
           <InfoCard 
 
             title="주소" 
-            content={event.address} 
+            content={sanitized.address} 
             isDark={isDark}
             onPress={event.address ? handleOpenMap : undefined}
           />
           <InfoCard 
 
             title="지역" 
-            content={event.region} 
+            content={sanitized.region} 
             isDark={isDark}
           />
           
@@ -637,7 +681,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                 </View>
                 {organizerReviews.length > 0 ? (
                   <View style={styles.organizerMeta}>
-                    <Text style={{ fontSize: 14, color: isDark ? '#fbbf24' : '#f59e0b', fontWeight: '700' }}>
+                    <Text style={[styles.organizerStarText, { color: isDark ? '#fbbf24' : '#f59e0b' }]}>
                       ★ {(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length).toFixed(1)}
                     </Text>
                     <Text style={[styles.organizerDot, { color: isDark ? '#475569' : '#cbd5e1' }]}>·</Text>
@@ -757,7 +801,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               {showWriteReview && (
                 <TouchableOpacity
                   style={[styles.writeReviewBtn, { backgroundColor: isDark ? '#374151' : '#fce7f3' }]}
-                  onPress={() => setShowReviewForm(true)}
+                  onPress={() => { Keyboard.dismiss(); setShowReviewForm(true); }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.writeReviewIcon}>✏️</Text>
@@ -861,7 +905,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             {event.price === 0 ? '무료' : event.price ? `${event.price.toLocaleString()}원` : '문의'}
           </Text>
         </View>
-        <TouchableOpacity style={[styles.joinButton, { backgroundColor: isDark ? '#a78bfa' : '#ec4899' }]} onPress={handleJoin}>
+        <TouchableOpacity style={[styles.joinButton, { backgroundColor: isDark ? '#a78bfa' : '#ec4899' }]} onPress={handleJoin} accessibilityLabel="참가 신청하기" accessibilityRole="button">
           <Text style={styles.joinButtonText}>참가 신청하기</Text>
         </TouchableOpacity>
       </View>
@@ -1414,6 +1458,10 @@ const styles = StyleSheet.create({
   },
   organizerSub: {
     fontSize: 13,
+  },
+  organizerStarText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   organizerArrowWrap: {
     width: 30,

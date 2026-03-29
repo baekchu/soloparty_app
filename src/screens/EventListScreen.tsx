@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, memo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ListRenderItemInfo, Platform } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ListRenderItemInfo, Platform, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { format } from 'date-fns';
 import { ko } from 'date-fns/locale';
@@ -103,9 +103,27 @@ const EventCard = memo(({ item, isDark, onPress }: EventCardProps) => {
   );
 });
 
+// 모듈 레벨 캐시 — 탭 이동 시 스켈레톤 없이 즉시 표시
+let _cachedEventList: EventWithDate[] | null = null;
+
+// ==================== 이벤트 카드 wrapper (onPress ref 분리 — 인라인 함수 생성 방지) ====================
+interface EventCardWrapperProps {
+  item: EventWithDate;
+  isDark: boolean;
+  navigation: EventListScreenNavigationProp;
+}
+const EventCardWrapper = memo(({ item, isDark, navigation }: EventCardWrapperProps) => {
+  const handlePress = useCallback(() => {
+    navigation.navigate('EventDetail', { event: item, date: item.date });
+  }, [navigation, item]);
+  return <EventCard item={item} isDark={isDark} onPress={handlePress} />;
+});
+
 export default function EventListScreen({ navigation }: EventListScreenProps) {
-  const [allEvents, setAllEvents] = useState<EventWithDate[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  // 캐시가 있으면 스켈레톤 없이 즉시 렌더링
+  const [allEvents, setAllEvents] = useState<EventWithDate[]>(_cachedEventList ?? []);
+  const [isLoading, setIsLoading] = useState(_cachedEventList === null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -116,7 +134,8 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
   );
 
   const loadAllEvents = useCallback(async () => {
-    setIsLoading(true);
+    // 캐시가 없을 때만 스켈레톤 표시 (탭 전환 시 깜빡임 방지)
+    if (_cachedEventList === null) setIsLoading(true);
     try {
       const events = await loadEvents();
       const eventList: EventWithDate[] = [];
@@ -128,6 +147,7 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
       });
 
       eventList.sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime());
+      _cachedEventList = eventList; // 모듈 레벨 캐시 갱신
       setAllEvents(eventList);
     } catch {
       // 로드 실패 시 빈 목록 유지
@@ -140,24 +160,19 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
   const isDark = useMemo(() => theme === 'dark', [theme]);
   const c = isDark ? Colors.dark : Colors.light;
 
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await loadAllEvents();
+    setIsRefreshing(false);
+  }, [loadAllEvents]);
+
   const renderEvent = useCallback(({ item }: ListRenderItemInfo<EventWithDate>) => (
-    <EventCard
-      item={item}
-      isDark={isDark}
-      onPress={() => navigation.navigate('EventDetail', { event: item, date: item.date })}
-    />
+    <EventCardWrapper item={item} isDark={isDark} navigation={navigation} />
   ), [isDark, navigation]);
 
   const keyExtractor = useCallback((item: EventWithDate) =>
     item.id || `${item.date}-${item.title}`,
   []);
-
-  // 고정 높이로 성능 최적화 (실제 카드 높이에 맞게 조정)
-  const getItemLayout = useCallback((_: any, index: number) => ({
-    length: 150, // 예상 아이템 높이
-    offset: 150 * index,
-    index,
-  }), []);
 
   return (
     <View style={[styles.container, { backgroundColor: c.background, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
@@ -189,15 +204,22 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
           data={allEvents}
           renderItem={renderEvent}
           keyExtractor={keyExtractor}
-          getItemLayout={getItemLayout}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          removeClippedSubviews={Platform.OS === 'android'} // Android에서만 활성화
+          removeClippedSubviews={true}
           maxToRenderPerBatch={10}
           windowSize={5}
           initialNumToRender={8}
           updateCellsBatchingPeriod={50}
           scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              tintColor={isDark ? '#a78bfa' : '#ec4899'}
+              colors={['#ec4899', '#a78bfa']}
+            />
+          }
           maintainVisibleContentPosition={{
             minIndexForVisible: 0,
           }}

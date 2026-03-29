@@ -71,9 +71,12 @@ const ThemeContext = createContext<ThemeContextType>(defaultThemeContext);
 
 const THEME_KEY = '@theme_mode';
 
+// 모듈 레벨 캐시 — 한 번 읽으면 재마운트 시 즉시 적용 (깜빡임 방지)
+let _cachedThemeMode: ThemeMode | null = null;
+
 export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const systemColorScheme = useColorScheme();
-  const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(_cachedThemeMode ?? 'system');
   
   const theme = themeMode === 'system' 
     ? (systemColorScheme === 'dark' ? 'dark' : 'light')
@@ -86,6 +89,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       try {
         const savedMode = await safeGetItem(THEME_KEY);
         if (savedMode && (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') && mounted) {
+          _cachedThemeMode = savedMode as ThemeMode;
           setThemeModeState(savedMode as ThemeMode);
         }
       } catch (error) {
@@ -93,14 +97,16 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
     };
     
-    loadThemeMode().catch(() => {
-      // 비동기 함수 실패도 무시
-    });
+    // 캐시가 없을 때만 AsyncStorage 조회
+    if (_cachedThemeMode === null) {
+      loadThemeMode().catch(() => {});
+    }
     return () => { mounted = false; };
   }, []);
 
   const setThemeMode = useCallback(async (mode: ThemeMode) => {
     try {
+      _cachedThemeMode = mode;
       setThemeModeState(mode);
       await safeSetItem(THEME_KEY, mode);
     } catch (error) {

@@ -126,9 +126,12 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       if (!storedUserId) {
-        // 새 사용자 ID 및 초대 코드 생성
-        storedUserId = await generateUserId();
-        const newInviteCode = await generateInviteCode();
+        // 새 사용자 ID 및 초대 코드 병렬 생성
+        const [newId, newInviteCode] = await Promise.all([
+          generateUserId(),
+          generateInviteCode(),
+        ]);
+        storedUserId = newId;
         
         // 암호화하여 저장
         await safeSetItem(STORAGE_KEYS.USER_ID_SECURE, await encryptData(storedUserId));

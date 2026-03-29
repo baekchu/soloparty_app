@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback } from 'react';
+﻿import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,10 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
@@ -16,6 +20,37 @@ import { useTheme } from '../contexts/ThemeContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { getContainerStyle, getResponsivePadding, getResponsiveFontSize } from '../utils/responsive';
+
+// ==================== 캘린더 테마 상수 (렌더마다 재생성 방지) ====================
+const CALENDAR_THEME_BASE = {
+  selectedDayBackgroundColor: '#10b981',
+  selectedDayTextColor: '#ffffff',
+  todayTextColor: '#10b981',
+  arrowColor: '#10b981',
+  textDayFontWeight: '400' as const,
+  textMonthFontWeight: '700' as const,
+  textDayHeaderFontWeight: '600' as const,
+};
+
+const CALENDAR_THEME_DARK = {
+  ...CALENDAR_THEME_BASE,
+  backgroundColor: '#1e293b',
+  calendarBackground: '#1e293b',
+  textSectionTitleColor: '#d1d5db',
+  dayTextColor: '#f9fafb',
+  textDisabledColor: '#374151',
+  monthTextColor: '#f9fafb',
+};
+
+const CALENDAR_THEME_LIGHT = {
+  ...CALENDAR_THEME_BASE,
+  backgroundColor: '#ffffff',
+  calendarBackground: '#ffffff',
+  textSectionTitleColor: '#4b5563',
+  dayTextColor: '#111827',
+  textDisabledColor: '#d1d5db',
+  monthTextColor: '#111827',
+};
 
 type AddEventScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddEvent'>;
 
@@ -32,21 +67,24 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
   const [link, setLink] = useState('');
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = useRef(false);
+  const [fieldErrors, setFieldErrors] = useState<{ date?: string; title?: string }>({});
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
   const handleSave = useCallback(async () => {
-    // 중복 저장 방지
-    if (isSaving) return;
-   
-    if (!selectedDate) {
-      Alert.alert('알림', '날짜를 선택해주세요.');
+    // 중복 저장 방지 (ref로 즉시 체크 — state 기반 경쟁 조건 해소)
+    if (isSavingRef.current) return;
+
+    // 인라인 유효성 검사
+    const errors: { date?: string; title?: string } = {};
+    if (!selectedDate) errors.date = '날짜를 선택해주세요.';
+    if (!title.trim()) errors.title = '이벤트 제목을 입력해주세요.';
+    if (errors.date || errors.title) {
+      setFieldErrors(errors);
       return;
     }
-    if (!title.trim()) {
-      Alert.alert('알림', '이벤트 제목을 입력해주세요.');
-      return;
-    }
+    setFieldErrors({});
 
     // URL 유효성 검증
     const trimmedLink = link.trim();
@@ -55,6 +93,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
       return;
     }
 
+    isSavingRef.current = true;
     setIsSaving(true);
     try {
       const newEvent = {
@@ -81,72 +120,66 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
     } catch {
       Alert.alert('오류', '이벤트 저장에 실패했습니다. 다시 시도해주세요.');
     } finally {
+      isSavingRef.current = false;
       setIsSaving(false);
     }
-  }, [isSaving, selectedDate, title, time, location, description, link, coordinates, navigation]);
+  }, [selectedDate, title, time, location, description, link, coordinates, navigation]);
 
   const isDark = theme === 'dark';
+  const calendarTheme = useMemo(() => isDark ? CALENDAR_THEME_DARK : CALENDAR_THEME_LIGHT, [isDark]);
+  const markedDates = useMemo(() => ({
+    [selectedDate]: { selected: true, selectedColor: '#10b981' },
+  }), [selectedDate]);
+
+  const bgColor = isDark ? '#0f172a' : '#ffffff';
+  const cardBg = isDark ? '#1e293b' : '#f9fafb';
+  const inputBg = isDark ? '#1f2937' : '#ffffff';
+  const labelColor = isDark ? '#d1d5db' : '#374151';
+  const textColor = isDark ? '#f3f4f6' : '#111827';
+  const placeholderColor = isDark ? '#6b7280' : '#9ca3af';
+  const borderColor = isDark ? '#1f2937' : '#e5e7eb';
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#ffffff', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+    <View style={[aStyles.root, { backgroundColor: bgColor, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
       {/* 헤더 */}
-      <View style={{ 
-        paddingTop: 12, 
-        paddingBottom: 12, 
-        paddingHorizontal: getResponsivePadding(), 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'center',
-        borderBottomWidth: 1,
-        borderBottomColor: isDark ? '#1f2937' : '#e5e7eb'
-      }}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingRight: 16 }}>
-          <Text style={{ fontSize: 24, color: isDark ? '#ffffff' : '#111827' }}>✕</Text>
+      <View style={[aStyles.header, { borderBottomColor: borderColor }]}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={aStyles.headerBtn}>
+          <Text style={[aStyles.closeText, { color: isDark ? '#ffffff' : '#111827' }]}>✕</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: getResponsiveFontSize(20), fontWeight: 'bold', color: isDark ? '#ffffff' : '#111827' }}>
+        <Text style={[aStyles.headerTitle, { color: isDark ? '#ffffff' : '#111827', fontSize: getResponsiveFontSize(20) }]}>
           새 이벤트
         </Text>
-        <TouchableOpacity onPress={handleSave} style={{ paddingLeft: 16 }}>
-          <Text style={{ color: '#10b981', fontSize: getResponsiveFontSize(16), fontWeight: 'bold' }}>저장</Text>
+        <TouchableOpacity onPress={handleSave} disabled={isSaving} style={aStyles.headerBtn}>
+          {isSaving ? (
+            <ActivityIndicator size="small" color="#10b981" />
+          ) : (
+            <Text style={[aStyles.saveText, { fontSize: getResponsiveFontSize(16) }]}>저장</Text>
+          )}
         </TouchableOpacity>
       </View>
 
+      <KeyboardAvoidingView style={aStyles.flex1} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView 
-        style={{ flex: 1 }}
+        style={aStyles.flex1}
         contentContainerStyle={getContainerStyle(800)}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         <View style={{ paddingHorizontal: getResponsivePadding(), paddingTop: 16, paddingBottom: 24 }}>
-        <View style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
-          <View style={{ padding: 16 }}>
-            <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 12, color: isDark ? '#d1d5db' : '#374151' }}>
+        <View style={[aStyles.card, { backgroundColor: cardBg }]}>
+          <View style={aStyles.cardInner}>
+            <Text style={[aStyles.sectionLabel, { color: labelColor, fontSize: 16 }]}>
               📅 날짜 선택
             </Text>
             <Calendar
-              theme={{
-                backgroundColor: isDark ? '#1e293b' : '#ffffff',
-                calendarBackground: isDark ? '#1e293b' : '#ffffff',
-                textSectionTitleColor: isDark ? '#d1d5db' : '#4b5563',
-                selectedDayBackgroundColor: '#10b981',
-                selectedDayTextColor: '#ffffff',
-                todayTextColor: '#10b981',
-                dayTextColor: isDark ? '#f9fafb' : '#111827',
-                textDisabledColor: isDark ? '#374151' : '#d1d5db',
-                arrowColor: '#10b981',
-                monthTextColor: isDark ? '#f9fafb' : '#111827',
-                textDayFontWeight: '400',
-                textMonthFontWeight: '700',
-                textDayHeaderFontWeight: '600',
-              }}
-              markedDates={{
-                [selectedDate]: { selected: true, selectedColor: '#10b981' },
-              }}
-              onDayPress={(day: DateData) => setSelectedDate(day.dateString)}
+              theme={calendarTheme}
+              markedDates={markedDates}
+              onDayPress={(day: DateData) => { setSelectedDate(day.dateString); setFieldErrors(prev => ({ ...prev, date: undefined })); }}
               enableSwipeMonths={true}
             />
             {selectedDate && (
-              <View style={{ marginTop: 12, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: isDark ? 'rgba(6, 95, 70, 0.2)' : '#d1fae5' }}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: isDark ? '#34d399' : '#059669' }}>
+              <View style={[aStyles.selectedDateBadge, { backgroundColor: isDark ? 'rgba(6, 95, 70, 0.2)' : '#d1fae5' }]}>
+                <Text style={[aStyles.selectedDateText, { color: isDark ? '#34d399' : '#059669' }]}>
                   ✅ {(() => {
                   const [y, m, d] = selectedDate.split('-').map(Number);
                   return new Date(y, m - 1, d).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -154,97 +187,68 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
                 </Text>
               </View>
             )}
+            {fieldErrors.date && (
+              <Text style={aStyles.fieldError}>⚠ {fieldErrors.date}</Text>
+            )}
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
-          <View style={{ padding: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
-              이벤트 제목 *
-            </Text>
+        <View style={[aStyles.card, { backgroundColor: cardBg }]}>
+          <View style={aStyles.cardInner}>
+            <Text style={[aStyles.fieldLabel, { color: labelColor }]}>이벤트 제목 *</Text>
             <TextInput
-              style={{
-                borderRadius: 12,
-                padding: 16,
-                fontSize: 16,
-                backgroundColor: isDark ? '#1f2937' : '#ffffff',
-                color: isDark ? '#f3f4f6' : '#111827',
-              }}
+              style={[aStyles.input, { backgroundColor: inputBg, color: textColor }, fieldErrors.title && aStyles.inputError]}
               value={title}
-              onChangeText={setTitle}
+              onChangeText={(t) => { setTitle(t); setFieldErrors(prev => ({ ...prev, title: undefined })); }}
               placeholder="예: 크리스마스 파티"
-              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              placeholderTextColor={placeholderColor}
               maxLength={100}
             />
+            {fieldErrors.title && (
+              <Text style={aStyles.fieldError}>⚠ {fieldErrors.title}</Text>
+            )}
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
-          <View style={{ padding: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
-              🕐 시간
-            </Text>
+        <View style={[aStyles.card, { backgroundColor: cardBg }]}>
+          <View style={aStyles.cardInner}>
+            <Text style={[aStyles.fieldLabel, { color: labelColor }]}>🕐 시간</Text>
             <TextInput
-              style={{
-                borderRadius: 12,
-                padding: 16,
-                fontSize: 16,
-                backgroundColor: isDark ? '#1f2937' : '#ffffff',
-                color: isDark ? '#f3f4f6' : '#111827',
-              }}
+              style={[aStyles.input, { backgroundColor: inputBg, color: textColor }]}
               value={time}
               onChangeText={setTime}
               placeholder="예: 오후 7시"
-              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              placeholderTextColor={placeholderColor}
               maxLength={50}
             />
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
-          <View style={{ padding: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
-              📍 장소
-            </Text>
+        <View style={[aStyles.card, { backgroundColor: cardBg }]}>
+          <View style={aStyles.cardInner}>
+            <Text style={[aStyles.fieldLabel, { color: labelColor }]}>📍 장소</Text>
             <TextInput
-              style={{
-                borderRadius: 12,
-                padding: 16,
-                fontSize: 16,
-                backgroundColor: isDark ? '#1f2937' : '#ffffff',
-                color: isDark ? '#f3f4f6' : '#111827',
-                marginBottom: 12,
-              }}
+              style={[aStyles.input, { backgroundColor: inputBg, color: textColor, marginBottom: 12 }]}
               value={location}
               onChangeText={setLocation}
               placeholder="예: 서울시 강남구"
-              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              placeholderTextColor={placeholderColor}
               maxLength={200}
             />
             <TouchableOpacity
               onPress={() => {
-                // TODO: 지도 화면으로 이동하여 위치 선택
                 Alert.alert('알림', '지도 기능은 준비 중입니다');
               }}
-              style={{
-                borderRadius: 12,
-                padding: 14,
-                backgroundColor: isDark ? '#1f2937' : '#ffffff',
-                borderWidth: 1,
-                borderColor: isDark ? '#374151' : '#e5e7eb',
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
+              style={[aStyles.mapBtn, { backgroundColor: inputBg, borderColor: isDark ? '#374151' : '#e5e7eb' }]}
             >
-              <Text style={{ fontSize: 16, color: isDark ? '#60a5fa' : '#3b82f6', marginRight: 8 }}>📌</Text>
-              <Text style={{ fontSize: 14, fontWeight: '600', color: isDark ? '#60a5fa' : '#3b82f6' }}>
+              <Text style={[aStyles.mapBtnIcon, { color: isDark ? '#60a5fa' : '#3b82f6' }]}>📌</Text>
+              <Text style={[aStyles.mapBtnText, { color: isDark ? '#60a5fa' : '#3b82f6' }]}>
                 {coordinates ? '위치가 설정되었습니다' : '지도에서 위치 선택'}
               </Text>
             </TouchableOpacity>
             {coordinates && (
-              <View style={{ marginTop: 8, padding: 8, borderRadius: 8, backgroundColor: isDark ? 'rgba(59, 130, 246, 0.1)' : '#dbeafe' }}>
-                <Text style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#1e40af' }}>
+              <View style={[aStyles.coordBadge, { backgroundColor: isDark ? 'rgba(59, 130, 246, 0.1)' : '#dbeafe' }]}>
+                <Text style={[aStyles.coordText, { color: isDark ? '#93c5fd' : '#1e40af' }]}>
                   📍 {coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}
                 </Text>
               </View>
@@ -252,23 +256,15 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 16, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
-          <View style={{ padding: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
-              🔗 링크
-            </Text>
+        <View style={[aStyles.card, { backgroundColor: cardBg }]}>
+          <View style={aStyles.cardInner}>
+            <Text style={[aStyles.fieldLabel, { color: labelColor }]}>🔗 링크</Text>
             <TextInput
-              style={{
-                borderRadius: 12,
-                padding: 16,
-                fontSize: 16,
-                backgroundColor: isDark ? '#1f2937' : '#ffffff',
-                color: isDark ? '#f3f4f6' : '#111827',
-              }}
+              style={[aStyles.input, { backgroundColor: inputBg, color: textColor }]}
               value={link}
               onChangeText={setLink}
               placeholder="예: https://example.com"
-              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              placeholderTextColor={placeholderColor}
               keyboardType="url"
               autoCapitalize="none"
               maxLength={500}
@@ -276,24 +272,15 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
           </View>
         </View>
 
-        <View style={{ borderRadius: 16, marginBottom: 24, backgroundColor: isDark ? '#1e293b' : '#f9fafb' }}>
-          <View style={{ padding: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', marginBottom: 8, color: isDark ? '#d1d5db' : '#374151' }}>
-              📝 설명
-            </Text>
+        <View style={[aStyles.cardLast, { backgroundColor: cardBg }]}>
+          <View style={aStyles.cardInner}>
+            <Text style={[aStyles.fieldLabel, { color: labelColor }]}>📝 설명</Text>
             <TextInput
-              style={{
-                borderRadius: 12,
-                padding: 16,
-                fontSize: 16,
-                height: 128,
-                backgroundColor: isDark ? '#1f2937' : '#ffffff',
-                color: isDark ? '#f3f4f6' : '#111827',
-              }}
+              style={[aStyles.inputMultiline, { backgroundColor: inputBg, color: textColor }]}
               value={description}
               onChangeText={setDescription}
               placeholder="이벤트에 대한 설명을 입력하세요"
-              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              placeholderTextColor={placeholderColor}
               multiline
               numberOfLines={4}
               textAlignVertical="top"
@@ -303,6 +290,48 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
         </View>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
+
+// ==================== 스타일시트 ====================
+const aStyles = StyleSheet.create({
+  root: { flex: 1 },
+  flex1: { flex: 1 },
+  header: {
+    paddingTop: 12,
+    paddingBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+  },
+  headerBtn: { paddingHorizontal: 16 },
+  closeText: { fontSize: 24 },
+  headerTitle: { fontWeight: 'bold' },
+  saveText: { color: '#10b981', fontWeight: 'bold' },
+  card: { borderRadius: 16, overflow: 'hidden', marginBottom: 16 },
+  cardLast: { borderRadius: 16, overflow: 'hidden', marginBottom: 24 },
+  cardInner: { padding: 16 },
+  sectionLabel: { fontWeight: '600', marginBottom: 12 },
+  fieldLabel: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
+  input: { borderRadius: 12, padding: 16, fontSize: 16 },
+  inputError: { borderWidth: 1.5, borderColor: '#ef4444' },
+  inputMultiline: { borderRadius: 12, padding: 16, fontSize: 16, height: 128 },
+  selectedDateBadge: { marginTop: 12, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  selectedDateText: { fontSize: 14, fontWeight: '600' },
+  fieldError: { color: '#ef4444', fontSize: 13, fontWeight: '500', marginTop: 6 },
+  mapBtn: {
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapBtnIcon: { fontSize: 16, marginRight: 8 },
+  mapBtnText: { fontSize: 14, fontWeight: '600' },
+  coordBadge: { marginTop: 8, padding: 8, borderRadius: 8 },
+  coordText: { fontSize: 12 },
+});

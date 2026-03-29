@@ -179,17 +179,31 @@ const Placeholder = memo<{ title: string; desc: string; isDark: boolean }>(
 const AdImage = memo<{ uri: string; isDark: boolean; onError: () => void }>(
   ({ uri, isDark, onError }) => {
     const [loading, setLoading] = useState(true);
+    const [retryCount, setRetryCount] = useState(0);
+    const MAX_RETRIES = 2;
+    
+    const handleError = useCallback(() => {
+      if (retryCount < MAX_RETRIES) {
+        setRetryCount(prev => prev + 1);
+        setLoading(true);
+      } else {
+        onError();
+      }
+    }, [retryCount, onError]);
+
+    // 재시도 시 캐시 무효화를 위해 타임스탬프 추가
+    const imageUri = retryCount > 0 ? `${uri}${uri.includes('?') ? '&' : '?'}_retry=${retryCount}` : uri;
     
     return (
       <View style={styles.imageWrapper}>
         <Image
-          source={{ uri }}
+          source={{ uri: imageUri }}
           style={styles.image}
           contentFit="cover"
           cachePolicy="disk"
           transition={200}
           onLoadEnd={() => setLoading(false)}
-          onError={onError}
+          onError={handleError}
         />
         {loading && (
           <View style={styles.loader}>
