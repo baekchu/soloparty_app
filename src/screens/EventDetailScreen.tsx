@@ -157,12 +157,15 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   const bookmarked = isBookmarked(event.id, date);
   const reminderSet = hasReminder(event.id, date);
 
-  // 체크인 & 후기
+  // 예약 & 체크인 & 후기
   const {
+    canReserve, isReserved, doReserve, cancelReservation,
     canCheckIn, isCheckedIn, doCheckIn,
     canWriteReview, hasReview, getReview, submitReview,
     getReviewsByOrganizer,
   } = useReviews();
+  const reserved = isReserved(event.id, date);
+  const showReserve = canReserve(event.id, date);
   const checkedIn = isCheckedIn(event.id, date);
   const reviewExists = hasReview(event.id, date);
   const existingReview = getReview(event.id, date);
@@ -355,6 +358,37 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       isProcessing.current = false;
     }
   }, [event, date, reminderSet, cancelReminder, scheduleReminder]);
+
+  // 참가 예약 핸들러
+  const handleReserve = useCallback(async () => {
+    if (isProcessing.current) return;
+    isProcessing.current = true;
+    try {
+      const result = await doReserve(event, date);
+      Alert.alert(result.success ? '🎫 예약 완료' : '알림', result.message);
+    } finally {
+      isProcessing.current = false;
+    }
+  }, [event, date, doReserve]);
+
+  // 예약 취소 핸들러
+  const handleCancelReservation = useCallback(() => {
+    Alert.alert(
+      '예약 취소',
+      '참가 예약을 취소하시겠습니까?',
+      [
+        { text: '아니요', style: 'cancel' },
+        {
+          text: '취소하기',
+          style: 'destructive',
+          onPress: async () => {
+            const result = await cancelReservation(event.id, date);
+            Alert.alert(result.success ? '알림' : '오류', result.message);
+          },
+        },
+      ],
+    );
+  }, [event.id, date, cancelReservation]);
 
   // 체크인 핸들러 (중복 탭 방지)
   const handleCheckIn = useCallback(async () => {
@@ -791,15 +825,79 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           </TouchableOpacity>
         )}
 
-        {/* ==================== 체크인 & 후기 섹션 ==================== */}
+        {/* ==================== 예약 & 체크인 & 후기 섹션 ==================== */}
         <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
           <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a', marginBottom: 16 }]}>
             📝 참가 후기
           </Text>
 
-          {/* 체크인 버튼 (당일만 노출) */}
+          {/* 3단계 프로그레스: 예약 → 체크인 → 후기 */}
+          <View style={styles.progressRow}>
+            <View style={styles.progressStep}>
+              <View style={[styles.progressDot, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]}>
+                <Text style={styles.progressDotText}>{reserved || checkedIn ? '✓' : '1'}</Text>
+              </View>
+              <Text style={[styles.progressLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>예약</Text>
+            </View>
+            <View style={[styles.progressLine, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]} />
+            <View style={styles.progressStep}>
+              <View style={[styles.progressDot, { backgroundColor: checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]}>
+                <Text style={styles.progressDotText}>{checkedIn ? '✓' : '2'}</Text>
+              </View>
+              <Text style={[styles.progressLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>체크인</Text>
+            </View>
+            <View style={[styles.progressLine, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]} />
+            <View style={styles.progressStep}>
+              <View style={[styles.progressDot, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]}>
+                <Text style={styles.progressDotText}>{reviewExists ? '✓' : '3'}</Text>
+              </View>
+              <Text style={[styles.progressLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>후기</Text>
+            </View>
+          </View>
+
+          {/* STEP 1: 참가 예약 버튼 (미예약 + 미체크인) */}
+          {showReserve && !checkedIn && (
+            <View style={styles.reviewItemWrap}>
+              <TouchableOpacity
+                style={[styles.checkinBtn, { backgroundColor: isDark ? '#6366f1' : '#8b5cf6' }]}
+                onPress={handleReserve}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.checkinBtnIcon}>🎫</Text>
+                <Text style={styles.checkinBtnText}>참가 예약하기</Text>
+              </TouchableOpacity>
+              <Text style={[styles.checkinHint, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                예약 후 파티 당일에 체크인할 수 있습니다
+              </Text>
+            </View>
+          )}
+
+          {/* 예약 완료 상태 (체크인 전) */}
+          {reserved && !checkedIn && !showCheckIn && (
+            <View style={styles.reviewItemWrap}>
+              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#374151' : '#eef2ff' }]}>
+                <Text style={styles.checkinDoneIcon}>🎫</Text>
+                <Text style={[styles.checkinDoneText, { color: isDark ? '#a5b4fc' : '#6366f1' }]}>
+                  예약 완료 · 파티 당일에 체크인해주세요
+                </Text>
+              </View>
+              <TouchableOpacity onPress={handleCancelReservation} activeOpacity={0.7}>
+                <Text style={[styles.cancelReservationText, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                  예약 취소
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* STEP 2: 체크인 버튼 (예약 완료 + 당일) */}
           {showCheckIn && (
             <View style={styles.reviewItemWrap}>
+              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#374151' : '#eef2ff', marginBottom: 8 }]}>
+                <Text style={styles.checkinDoneIcon}>🎫</Text>
+                <Text style={[styles.checkinDoneText, { color: isDark ? '#a5b4fc' : '#6366f1' }]}>
+                  예약 확인됨
+                </Text>
+              </View>
               <TouchableOpacity
                 style={[styles.checkinBtn, { backgroundColor: isDark ? '#a78bfa' : '#ec4899' }]}
                 onPress={handleCheckIn}
@@ -809,13 +907,13 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                 <Text style={styles.checkinBtnText}>파티 체크인하기</Text>
               </TouchableOpacity>
               <Text style={[styles.checkinHint, { color: isDark ? '#64748b' : '#94a3b8' }]}>
-                {event.coordinates ? '⏰ 시간대 + 📍 위치(2km) 인증' : '⏰ 시간대 인증'}
-                {'\n'}파티 시작 2시간 전부터 종료 3시간 후까지 가능
+                {event.coordinates ? '📍 위치 인증(500m) 필수 + ⏰ 시간 인증' : '⏰ 시간대 인증'}
+                {'\n'}파티 시작 1시간 전 ~ 종료 1시간 후 | 하루 최대 3회
               </Text>
             </View>
           )}
 
-          {/* 체크인 완료 상태 */}
+          {/* 체크인 완료 상태 → STEP 3: 후기 작성 */}
           {checkedIn && !reviewExists && !showReviewForm && (
             <View style={styles.reviewItemWrap}>
               <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#374151' : '#f0fdf4' }]}>
@@ -910,11 +1008,11 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             </View>
           )}
 
-          {/* 체크인 안내 (체크인 전 + 당일 아닌 경우) */}
-          {!checkedIn && !showCheckIn && (
+          {/* 안내 (예약도 체크인도 안 한 상태 + 예약 불가 = 이미 지남) */}
+          {!checkedIn && !showCheckIn && !showReserve && !reserved && (
             <View style={styles.checkinGuide}>
               <Text style={[styles.checkinGuideText, { color: isDark ? '#64748b' : '#94a3b8' }]}>
-                파티 당일에 체크인하면{'\n'}후기를 작성할 수 있습니다
+                참가 예약 → 당일 체크인 → 후기 작성{'\n'}3단계를 완료하면 후기를 남길 수 있습니다
               </Text>
             </View>
           )}
@@ -1285,7 +1383,46 @@ const styles = StyleSheet.create({
   promoOrganizer: {
     fontSize: 12,
   },
-  // ==================== 체크인 & 후기 스타일 ====================
+  // ==================== 예약 & 체크인 & 후기 스타일 ====================
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 12,
+  },
+  progressStep: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  progressDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressDotText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  progressLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  progressLine: {
+    flex: 1,
+    height: 2,
+    marginHorizontal: 4,
+    marginBottom: 18,
+  },
+  cancelReservationText: {
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 4,
+    textDecorationLine: 'underline',
+  },
   reviewItemWrap: {
     marginBottom: 12,
   },

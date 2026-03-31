@@ -1,17 +1,14 @@
 /**
- * 파티 후기 & 체크인 시스템 (v2)
+ * 파티 후기 & 체크인 시스템 (v4)
  *
- * 체크인 검증 흐름:
- * 1. 시간대 검증: 이벤트 시작 2시간 전 ~ 종료 후 3시간까지만 체크인 가능
- *    (시간 미정이면 당일 06:00~23:59)
- * 2. GPS 근접 검증: 이벤트에 좌표가 있으면 반경 2km 이내에서만 체크인
- *    (좌표 없으면 시간대 검증만)
- * 3. 1회 제한: 이미 체크인한 이벤트는 재체크인 불가
- *
- * 후기 작성 조건:
- * - 체크인 완료된 이벤트만 작성 가능
- * - 이벤트당 후기 1개만
- * - 별점(1~5) + 한줄평(최대 100자)
+ * 3단계 검증 흐름:
+ * 1. 참가 예약: 파티 상세에서 "참가 예약" 버튼 → 예약 기록 저장
+ * 2. 체크인 (예약 필수):
+ *    - 시간대 검증: 이벤트 시작 1시간 전 ~ 종료 후 1시간
+ *    - GPS 검증: 좌표 있으면 500m 이내 필수
+ *    - 하루 최대 3개 이벤트
+ * 3. 후기 작성 (체크인 필수):
+ *    - 이벤트당 1개, 별점(1~5) + 한줄평(최대 100자)
  *
  * 모듈 레벨 공유 → 여러 화면에서 동기화
  */
@@ -23,15 +20,26 @@ import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { Event } from '../types';
 
 // ==================== 상수 ====================
-const CHECKINS_KEY = '@event_checkins_v2';
+const RESERVATIONS_KEY = '@event_reservations_v1';
+const CHECKINS_KEY = '@event_checkins_v3';
 const REVIEWS_KEY = '@event_reviews_v2';
+const MAX_RESERVATIONS = 100; // 최대 예약 보관 수 (30일 이내)
 const MAX_REVIEWS = 200;
-const CHECKIN_RADIUS_KM = 2; // GPS 체크인 반경 (km)
-const CHECKIN_BEFORE_HOURS = 2; // 이벤트 시작 전 허용 시간
-const CHECKIN_AFTER_HOURS = 3; // 이벤트 종료 후 허용 시간
-const GPS_TIMEOUT_MS = 30000; // GPS 타임아웃 30초 (실내 대응)
+const CHECKIN_RADIUS_KM = 0.5; // GPS 체크인 반경 500m (기존 2km → 강화)
+const CHECKIN_BEFORE_HOURS = 1; // 이벤트 시작 1시간 전 (기존 2시간 → 축소)
+const CHECKIN_AFTER_HOURS = 1; // 이벤트 종료 1시간 후 (기존 3시간 → 축소)
+const GPS_TIMEOUT_MS = 20000; // GPS 타임아웃 20초
+const GPS_MAX_ACCURACY_M = 500; // GPS 정확도 허용 최대 500m (기존 5000m → 강화)
+const MAX_DAILY_CHECKINS = 3; // 하루 최대 체크인 수
 
 // ==================== 타입 ====================
+export interface EventReservation {
+  eventId: string;
+  eventTitle: string;
+  date: string;
+  reservedAt: number;
+}
+
 export interface EventCheckIn {
   eventId: string;
   eventTitle: string;
@@ -68,9 +76,9 @@ function parseEventTime(dateStr: string, timeStr?: string): { start: Date; end: 
   if (!d) return null;
 
   if (!timeStr) {
-    // 시간 미정: 당일 06:00 ~ 23:59
+    // 시간 미정: 당일 09:00 ~ 23:59 (기존 06:00 → 09:00으로 축소)
     const start = new Date(d);
-    start.setHours(6, 0, 0, 0);
+    start.setHours(9, 0, 0, 0);
     const end = new Date(d);
     end.setHours(23, 59, 59, 999);
     return { start, end };
@@ -133,6 +141,7 @@ function isPast(dateStr: string): boolean {
 }
 
 // ==================== 모듈 레벨 공유 상태 ====================
+let _reservations: EventReservation[] = [];
 let _checkIns: EventCheckIn[] = [];
 let _reviews: EventReview[] = [];
 let _loaded = false;
@@ -151,6 +160,7 @@ function _setupAppStateListener() {
   }
   _appStateSubscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
     if (nextState === 'background' || nextState === 'inactive') {
+      _saveReservations().catch(() => {});
       _saveCheckIns().catch(() => {});
       _saveReviews().catch(() => {});
     }
@@ -179,15 +189,39 @@ async function _loadFromStorage(): Promise<void> {
   if (_loaded || _loading) return;
   _loading = true;
   try {
-    // 체크인 + 후기 병렬 로드 (순차 2회 → 동시 1회)
-    const [storedCheckIns, storedReviews] = await Promise.all([
+    // 예약 + 체크인 + 후기 병렬 로드 + v2 마이그레이션
+    const [storedReservations, storedCheckIns, storedReviews, legacyCheckIns] = await Promise.all([
+      safeGetItem(RESERVATIONS_KEY),
       safeGetItem(CHECKINS_KEY),
       safeGetItem(REVIEWS_KEY),
+      safeGetItem('@event_checkins_v2'), // v2→v3 마이그레이션
     ]);
 
-    if (storedCheckIns && storedCheckIns.length < 200000) {
+    // 예약 로드
+    if (storedReservations && storedReservations.length < 200000) {
       try {
-        const parsed = JSON.parse(storedCheckIns);
+        const parsed = JSON.parse(storedReservations);
+        if (Array.isArray(parsed)) {
+          const cutoff = Date.now() - 30 * 86400000;
+          _reservations = parsed.filter(
+            (r: any) =>
+              r?.eventId && typeof r.eventId === 'string' &&
+              r?.date && typeof r.date === 'string' &&
+              typeof r.reservedAt === 'number' && r.reservedAt > cutoff,
+          );
+          if (_reservations.length < parsed.length) {
+            safeSetItem(RESERVATIONS_KEY, JSON.stringify(_reservations)).catch(() => {});
+          }
+        }
+      } catch { /* 파싱 실패 */ }
+    }
+
+    // v3 데이터가 없으면 v2에서 마이그레이션
+    const rawCheckIns = storedCheckIns || legacyCheckIns;
+
+    if (rawCheckIns && rawCheckIns.length < 200000) {
+      try {
+        const parsed = JSON.parse(rawCheckIns);
         if (Array.isArray(parsed)) {
           const cutoff = Date.now() - 30 * 86400000;
           _checkIns = parsed.filter(
@@ -233,6 +267,10 @@ export function preWarmReviews(): void {
   }
 }
 
+async function _saveReservations(): Promise<void> {
+  try { await safeSetItem(RESERVATIONS_KEY, JSON.stringify(_reservations)); } catch {}
+}
+
 async function _saveCheckIns(): Promise<void> {
   try { await safeSetItem(CHECKINS_KEY, JSON.stringify(_checkIns)); } catch {}
 }
@@ -243,6 +281,7 @@ async function _saveReviews(): Promise<void> {
 
 // ==================== 훅 ====================
 export default function useReviews() {
+  const [reservations, setReservations] = useState<EventReservation[]>([]);
   const [checkIns, setCheckIns] = useState<EventCheckIn[]>([]);
   const [reviews, setReviews] = useState<EventReview[]>([]);
   const isMountedRef = useRef(true);
@@ -252,6 +291,7 @@ export default function useReviews() {
 
     const listener = () => {
       if (isMountedRef.current) {
+        setReservations([..._reservations]);
         setCheckIns([..._checkIns]);
         setReviews([..._reviews]);
       }
@@ -261,6 +301,7 @@ export default function useReviews() {
     if (!_loaded && !_loading) {
       _loadFromStorage();
     } else if (_loaded) {
+      setReservations([..._reservations]);
       setCheckIns([..._checkIns]);
       setReviews([..._reviews]);
     }
@@ -272,13 +313,86 @@ export default function useReviews() {
     };
   }, []);
 
+  // ==================== 참가 예약 ====================
+
+  /** 예약 가능 여부 (미래 이벤트 + 미예약) */
+  const canReserve = useCallback((eventId: string | undefined, date: string): boolean => {
+    if (!eventId) return false;
+    if (isPast(date)) return false;
+    return !_reservations.some(r => r.eventId === eventId && r.date === date);
+  }, []);
+
+  /** 예약 완료 여부 */
+  const isReserved = useCallback((eventId: string | undefined, date: string): boolean => {
+    if (!eventId) return false;
+    return _reservations.some(r => r.eventId === eventId && r.date === date);
+  }, []);
+
+  /** 예약 실행 */
+  const doReserve = useCallback(async (
+    event: Event,
+    date: string,
+  ): Promise<{ success: boolean; message: string }> => {
+    if (!event.id) {
+      return { success: false, message: '이벤트 정보가 올바르지 않습니다.' };
+    }
+    if (!_loaded) {
+      return { success: false, message: '데이터를 불러오는 중입니다.' };
+    }
+    if (_reservations.some(r => r.eventId === event.id && r.date === date)) {
+      return { success: false, message: '이미 예약한 파티입니다.' };
+    }
+    if (isPast(date)) {
+      return { success: false, message: '이미 지난 파티는 예약할 수 없습니다.' };
+    }
+
+    // 최대 초과 시 오래된 것 제거
+    if (_reservations.length >= MAX_RESERVATIONS) {
+      const sorted = [..._reservations].sort((a, b) => a.reservedAt - b.reservedAt);
+      sorted.shift();
+      _reservations = sorted;
+    }
+
+    const newReservation: EventReservation = {
+      eventId: event.id,
+      eventTitle: event.title,
+      date,
+      reservedAt: Date.now(),
+    };
+
+    _reservations = [..._reservations, newReservation];
+    _notify();
+    await _saveReservations();
+
+    return {
+      success: true,
+      message: '참가 예약 완료! 🎉\n파티 당일에 체크인해주세요.',
+    };
+  }, []);
+
+  /** 예약 취소 */
+  const cancelReservation = useCallback(async (
+    eventId: string | undefined,
+    date: string,
+  ): Promise<{ success: boolean; message: string }> => {
+    if (!eventId) return { success: false, message: '이벤트 정보가 올바르지 않습니다.' };
+    // 이미 체크인한 경우 취소 불가
+    if (_checkIns.some(c => c.eventId === eventId && c.date === date)) {
+      return { success: false, message: '이미 체크인한 파티는 예약을 취소할 수 없습니다.' };
+    }
+    _reservations = _reservations.filter(r => !(r.eventId === eventId && r.date === date));
+    _notify();
+    await _saveReservations();
+    return { success: true, message: '예약이 취소되었습니다.' };
+  }, []);
+
   // ==================== 체크인 ====================
 
-  /** 체크인 가능 여부 (버튼 표시용) */
+  /** 체크인 가능 여부 (예약 필수 + 당일 + 미체크인) */
   const canCheckIn = useCallback((eventId: string | undefined, date: string): boolean => {
     if (!eventId) return false;
     if (_checkIns.some(c => c.eventId === eventId && c.date === date)) return false;
-    // 당일만 (시간대 검증은 실제 체크인 시 수행)
+    if (!_reservations.some(r => r.eventId === eventId && r.date === date)) return false;
     return isToday(date);
   }, []);
 
@@ -313,6 +427,11 @@ export default function useReviews() {
       return { success: false, message: '이미 체크인했습니다.' };
     }
 
+    // 예약 필수
+    if (!_reservations.some(r => r.eventId === event.id && r.date === date)) {
+      return { success: false, message: '참가 예약을 먼저 해주세요.\n예약 후 파티 당일에 체크인할 수 있습니다.' };
+    }
+
     // 당일 확인
     if (!isToday(date)) {
       if (isPast(date)) {
@@ -323,6 +442,16 @@ export default function useReviews() {
 
     const verifiedBy: ('time' | 'gps')[] = [];
     const now = new Date();
+
+    // ---- 일일 체크인 제한 ----
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const todayCheckInCount = _checkIns.filter(c => c.date === todayStr).length;
+    if (todayCheckInCount >= MAX_DAILY_CHECKINS) {
+      return {
+        success: false,
+        message: `하루 최대 ${MAX_DAILY_CHECKINS}개 파티까지 체크인할 수 있습니다.\n오늘 이미 ${todayCheckInCount}개 체크인했습니다.`,
+      };
+    }
 
     // ---- 시간대 검증 ----
     const eventTime = parseEventTime(date, event.time);
@@ -343,10 +472,11 @@ export default function useReviews() {
       verifiedBy.push('time');
     }
 
-    // ---- GPS 근접 검증 (좌표가 있는 이벤트만) ----
+    // ---- GPS 근접 검증 (좌표가 있는 이벤트: 필수) ----
     let userLocation: { latitude: number; longitude: number } | undefined;
+    const hasCoordinates = !!(event.coordinates?.latitude && event.coordinates?.longitude);
 
-    if (event.coordinates?.latitude && event.coordinates?.longitude) {
+    if (hasCoordinates) {
       try {
         const { status } = await Location.getForegroundPermissionsAsync();
         let permGranted = status === 'granted';
@@ -356,51 +486,59 @@ export default function useReviews() {
           permGranted = newStatus === 'granted';
         }
 
-        if (permGranted) {
-          let gpsTimeoutId: ReturnType<typeof setTimeout>;
-          const gpsTimeout = new Promise<never>((_, reject) => {
-            gpsTimeoutId = setTimeout(() => reject(new Error('GPS timeout')), GPS_TIMEOUT_MS);
-          });
-          const loc = await Promise.race([
-            Location.getCurrentPositionAsync({
-              accuracy: Location.Accuracy.Low, // 2km 반경이므로 LOW면 충분 (배터리 절약)
-            }),
-            gpsTimeout,
-          ]) as Location.LocationObject;
-          clearTimeout(gpsTimeoutId!);
-          
-          // GPS 정확도 검증 (accuracy가 5000m 이상이면 신뢰할 수 없음)
-          const gpsAccuracy = loc.coords.accuracy ?? Infinity;
-          if (gpsAccuracy > 5000) {
-            // 정확도가 너무 낮으면 GPS 검증 건너뛰고 시간대 검증만으로 진행
-          } else {
-            userLocation = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-
-            const dist = getDistanceKm(
-              loc.coords.latitude, loc.coords.longitude,
-              event.coordinates.latitude, event.coordinates.longitude,
-            );
-
-            if (dist > CHECKIN_RADIUS_KM) {
-              return {
-                success: false,
-                message: `파티 장소 근처에서 체크인해주세요.\n현재 약 ${dist.toFixed(1)}km 떨어져 있습니다.\n(${CHECKIN_RADIUS_KM}km 이내 필요)`,
-              };
-            }
-            verifiedBy.push('gps');
-          }
+        if (!permGranted) {
+          return {
+            success: false,
+            message: '이 파티는 위치 인증이 필요합니다.\n설정에서 위치 권한을 허용해주세요.',
+          };
         }
-        // 위치 권한 거부 시 시간대 검증만으로 진행
+
+        let gpsTimeoutId: ReturnType<typeof setTimeout>;
+        const gpsTimeout = new Promise<never>((_, reject) => {
+          gpsTimeoutId = setTimeout(() => reject(new Error('GPS timeout')), GPS_TIMEOUT_MS);
+        });
+        const loc = await Promise.race([
+          Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced, // 500m 반경이므로 Balanced 정확도 필요
+          }),
+          gpsTimeout,
+        ]) as Location.LocationObject;
+        clearTimeout(gpsTimeoutId!);
+          
+        // GPS 정확도 검증
+        const gpsAccuracy = loc.coords.accuracy ?? Infinity;
+        if (gpsAccuracy > GPS_MAX_ACCURACY_M) {
+          return {
+            success: false,
+            message: `GPS 정확도가 부족합니다.\n실외에서 다시 시도해주세요.\n(현재 정확도: ~${Math.round(gpsAccuracy)}m, 필요: ${GPS_MAX_ACCURACY_M}m 이내)`,
+          };
+        }
+
+        userLocation = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+
+        const dist = getDistanceKm(
+          loc.coords.latitude, loc.coords.longitude,
+          event.coordinates!.latitude, event.coordinates!.longitude,
+        );
+
+        if (dist > CHECKIN_RADIUS_KM) {
+          return {
+            success: false,
+            message: `파티 장소 근처에서 체크인해주세요.\n현재 약 ${dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`} 떨어져 있습니다.\n(${Math.round(CHECKIN_RADIUS_KM * 1000)}m 이내 필요)`,
+          };
+        }
+        verifiedBy.push('gps');
       } catch {
-        // GPS 오류 시 시간대 검증만으로 진행
+        return {
+          success: false,
+          message: '위치를 확인할 수 없습니다.\nGPS 신호가 잡히는 곳에서 다시 시도해주세요.',
+        };
       }
     }
 
-    // 최소 1가지 검증 통과 필요
-    if (verifiedBy.length === 0 && eventTime) {
-      // parseEventTime은 성공했는데 verifiedBy에 'time'이 없을 수 없음
-      // 방어 코드
-      verifiedBy.push('time');
+    // 최소 1가지 검증 통과 필요 (시간 또는 GPS)
+    if (verifiedBy.length === 0) {
+      return { success: false, message: '체크인 검증에 실패했습니다.\n파티 시간에 맞춰 다시 시도해주세요.' };
     }
 
     // 체크인 저장
@@ -417,12 +555,13 @@ export default function useReviews() {
     _notify();
     await _saveCheckIns();
 
-    const verifyMsg = verifiedBy.includes('gps')
-      ? '📍 위치 인증 완료!'
-      : '⏰ 시간대 인증 완료!';
+    const verifyMsgs: string[] = [];
+    if (verifiedBy.includes('gps')) verifyMsgs.push('📍 위치 인증');
+    if (verifiedBy.includes('time')) verifyMsgs.push('⏰ 시간 인증');
+    const remainToday = MAX_DAILY_CHECKINS - todayCheckInCount - 1;
     return {
       success: true,
-      message: `체크인 완료! ${verifyMsg}\n파티가 끝나면 후기를 남겨주세요 🎉`,
+      message: `체크인 완료! ${verifyMsgs.join(' + ')} 완료!\n오늘 남은 체크인: ${remainToday}회\n파티가 끝나면 후기를 남겨주세요 🎉`,
     };
     } finally {
       _checkInSubmitting = false;
@@ -547,10 +686,15 @@ export default function useReviews() {
   }, [allReviewsSorted]);
 
   return {
+    reservations,
     checkIns,
     reviews,
     isLoaded: _loaded,
     isLoading: _loading,
+    canReserve,
+    isReserved,
+    doReserve,
+    cancelReservation,
     canCheckIn,
     isCheckedIn,
     doCheckIn,
