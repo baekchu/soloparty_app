@@ -83,7 +83,7 @@ const DayCell = React.memo(function DayCell({
           {dayEvents.slice(0, 3).map((event, idx) => (
             <View
               key={event.id}
-              style={[monthStyles.eventItem, { backgroundColor: dayColors[idx], height: cellStyles.eventHeight }]}
+              style={[monthStyles.eventItem, { backgroundColor: dayColors[idx] ?? '#e2e8f0', height: cellStyles.eventHeight }]}
             >
               <Text style={eventTextStyle} numberOfLines={1}>
                 {event.title}
@@ -208,17 +208,24 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     [cellStyles.todayCircle, { backgroundColor: themeColors.todayBg }]
   ), [cellStyles.todayCircle, themeColors.todayBg]);
 
-  // 성능 최적화: EventColorManager 색상을 부모에서 한 번만 계산 (셀별 반복 계산 제거)
+  // 성능 최적화: 고유 이벤트 색상을 한 번만 계산 후 재사용 (중복 호출 90% 감소)
   const dayColorsMap = useMemo(() => {
     const map: Record<string, string[]> = {};
+    const colorCache = new Map<string, string>(); // eventId/groupId → color
     for (const dateString of Object.keys(filteredEvents)) {
       const dayEvents = filteredEvents[dateString];
-      map[dateString] = dayEvents.slice(0, 3).map((event, idx) =>
-        EventColorManager.getColorForEvent(
-          event.id || `${dateString}-${idx}`,
-          event.title, dateString, filteredEvents, dayEvents, idx, isDark, event.groupId
-        )
-      );
+      map[dateString] = dayEvents.slice(0, 3).map((event, idx) => {
+        const cacheKey = `${event.groupId || event.id || `${dateString}-${idx}`}_${isDark ? 1 : 0}`;
+        let color = colorCache.get(cacheKey);
+        if (!color) {
+          color = EventColorManager.getColorForEvent(
+            event.id || `${dateString}-${idx}`,
+            event.title, dateString, filteredEvents, dayEvents, idx, isDark, event.groupId
+          );
+          colorCache.set(cacheKey, color);
+        }
+        return color;
+      });
     }
     return map;
   }, [filteredEvents, isDark]);

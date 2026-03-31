@@ -86,6 +86,9 @@ const MONTH_NAMES = [
 const POLL_INTERVAL = 300000; // 5분 폴링 (배터리 최적화)
 const INITIAL_MONTHS_RANGE = 3; // 초기 로드 월 범위 (앞뒤 3개월)
 
+// 연령 필터 정규식 (루프 밖에서 한 번만 컴파일)
+const AGE_RANGE_REGEX = /\d+/g;
+
 
 
 // ==================== 이벤트 카드 (메모이제이션 — 데이터 변경 시에만 재렌더) ====================
@@ -98,31 +101,21 @@ interface EventCardProps {
 }
 const EventCard = React.memo(({ event, date, onPress, compact = false, marginBottom = 12 }: EventCardProps) => {
   const handlePress = React.useCallback(() => onPress(event, date), [onPress, event, date]);
-  const containerStyle = React.useMemo(() => [
-    ecStyles.container, { paddingTop: compact ? 12 : 16, marginBottom }
-  ], [compact, marginBottom]);
-  const titleStyle = React.useMemo(() => [
-    ecStyles.title, { fontSize: compact ? 15 : 16 }
-  ], [compact]);
-  const subRowStyle = React.useMemo(() => [
-    ecStyles.subRow, { marginBottom: compact ? 6 : 8 }
-  ], [compact]);
-  const locRowStyle = React.useMemo(() => [
-    ecStyles.locRow, { marginBottom: compact ? 6 : 8 }
-  ], [compact]);
-  const btnStyle = React.useMemo(() => [
-    ecStyles.detailBtn, compact ? ecStyles.detailBtnCompact : null
-  ], [compact]);
-  const btnTextStyle = React.useMemo(() => [
-    ecStyles.detailBtnText, compact ? ecStyles.detailBtnTextCompact : null
-  ], [compact]);
+  const s = React.useMemo(() => ({
+    container: [ecStyles.container, { paddingTop: compact ? 12 : 16, marginBottom }],
+    title: [ecStyles.title, { fontSize: compact ? 15 : 16 }],
+    subRow: [ecStyles.subRow, { marginBottom: compact ? 6 : 8 }],
+    locRow: [ecStyles.locRow, { marginBottom: compact ? 6 : 8 }],
+    btn: [ecStyles.detailBtn, compact ? ecStyles.detailBtnCompact : null],
+    btnText: [ecStyles.detailBtnText, compact ? ecStyles.detailBtnTextCompact : null],
+  }), [compact, marginBottom]);
   return (
-    <View style={containerStyle}>
-      <Text style={titleStyle} numberOfLines={compact ? 2 : undefined}>
+    <TouchableOpacity activeOpacity={0.7} onPress={handlePress} style={s.container}>
+      <Text style={s.title} numberOfLines={compact ? 2 : undefined}>
         {sanitizeText(event.title, 100)}
       </Text>
       {event.subEvents && event.subEvents.length > 1 ? (
-        <View style={subRowStyle}>
+        <View style={s.subRow}>
           {event.subEvents.slice(0, 3).map((sub: any, si: number) => (
             <View key={si} style={ecStyles.tag}>
               <Text style={ecStyles.tagText} numberOfLines={1}>
@@ -137,7 +130,7 @@ const EventCard = React.memo(({ event, date, onPress, compact = false, marginBot
           )}
         </View>
       ) : event.location ? (
-        <View style={locRowStyle}>
+        <View style={s.locRow}>
           <View style={ecStyles.tag}>
             <Text style={ecStyles.tagText} numberOfLines={1}>
               {sanitizeText(event.location, 100)}
@@ -148,10 +141,10 @@ const EventCard = React.memo(({ event, date, onPress, compact = false, marginBot
       <Text style={[ecStyles.time, { marginBottom: compact ? 0 : 12 }]}>
         {event.time || '시간 미정'}
       </Text>
-      <TouchableOpacity onPress={handlePress} style={btnStyle}>
-        <Text style={btnTextStyle}>자세히 보기</Text>
-      </TouchableOpacity>
-    </View>
+      <View style={s.btn}>
+        <Text style={s.btnText}>자세히 보기</Text>
+      </View>
+    </TouchableOpacity>
   );
 });
 
@@ -179,7 +172,7 @@ const PanelSearchInput = React.memo(({ onDebouncedChange, clearSignal }: PanelSe
     debounceRef.current = setTimeout(() => {
       onChangeRef.current(text);
       debounceRef.current = null;
-    }, 200);
+    }, 350);
   }, []);
 
   const handleClear = React.useCallback(() => {
@@ -199,10 +192,64 @@ const PanelSearchInput = React.memo(({ onDebouncedChange, clearSignal }: PanelSe
         returnKeyType="search"
       />
       {value.length > 0 && (
-        <TouchableOpacity onPress={handleClear} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <TouchableOpacity onPress={handleClear} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Text style={psiStyles.clearBtn}>✕</Text>
         </TouchableOpacity>
       )}
+    </View>
+  );
+});
+
+// ==================== 힌트 쉬머 애니메이션 ====================
+const HINT_TEXT = '↑ 전체 일정 보기';
+const HINT_CHARS = HINT_TEXT.split('');
+const CHAR_COUNT = HINT_CHARS.length;
+const CYCLE_DELAY = 30000;        // 30초 대기
+
+const HintShimmer = React.memo(() => {
+  const progress = useRef(new Animated.Value(-1)).current;
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    let stopped = false;
+
+    const runCycle = () => {
+      if (stopped) return;
+      progress.setValue(-1);
+      Animated.timing(progress, {
+        toValue: CHAR_COUNT,
+        duration: CHAR_COUNT * 100,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished && !stopped) {
+          timer = setTimeout(runCycle, CYCLE_DELAY);
+        }
+      });
+    };
+
+    timer = setTimeout(runCycle, 2000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, []);
+
+  return (
+    <View style={panelStyles.hintRow}>
+      {HINT_CHARS.map((ch, i) => (
+        <Animated.Text
+          key={i}
+          style={[
+            panelStyles.hintChar,
+            {
+              opacity: progress.interpolate({
+                inputRange: [i - 1.5, i, i + 1.5],
+                outputRange: [0.4, 1, 0.4],
+                extrapolate: 'clamp',
+              }),
+            },
+          ]}
+        >
+          {ch}
+        </Animated.Text>
+      ))}
     </View>
   );
 });
@@ -225,7 +272,20 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [isInitialized, setIsInitialized] = useState(false);
   // App.tsx에서 prefetch된 경우 캐시가 이미 있으므로 로딩 상태 없이 즉시 렌더
   const [isDataReady, setIsDataReady] = useState(() => hasMemCache());
-  const [availableRegions, setAvailableRegions] = useState<string[]>([]);
+  // 지역 목록은 events에서 자동 파생 (별도 state 불필요)
+  const availableRegions = useMemo(() => {
+    const regionCount = new Map<string, number>();
+    for (const eventList of Object.values(events)) {
+      for (const event of eventList) {
+        if (event?.region) {
+          regionCount.set(event.region, (regionCount.get(event.region) || 0) + 1);
+        }
+      }
+    }
+    return Array.from(regionCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([region]) => region);
+  }, [events]);
   const [isPanelExpanded, setIsPanelExpanded] = useState(false);
   const [showPointsModal, setShowPointsModal] = useState(false);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -277,7 +337,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   } = usePoints();
 
   // ==================== 찜/즐겨찾기 & 리마인더 ====================
-  const { bookmarks, isBookmarked, toggleBookmark, isLoaded: bookmarksLoaded } = useBookmarks();
+  const { bookmarks, toggleBookmark, isLoaded: bookmarksLoaded } = useBookmarks();
   const { hasReminder, scheduleReminder, cancelReminder } = useReminders();
 
   // ==================== Dimensions (메모이제이션) ====================
@@ -320,7 +380,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     });
     panelAnimRef.current = anim;
     anim.start(({ finished }) => {
-      if (finished) panelAnimRef.current = null;
+      if (finished && panelAnimRef.current === anim) panelAnimRef.current = null;
       callback?.();
     });
   }, [panelTranslateY, getMaxPH]);
@@ -477,12 +537,12 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => !isPanelExpandedRef.current, // 축소 상태에선 탭도 캐치
+      onStartShouldSetPanResponder: () => true, // 핸들 영역은 항상 터치 캐치 (축소/확장 모두)
       onMoveShouldSetPanResponder: (_, gestureState) => {
         // 수직 제스처만 인식 (dy가 dx보다 클 때, 최소 5px 이동)
         return Math.abs(gestureState.dy) > 5 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
       },
-      onPanResponderTerminationRequest: () => true,
+      onPanResponderTerminationRequest: () => false, // 안드로이드에서 ScrollView에 제스처 빼앗기지 않도록
       onPanResponderGrant: () => {
         panelStartTranslateY.current = panelTranslateYValueRef.current;
       },
@@ -516,6 +576,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           animatePanel(maxH);
         } else if (gestureState.dy > threshold) {
           setIsPanelExpanded(false);
+          setSelectedDate(null);
+          setQuickFilter('all');
           animatePanel(100);
         } else {
           const ct = panelTranslateYValueRef.current;
@@ -524,6 +586,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             animatePanel(maxH);
           } else {
             setIsPanelExpanded(false);
+            setSelectedDate(null);
+            setQuickFilter('all');
             animatePanel(100);
           }
         }
@@ -545,10 +609,12 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         if (currentTranslate >= maxH - 120) return false;
 
         const isAtTop = isPanelScrollAtTopRef.current;
-        // 임계값 상향: 확실한 아래 방향 드래그(40px + 속도 0.3 이상)만 패널 닫기로 처리
-        const isDraggingDown = gestureState.dy > 40 && gestureState.vy > 0.3;
-        // 수직 판별 강화: x축 대비 y축이 2.5배 이상이어야 함
-        const isVertical = Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 2.5;
+        // 안드로이드: 더 낮은 임계값 (터치 감도 차이 보정)
+        const dyThreshold = Platform.OS === 'android' ? 20 : 40;
+        const vyThreshold = Platform.OS === 'android' ? 0.15 : 0.3;
+        const verticalBias = Platform.OS === 'android' ? 1.5 : 2.5;
+        const isDraggingDown = gestureState.dy > dyThreshold && gestureState.vy > vyThreshold;
+        const isVertical = Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * verticalBias;
         return isAtTop && isDraggingDown && isVertical;
       },
       onMoveShouldSetPanResponderCapture: () => false,
@@ -580,6 +646,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           animatePanel(maxH);
         } else if (gestureState.dy > threshold) {
           setIsPanelExpanded(false);
+          setSelectedDate(null);
+          setQuickFilter('all');
           animatePanel(100);
         } else {
           const ct = panelTranslateYValueRef.current;
@@ -588,6 +656,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             animatePanel(maxH);
           } else {
             setIsPanelExpanded(false);
+            setSelectedDate(null);
+            setQuickFilter('all');
             animatePanel(100);
           }
         }
@@ -605,6 +675,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const collapsePanel = useCallback(() => {
     setIsPanelExpanded(false);
+    setSelectedDate(null);
+    setQuickFilter('all');
     animatePanel(100);
   }, [animatePanel]);
 
@@ -639,10 +711,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     setQuickFilter('all');
   }, []);
 
-  const handleClearSearch = useCallback(() => {
-    setDebouncedSearch('');
-    setSearchClearSignal(c => c + 1);
-  }, []);
 
   const handleTabAll = useCallback(() => handleSetPanelTab('all'), [handleSetPanelTab]);
   const handleTabBookmarks = useCallback(() => handleSetPanelTab('bookmarks'), [handleSetPanelTab]);
@@ -668,9 +736,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     setNotificationPromptClosed(true);
   }, []);
 
-  const handleCloseAdModal = useCallback(() => {
-    setShowAdModal(false);
-  }, []);
 
   const handleClosePointsModal = useCallback(() => {
     setShowPointsModal(false);
@@ -739,65 +804,34 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     setCurrentYear(newYear);
   }, [visibleMonthTabs, currentMonth, currentYear]);
 
-  const upcomingEvents = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase();
+  // ==================== 1단계: events 변경 시에만 정렬 (O(n log n) — 비용 큰 부분) ====================
+  const sortedBaseEvents = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayTime = today.getTime();
 
-    // thisWeek 범위: 한 번만 계산
-    let weekEndTime = 0;
-    if (quickFilter === 'thisWeek') {
-      const endOfWeek = new Date(today);
-      endOfWeek.setDate(endOfWeek.getDate() + (7 - today.getDay()));
-      endOfWeek.setHours(23, 59, 59, 999);
-      weekEndTime = endOfWeek.getTime();
+    const result: Array<{ date: string; event: any; _ts: number; _dow: number }> = [];
+    for (const [date, eventList] of Object.entries(events)) {
+      const p = date.split('-');
+      if (p.length !== 3) continue;
+      const d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+      const ts = d.getTime();
+      if (ts < todayTime) continue;
+      const dow = d.getDay();
+      for (const event of eventList) {
+        result.push({ date, event, _ts: ts, _dow: dow });
+      }
     }
+    result.sort((a, b) => {
+      const diff = a._ts - b._ts;
+      return diff !== 0 ? diff : (a.event.time || 'ZZ:ZZ').localeCompare(b.event.time || 'ZZ:ZZ');
+    });
+    return result;
+  }, [events]);
 
-    const passesQuickFilter = (event: any, ts: number): boolean => {
-      if (quickFilter === 'all') return true;
-      if (quickFilter === 'weekend') {
-        const dow = new Date(ts).getDay();
-        return dow === 0 || dow === 5 || dow === 6;
-      }
-      if (quickFilter === 'thisWeek') return ts <= weekEndTime;
-      if (quickFilter === 'age20s') {
-        if (!event.ageRange) return false;
-        const nums = event.ageRange.match(/\d+/g);
-        if (!nums) return false;
-        const min = parseInt(nums[0], 10);
-        const max = nums[1] ? parseInt(nums[1], 10) : min;
-        return min >= 20 && max < 40;
-      }
-      if (quickFilter === 'age30s') {
-        if (!event.ageRange) return false;
-        const nums = event.ageRange.match(/\d+/g);
-        if (!nums) return false;
-        const max = nums[1] ? parseInt(nums[1], 10) : parseInt(nums[0], 10);
-        return max >= 30;
-      }
-      if (quickFilter === 'small') {
-        const total = (event.maleCapacity || 0) + (event.femaleCapacity || 0);
-        return total > 0 && total <= 20;
-      }
-      if (quickFilter === 'large') {
-        const total = (event.maleCapacity || 0) + (event.femaleCapacity || 0);
-        return total > 20;
-      }
-      return true;
-    };
-
-    const passesSearch = (event: any): boolean => {
-      if (!q) return true;
-      return (
-        event.title?.toLowerCase().includes(q) ||
-        event.location?.toLowerCase().includes(q) ||
-        event.region?.toLowerCase().includes(q) ||
-        event.description?.toLowerCase().includes(q) ||
-        event.venue?.toLowerCase().includes(q) ||
-        (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)))
-      );
-    };
+  // ==================== 2단계: 필터/검색 변경 시 가벼운 filter만 (정렬 재실행 없음) ====================
+  const upcomingEvents = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
 
     // 선택된 날짜: 단순 순회
     if (selectedDate) {
@@ -806,48 +840,105 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       for (const event of events[selectedDate]) {
         if (selectedRegion && event.region !== selectedRegion) continue;
         if (selectedLocation && event.location !== selectedLocation) continue;
-        if (!passesSearch(event)) continue;
+        if (q && !(
+          event.title?.toLowerCase().includes(q) ||
+          event.location?.toLowerCase().includes(q) ||
+          event.region?.toLowerCase().includes(q) ||
+          event.description?.toLowerCase().includes(q) ||
+          event.venue?.toLowerCase().includes(q) ||
+          (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)))
+        )) continue;
         result.push({ date: selectedDate, event });
       }
       result.sort((a, b) => (a.event.time || 'ZZ:ZZ').localeCompare(b.event.time || 'ZZ:ZZ'));
       return result;
     }
 
-    // 전체 이벤트: 단일 for-of 순회 (flatMap + filter×4 대비 최대 5배 빠름)
-    const result: Array<{ date: string; event: any; _ts: number }> = [];
-
-    for (const [date, eventList] of Object.entries(events)) {
-      const p = date.split('-');
-      if (p.length !== 3) continue;
-      const ts = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10)).getTime();
-      if (ts < todayTime) continue;
-
-      for (const event of eventList) {
-        if (selectedRegion && event.region !== selectedRegion) continue;
-        if (selectedLocation && event.location !== selectedLocation) continue;
-        if (!passesQuickFilter(event, ts)) continue;
-        if (!passesSearch(event)) continue;
-        result.push({ date, event, _ts: ts });
-      }
+    // thisWeek 범위
+    let weekEndTime = 0;
+    if (quickFilter === 'thisWeek') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const endOfWeek = new Date(today);
+      endOfWeek.setDate(endOfWeek.getDate() + (7 - today.getDay()));
+      endOfWeek.setHours(23, 59, 59, 999);
+      weekEndTime = endOfWeek.getTime();
     }
 
-    // 정렬: 캐시된 _ts 재활용 (parseLocalDate 중복 호출 제거)
-    result.sort((a, b) => {
-      const diff = a._ts - b._ts;
-      return diff !== 0 ? diff : (a.event.time || 'ZZ:ZZ').localeCompare(b.event.time || 'ZZ:ZZ');
-    });
+    // 사전 정렬된 리스트에서 filter만 수행 (O(n) — sort 없음)
+    const result: Array<{ date: string; event: any }> = [];
+    for (const item of sortedBaseEvents) {
+      const event = item.event;
 
-    return result as unknown as Array<{ date: string; event: any }>;
-  }, [events, selectedDate, selectedRegion, selectedLocation, debouncedSearch, quickFilter]);
+      // 지역/위치 필터
+      if (selectedRegion && event.region !== selectedRegion) continue;
+      if (selectedLocation && event.location !== selectedLocation) continue;
+
+      // 퀵필터
+      if (quickFilter !== 'all') {
+        if (quickFilter === 'weekend') {
+          if (item._dow !== 0 && item._dow !== 5 && item._dow !== 6) continue;
+        } else if (quickFilter === 'thisWeek') {
+          if (item._ts > weekEndTime) continue;
+        } else if (quickFilter === 'age20s') {
+          if (!event.ageRange) continue;
+          AGE_RANGE_REGEX.lastIndex = 0;
+          const nums = event.ageRange.match(AGE_RANGE_REGEX);
+          if (!nums) continue;
+          const min = parseInt(nums[0], 10);
+          const max = nums[1] ? parseInt(nums[1], 10) : min;
+          if (!(min >= 20 && max < 40)) continue;
+        } else if (quickFilter === 'age30s') {
+          if (!event.ageRange) continue;
+          AGE_RANGE_REGEX.lastIndex = 0;
+          const nums = event.ageRange.match(AGE_RANGE_REGEX);
+          if (!nums) continue;
+          const max = nums[1] ? parseInt(nums[1], 10) : parseInt(nums[0], 10);
+          if (max < 30) continue;
+        } else if (quickFilter === 'small') {
+          const total = (event.maleCapacity || 0) + (event.femaleCapacity || 0);
+          if (!(total > 0 && total <= 20)) continue;
+        } else if (quickFilter === 'large') {
+          const total = (event.maleCapacity || 0) + (event.femaleCapacity || 0);
+          if (total <= 20) continue;
+        }
+      }
+
+      // 검색
+      if (q && !(
+        event.title?.toLowerCase().includes(q) ||
+        event.location?.toLowerCase().includes(q) ||
+        event.region?.toLowerCase().includes(q) ||
+        event.description?.toLowerCase().includes(q) ||
+        event.venue?.toLowerCase().includes(q) ||
+        (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)))
+      )) continue;
+
+      result.push({ date: item.date, event });
+    }
+
+    return result;
+  }, [sortedBaseEvents, events, selectedDate, selectedRegion, selectedLocation, debouncedSearch, quickFilter]);
 
   // ==================== 추천 파티 (프로모션 광고 + 일반) ====================
-  // 날짜별 그룹화 (렌더 함수에서 매번 재계산하지 않도록 useMemo 분리)
+  // 날짜별 그룹화 + 하루마다 순서 로테이션 (상단 노출 이벤트가 매일 바뀜)
   const groupedUpcoming = useMemo(() => {
     if (selectedDate) return null; // 날짜 선택 시 불필요
     const grouped: { [key: string]: Array<{ date: string; event: any }> } = {};
     for (const item of upcomingEvents) {
       if (!grouped[item.date]) grouped[item.date] = [];
       grouped[item.date].push(item);
+    }
+    // 오늘 날짜 기반 로테이션 오프셋 (하루마다 변경)
+    const now = new Date();
+    const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000);
+    for (const date of Object.keys(grouped)) {
+      const arr = grouped[date];
+      if (arr.length <= 3) continue; // 3개 이하면 로테이션 불필요
+      const offset = dayOfYear % arr.length;
+      if (offset > 0) {
+        grouped[date] = arr.slice(offset).concat(arr.slice(0, offset));
+      }
     }
     return grouped;
   }, [upcomingEvents, selectedDate]);
@@ -856,14 +947,31 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // groupedDateElements: \ub0a0\uc9dc\ubcc4 \uadf8\ub8f9 \ub80c\ub354\ub9c1 \ucee8\ud150\uce20.
   // groupedUpcoming / expandedDates / isDark \uac00 \ubc14\ub00c\uc9c0 \uc54a\uc73c\uba74 \uc7ac\uc0dd\uc131 \uc548 \ud568
   // (\ud328\ub110 \uc5f4\uae30/\ub2eb\uae30, \uc6d4 \uc2a4\ud06c\ub864 \ub4f1\uc5d0\uc11c \uc7ac\uc0dd\uc131 \ubc1c\uc0dd \uc548 \ud568)
-  const groupedDateElements = useMemo(() => {
+  // 날짜 버블 색상 메모이제이션 (렌더마다 인라인 객체 재생성 방지)
+  const bubbleColors = useMemo(() => ({
+    bg: { backgroundColor: isDark ? '#334155' : '#ffffff' },
+    text: { color: isDark ? '#a78bfa' : '#ec4899' },
+  }), [isDark]);
+
+  // 날짜 파싱 사전 캐시: groupedUpcoming 변경 시에만 한 번 파싱 (parseLocalDate 반복 호출 제거)
+  const parsedDateMap = useMemo(() => {
     if (!groupedUpcoming) return null;
+    const map = new Map<string, { day: number; monthName: string }>();
+    for (const date of Object.keys(groupedUpcoming)) {
+      const d = parseLocalDate(date);
+      map.set(date, { day: d.getDate(), monthName: MONTH_NAMES[d.getMonth()] });
+    }
+    return map;
+  }, [groupedUpcoming]);
+
+  const groupedDateElements = useMemo(() => {
+    if (!groupedUpcoming || !parsedDateMap) return null;
     const dates = Object.keys(groupedUpcoming);
     return dates.map((date, dateIndex) => {
       const eventsForDate = groupedUpcoming[date];
-      const eventDate = parseLocalDate(date);
-      const day = eventDate.getDate();
-      const monthName = MONTH_NAMES[eventDate.getMonth()];
+      const parsed = parsedDateMap.get(date)!;
+      const day = parsed.day;
+      const monthName = parsed.monthName;
       const isLastDate = dateIndex === dates.length - 1;
       const isDateExpanded = expandedDates.has(date);
       const totalCount = eventsForDate.length;
@@ -878,9 +986,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         >
           {/* [왼쪽] 날짜 버블 + 연결선 */}
           <View style={gdStyles.bubbleCol}>
-            <View style={[panelStyles.dateBubble, { backgroundColor: isDark ? '#334155' : '#ffffff' }]}>
-              <Text style={[gdStyles.dayText, { color: isDark ? '#a78bfa' : '#ec4899' }]}>{day}</Text>
-              <Text style={[gdStyles.monthText, { color: isDark ? '#a78bfa' : '#ec4899' }]}>{monthName}</Text>
+            <View style={[panelStyles.dateBubble, bubbleColors.bg]}>
+              <Text style={[gdStyles.dayText, bubbleColors.text]}>{day}</Text>
+              <Text style={[gdStyles.monthText, bubbleColors.text]}>{monthName}</Text>
             </View>
             {!isLastDate && <View style={panelStyles.dateLine} />}
           </View>
@@ -924,7 +1032,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         </View>
       );
     });
-  }, [groupedUpcoming, expandedDates, isDark, handleNavigateToEventDetail, handleToggleDateExpand]);
+  }, [groupedUpcoming, parsedDateMap, expandedDates, isDark, handleNavigateToEventDetail, handleToggleDateExpand, bubbleColors]);
 
   // 날짜 그룹 데이터 변경 시 표시 개수 리셋
   useEffect(() => {
@@ -984,6 +1092,32 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     );
   }, [upcomingEvents, selectedDate, expandedDates, handleNavigateToEventDetail, handleToggleDateExpand]);
 
+  // 패널 전체일정 콘텐츠 사전 계산 (IIFE + slice 제거)
+  const panelAllEventsContent = useMemo(() => {
+    if (upcomingEvents.length === 0) return null;
+    if (!selectedDate && groupedDateElements) {
+      const totalDates = groupedDateElements.length;
+      const hasMore = totalDates > visibleDateGroups;
+      return (
+        <>
+          {groupedDateElements.slice(0, visibleDateGroups)}
+          {hasMore && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={handleLoadMoreDates}
+              style={panelStyles.loadMoreDatesBtn}
+            >
+              <Text style={panelStyles.loadMoreDatesBtnText}>
+                +{totalDates - visibleDateGroups}개 날짜 더보기
+              </Text>
+            </TouchableOpacity>
+          )}
+        </>
+      );
+    }
+    return selectedDateElements;
+  }, [upcomingEvents.length, selectedDate, groupedDateElements, visibleDateGroups, selectedDateElements, handleLoadMoreDates]);
+
   // visibleMonths 중복 제거 + 최대 개수 제한 (정기 클린업)
   const MAX_VISIBLE_MONTHS = 24;
   React.useEffect(() => {
@@ -1018,26 +1152,27 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
+      const todayTime = today.getTime();
 
-      Object.keys(newEvents).forEach((date) => {
-        const eventDate = parseLocalDate(date);
-        eventDate.setHours(0, 0, 0, 0);
+      // old 데이터 전체를 한 번에 Set으로 구성 (id만 사용 — title 포함 시 거짓 양성)
+      const oldEventSet = new Set<string>();
+      for (const [date, eventList] of Object.entries(oldEvents)) {
+        for (const event of eventList) {
+          oldEventSet.add(`${date}:${event.id}`);
+        }
+      }
 
-        // 오늘 이후의 일정만 확인
-        if (eventDate < today) return;
+      for (const [date, eventList] of Object.entries(newEvents)) {
+        const p = date.split('-');
+        if (p.length !== 3) continue;
+        const ts = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10)).getTime();
+        if (ts < todayTime) continue;
 
-        const oldEventIds = new Set(
-          (oldEvents[date] || []).map((e) => `${e.id}-${e.title}`)
-        );
+        for (const event of eventList) {
+          const eventKey = `${date}:${event.id}`;
+          if (notifiedEventsRef.current.has(eventKey)) continue;
 
-        newEvents[date].forEach((event) => {
-          const eventKey = `${date}:${event.id}-${event.title}`;
-
-          // 이미 알림을 보낸 이벤트는 건너뜀
-          if (notifiedEventsRef.current.has(eventKey)) return;
-
-          // 새로 추가된 일정이면 알림 전송 (안전하게)
-          if (!oldEventIds.has(`${event.id}-${event.title}`)) {
+          if (!oldEventSet.has(eventKey)) {
             try {
               const parsedNotifDate = parseLocalDate(date);
               const formattedDate = parsedNotifDate.toLocaleDateString("ko-KR", {
@@ -1047,17 +1182,16 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               sendNewEventNotification(event.title, formattedDate);
               notifiedEventsRef.current.add(eventKey);
 
-              // 메모리 관리: 500개 초과 시 오래된 항목 정리
-              if (notifiedEventsRef.current.size > 500) {
+              if (notifiedEventsRef.current.size > 2000) {
                 const entries = Array.from(notifiedEventsRef.current);
-                notifiedEventsRef.current = new Set(entries.slice(-250));
+                notifiedEventsRef.current = new Set(entries.slice(-1000));
               }
             } catch (notifError) {
-              // Expo Go에서는 알림이 작동하지 않을 수 있음 (무시)
+              // Expo Go에서는 알림이 작동하지 않을 수 있음
             }
           }
-        });
-      });
+        }
+      }
     },
     []
   );
@@ -1073,7 +1207,6 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       if (!loadedEvents || typeof loadedEvents !== "object") {
         if (isMountedRef.current) {
           setEvents({});
-          setAvailableRegions([]);
         }
         return;
       }
@@ -1090,33 +1223,11 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
       if (isMountedRef.current) {
         setEvents(loadedEvents);
-
-        // 지역 목록 추출을 InteractionManager로 지연 → setEvents 렌더가 먼저 완료됨
-        InteractionManager.runAfterInteractions(() => {
-          if (!isMountedRef.current) return;
-          const regionCount = new Map<string, number>();
-          for (const eventList of Object.values(loadedEvents)) {
-            for (const event of eventList) {
-              if (event?.region) {
-                regionCount.set(
-                  event.region,
-                  (regionCount.get(event.region) || 0) + 1
-                );
-              }
-            }
-          }
-
-          const sortedRegions = Array.from(regionCount.entries())
-            .sort((a, b) => b[1] - a[1])
-            .map(([region]) => region);
-          if (isMountedRef.current) setAvailableRegions(sortedRegions);
-        });
       }
     } catch (error) {
       secureLog.warn("데이터 로드 실패");
       if (isMountedRef.current) {
         setEvents({});
-        setAvailableRegions([]);
       }
     }
   }, []);
@@ -1133,22 +1244,23 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       // 포커스 상태 추적 (마운트 상태와 분리)
       isFocusedRef.current = true;
 
-      // 초기 데이터 로드 (안전하게)
-      const loadData = async () => {
-        try {
-          await loadEventsData();
-          if (isMountedRef.current) {
-            setIsDataReady(true);
+      // 초기 데이터 로드 — InteractionManager로 네비게이션 애니메이션 차단 방지
+      const interactionHandle = InteractionManager.runAfterInteractions(() => {
+        const loadData = async () => {
+          try {
+            await loadEventsData();
+            if (isMountedRef.current) {
+              setIsDataReady(true);
+            }
+          } catch (err) {
+            secureLog.warn("초기 데이터 로드 실패");
+            if (isMountedRef.current) {
+              setIsDataReady(true); // 실패해도 UI 표시
+            }
           }
-        } catch (err) {
-          secureLog.warn("초기 데이터 로드 실패");
-          if (isMountedRef.current) {
-            setIsDataReady(true); // 실패해도 UI 표시
-          }
-        }
-      };
-
-      loadData();
+        };
+        loadData();
+      });
 
       // 폴링 설정 (배터리 최적화)
       pollIntervalRef.current = setInterval(async () => {
@@ -1195,6 +1307,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       // 클린업 함수
       return () => {
         isFocusedRef.current = false;
+        interactionHandle.cancel();
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
@@ -1822,11 +1935,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         </View>
 
         {/* 패널 축소 시 열기 힌트 */}
-        {!isPanelExpanded && (
-          <Text style={panelStyles.hintText}>
-            ↑ 탭하여 열기
-          </Text>
-        )}
+        {!isPanelExpanded && <HintShimmer />}
 
         {/* 검색바 + 탭 (패널 확장 시에만 표시) */}
         {isPanelExpanded && (
@@ -1943,16 +2052,18 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 </Text>
               </View>
             ) : (
-              bookmarks.map((bookmark, index) => {
+              bookmarks.map((bookmark) => {
                 const { event, date } = bookmark;
-                const eventDate = parseLocalDate(date);
-                const month = eventDate.getMonth() + 1;
-                const day = eventDate.getDate();
+                const parts = date.split('-');
+                const month = parseInt(parts[1], 10);
+                const day = parseInt(parts[2], 10);
                 const reminderSet = hasReminder(event.id, date);
                 return (
-                  <View
+                  <TouchableOpacity
+                    activeOpacity={0.7}
                     key={`bm-${event.id}-${date}`}
                     style={panelStyles.bmCard}
+                    onPress={() => navigation.navigate('EventDetail', { event, date })}
                   >
                     <View style={panelStyles.bmRow}>
                       <View style={{ flex: 1 }}>
@@ -1995,14 +2106,11 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                       </View>
                     ) : null}
                     <View style={panelStyles.bmBtnRow}>
-                      <TouchableOpacity
-                        onPress={() => navigation.navigate('EventDetail', { event, date })}
-                        style={panelStyles.bmBtn}
-                      >
+                      <View style={panelStyles.bmBtn}>
                         <Text style={panelStyles.bmBtnText}>
                           자세히 보기
                         </Text>
-                      </TouchableOpacity>
+                      </View>
                       <TouchableOpacity
                         onPress={async () => {
                           if (!event.id) return;
@@ -2024,7 +2132,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                         </Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               })
             )
@@ -2036,31 +2144,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 예정된 일정이 없습니다
               </Text>
             </View>
-          ) : (
-            (() => {
-              if (!selectedDate) {
-                const totalDates = groupedDateElements?.length ?? 0;
-                const hasMore = totalDates > visibleDateGroups;
-                return (
-                  <>
-                    {groupedDateElements?.slice(0, visibleDateGroups)}
-                    {hasMore && (
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={handleLoadMoreDates}
-                        style={panelStyles.loadMoreDatesBtn}
-                      >
-                        <Text style={panelStyles.loadMoreDatesBtnText}>
-                          +{totalDates - visibleDateGroups}개 날짜 더보기
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </>
-                );
-              }
-              return selectedDateElements;
-            })()
-          )
+          ) : panelAllEventsContent
           )}
           </ScrollView>
         </View>
@@ -2232,12 +2316,13 @@ const panelStyles = StyleSheet.create({
   panelTitle: { fontSize: 18, fontWeight: '800', color: '#ffffff', letterSpacing: 1 },
   panelBadge: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
   panelBadgeText: { fontSize: 12, fontWeight: '800', color: '#ffffff' },
-  panelBackLink: { marginTop: 4 },
-  panelBackText: { fontSize: 11, color: 'rgba(255, 255, 255, 0.7)' },
+  panelBackLink: { marginTop: 2, paddingVertical: 6, paddingHorizontal: 8, marginLeft: -8, borderRadius: 8 },
+  panelBackText: { fontSize: 13, fontWeight: '600', color: 'rgba(255, 255, 255, 0.8)' },
   panelCloseBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255, 255, 255, 0.2)', justifyContent: 'center', alignItems: 'center' },
   panelCloseText: { color: '#ffffff', fontSize: 20, fontWeight: '700' },
-  hintText: { fontSize: 11, color: 'rgba(255,255,255,0.45)', textAlign: 'center', marginTop: 2 },
-  dragHandle: { alignItems: 'center', paddingVertical: 6, marginBottom: 8 },
+  hintRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 2 },
+  hintChar: { fontSize: 12, color: '#ffffff', fontWeight: '500' },
+  dragHandle: { alignItems: 'center', paddingVertical: 12, marginBottom: 4 },
   dragBar: { width: 40, height: 5, backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRadius: 3 },
   searchTabWrap: { marginBottom: 10 },
   tabRow: { flexDirection: 'row', gap: 6 },

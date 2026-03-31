@@ -80,7 +80,9 @@ const DEFAULT_CONFIG: AdConfig = {
 const isValidConfig = (data: unknown): data is AdConfig => {
   if (!data || typeof data !== 'object') return false;
   const d = data as Record<string, unknown>;
-  return typeof d.enabled === 'boolean' && typeof d.imageUrl === 'string';
+  return typeof d.enabled === 'boolean'
+    && typeof d.imageUrl === 'string'
+    && (d.imageUrl === '' || (d.imageUrl as string).startsWith('https://'));
 };
 
 const safeJsonParse = <T,>(json: string | null, fallback: T): T => {

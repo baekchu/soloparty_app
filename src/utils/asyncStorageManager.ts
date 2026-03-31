@@ -7,16 +7,27 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState, AppStateStatus } from 'react-native';
 import { secureLog } from './secureStorage';
 
 let isReady = false;
 let initPromise: Promise<void> | null = null;
 
-// 배치 쓰기 큐
-let writeQueue: Array<[string, string]> = [];
+// 배치 쓰기 큐 (Map으로 동일 키 O(1) 병합)
+let writeQueue = new Map<string, string>();
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
-const WRITE_BATCH_DELAY = 100; // 100ms 내의 쓰기는 배치로 처리
+const WRITE_BATCH_DELAY = 50; // 50ms 내의 쓰기는 배치로 처리
 const MAX_QUEUE_SIZE = 50; // 배치 큐 최대 크기 (메모리 폭탄 방지)
+
+// 앱 백그라운드 진입 시 대기 중인 쓰기 즉시 플러시 (데이터 손실 방지)
+AppState.addEventListener('change', (state: AppStateStatus) => {
+  if (state === 'background' || state === 'inactive') {
+    if (writeQueue.size > 0) {
+      if (writeTimer) { clearTimeout(writeTimer); writeTimer = null; }
+      flushWriteQueue().catch(() => {});
+    }
+  }
+});
 
 /**
  * AsyncStorage 초기화 (앱 시작 시 한 번만 호출)
@@ -33,17 +44,27 @@ export const initAsyncStorage = async (): Promise<void> => {
     try {
       secureLog.info('🔧 AsyncStorage 초기화 시작...');
       
-      // 테스트 쓰기/읽기 (불필요한 100ms 대기 제거)
-      await AsyncStorage.setItem('@storage_init_test', 'ok');
-      const test = await AsyncStorage.getItem('@storage_init_test');
+      // 타임아웃 보호: SQLite 손상 시 영구 대기 방지 (5초)
+      const initTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('AsyncStorage init timeout')), 5000)
+      );
       
-      if (test === 'ok') {
-        await AsyncStorage.removeItem('@storage_init_test');
-        isReady = true;
-        secureLog.info('✅ AsyncStorage 준비 완료');
-      } else {
-        throw new Error('AsyncStorage test failed');
-      }
+      await Promise.race([
+        (async () => {
+          // 테스트 쓰기/읽기 (불필요한 100ms 대기 제거)
+          await AsyncStorage.setItem('@storage_init_test', 'ok');
+          const test = await AsyncStorage.getItem('@storage_init_test');
+          
+          if (test === 'ok') {
+            await AsyncStorage.removeItem('@storage_init_test');
+            isReady = true;
+            secureLog.info('✅ AsyncStorage 준비 완료');
+          } else {
+            throw new Error('AsyncStorage test failed');
+          }
+        })(),
+        initTimeout,
+      ]);
     } catch (error) {
       secureLog.error('❌ AsyncStorage 초기화 실패');
       // 강제 진행 (대기 없이)
@@ -67,10 +88,10 @@ const ensureReady = async (): Promise<void> => {
  * 배치 쓰기 실행
  */
 const flushWriteQueue = async (): Promise<void> => {
-  if (writeQueue.length === 0) return;
+  if (writeQueue.size === 0) return;
   
-  const itemsToWrite = [...writeQueue];
-  writeQueue = [];
+  const itemsToWrite = Array.from(writeQueue.entries());
+  writeQueue = new Map();
   writeTimer = null;
   
   try {
@@ -107,9 +128,9 @@ export const safeGetItem = async (key: string): Promise<string | null> => {
 
 /**
  * 안전한 setItem (배치 지원)
- * @param immediate true면 즉시 저장, false면 배치 처리
+ * @param immediate true면 즉시 저장, false면 배치 처리 (기본: 배치)
  */
-export const safeSetItem = async (key: string, value: string, immediate: boolean = true): Promise<boolean> => {
+export const safeSetItem = async (key: string, value: string, immediate: boolean = false): Promise<boolean> => {
   await ensureReady();
   
   try {
@@ -118,15 +139,10 @@ export const safeSetItem = async (key: string, value: string, immediate: boolean
       return true;
     }
     
-    // 배치 처리 (큐 크기 제한 + 동일 키 병합)
-    const existingIdx = writeQueue.findIndex(item => item[0] === key);
-    if (existingIdx >= 0) {
-      writeQueue[existingIdx] = [key, value]; // 동일 키: 최신 값으로 덮어쓰기
-    } else {
-      writeQueue.push([key, value]);
-    }
+    // 배치 처리 (Map으로 동일 키 O(1) 병합)
+    writeQueue.set(key, value);
     
-    if (writeQueue.length >= MAX_QUEUE_SIZE) {
+    if (writeQueue.size >= MAX_QUEUE_SIZE) {
       // 큐가 가득 차면 즉시 플러시
       if (writeTimer) { clearTimeout(writeTimer); writeTimer = null; }
       await flushWriteQueue();

@@ -127,6 +127,17 @@ const InfoCard = memo(({
 });
 
 export default function EventDetailScreen({ navigation, route }: Props) {
+  // route.params 안전 검증 (잘못된 네비게이션 파라미터로 인한 크래시 방지)
+  if (!route.params?.event || !route.params?.date) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <Text style={{ fontSize: 16, color: '#666', textAlign: 'center' }}>이벤트 정보를 불러올 수 없습니다.</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginTop: 16, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#ec4899', borderRadius: 8 }}>
+          <Text style={{ color: '#fff', fontWeight: 'bold' }}>돌아가기</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   const { event: routeEvent, date } = route.params;
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
@@ -136,7 +147,8 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   // 지점 선택 (subEvents가 있으면 지점 탭 표시)
   const hasSubEvents = routeEvent.subEvents && routeEvent.subEvents.length > 1;
   const [selectedBranchIdx, setSelectedBranchIdx] = useState(0);
-  const event = hasSubEvents ? routeEvent.subEvents![selectedBranchIdx] : routeEvent;
+  const safeIdx = hasSubEvents ? Math.min(selectedBranchIdx, routeEvent.subEvents!.length - 1) : 0;
+  const event = hasSubEvents ? routeEvent.subEvents![safeIdx] : routeEvent;
 
   // 찜/즐겨찾기 & 리마인더
   const { isBookmarked, toggleBookmark } = useBookmarks();
@@ -421,51 +433,65 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     setShowHostProfile(false);
   }, []);
 
+  // 헤더 버튼 색상 메모이제이션
+  const headerColors = useMemo(() => ({
+    containerBg: isDark ? '#0f172a' : '#ffffff',
+    headerBg: isDark ? '#1e293b' : '#ffffff',
+    headerBorder: isDark ? '#334155' : '#e5e7eb',
+    titleColor: isDark ? '#f8fafc' : '#0f172a',
+    reminderBg: reminderSet ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#374151' : '#f1f5f9'),
+    reminderIcon: reminderSet ? '#ffffff' : (isDark ? '#f8fafc' : '#374151'),
+    bookmarkBg: bookmarked ? '#ec4899' : (isDark ? '#374151' : '#f1f5f9'),
+    bookmarkIcon: bookmarked ? '#ffffff' : (isDark ? '#f8fafc' : '#374151'),
+    shareBg: isDark ? '#374151' : '#f1f5f9',
+    shareIcon: isDark ? '#f8fafc' : '#374151',
+  }), [isDark, reminderSet, bookmarked]);
+
   return (
-    <View style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+    <View style={[styles.container, { backgroundColor: headerColors.containerBg }]}>
       {/* 헤더 */}
-      <View style={[styles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', paddingTop: insets.top + 10, borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
+      <View style={[styles.header, { backgroundColor: headerColors.headerBg, paddingTop: insets.top + 10, borderBottomColor: headerColors.headerBorder }]}>
         {/* 타이틀 - absolute로 정중앙 배치 */}
-        <Text style={[styles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]} numberOfLines={1}>
+        <Text style={[styles.headerTitle, { color: headerColors.titleColor }]} numberOfLines={1}>
           파티 상세
         </Text>
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
-          <Text style={[styles.backIcon, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
+          <Text style={[styles.backIcon, { color: headerColors.titleColor }]}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerActions}>
           {/* 알림 버튼 */}
           <TouchableOpacity
-            style={[styles.shareButton, { backgroundColor: reminderSet ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#374151' : '#f1f5f9') }]}
+            style={[styles.shareButton, { backgroundColor: headerColors.reminderBg }]}
             onPress={handleToggleReminder}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityLabel={reminderSet ? '알림 해제' : '알림 등록'}
             accessibilityRole="button"
           >
-            <Text style={[styles.shareIcon, { color: reminderSet ? '#ffffff' : (isDark ? '#f8fafc' : '#374151') }]}>
+            <Text style={[styles.shareIcon, { color: headerColors.reminderIcon }]}>
               {reminderSet ? '🔔' : '🔕'}
             </Text>
           </TouchableOpacity>
           {/* 찜 버튼 */}
           <TouchableOpacity
-            style={[styles.shareButton, { backgroundColor: bookmarked ? '#ec4899' : (isDark ? '#374151' : '#f1f5f9') }]}
+            style={[styles.shareButton, { backgroundColor: headerColors.bookmarkBg }]}
             onPress={handleToggleBookmark}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityLabel={bookmarked ? '찜 해제' : '찜'}
             accessibilityRole="button"
           >
-            <Text style={[styles.shareIcon, { color: bookmarked ? '#ffffff' : (isDark ? '#f8fafc' : '#374151') }]}>
+            <Text style={[styles.shareIcon, { color: headerColors.bookmarkIcon }]}>
               {bookmarked ? '♥' : '♡'}
             </Text>
           </TouchableOpacity>
           {/* 공유 버튼 */}
           <TouchableOpacity 
-            style={[styles.shareButton, { backgroundColor: isDark ? '#374151' : '#f1f5f9' }]} 
+            style={[styles.shareButton, { backgroundColor: headerColors.shareBg }]} 
             onPress={handleShare}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityLabel="공유"
             accessibilityRole="button"
           >
-            <Text style={[styles.shareIcon, { color: isDark ? '#f8fafc' : '#374151' }]}>공유</Text>
+            <Text style={[styles.shareIcon, { color: headerColors.shareIcon }]}>공유</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -821,7 +847,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               </Text>
               <View style={styles.starRow}>
                 {STAR_ARRAY.map((star) => (
-                  <TouchableOpacity key={star} onPress={() => setReviewRating(star)}>
+                  <TouchableOpacity key={star} onPress={() => setReviewRating(star)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}>
                     <Text style={[styles.starLarge, { opacity: star <= reviewRating ? 1 : 0.3 }]}>⭐</Text>
                   </TouchableOpacity>
                 ))}
@@ -980,7 +1006,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   backButton: {
-    padding: 8,
+    padding: 12,
   },
   backIcon: {
     fontSize: 24,

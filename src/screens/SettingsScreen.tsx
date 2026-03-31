@@ -110,7 +110,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     <SafeAreaView style={[settingsStyles.container, { backgroundColor: colors.bg }]}>
       {/* 헤더 */}
       <View style={[settingsStyles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={goBack} style={settingsStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+        <TouchableOpacity onPress={goBack} style={settingsStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
           <Text style={[settingsStyles.backButtonText, { color: colors.text }]}>‹</Text>
         </TouchableOpacity>
         <Text style={[settingsStyles.headerTitle, { color: colors.text }]}>
@@ -305,7 +305,7 @@ const settingsStyles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   backButton: {
-    padding: 8,
+    padding: 12,
   },
   backButtonText: {
     fontSize: 24,
@@ -373,7 +373,7 @@ const settingsStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   menuText: {
     fontSize: 16,

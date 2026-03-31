@@ -357,15 +357,17 @@ export default function useReviews() {
         }
 
         if (permGranted) {
-          const gpsTimeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('GPS timeout')), GPS_TIMEOUT_MS)
-          );
+          let gpsTimeoutId: ReturnType<typeof setTimeout>;
+          const gpsTimeout = new Promise<never>((_, reject) => {
+            gpsTimeoutId = setTimeout(() => reject(new Error('GPS timeout')), GPS_TIMEOUT_MS);
+          });
           const loc = await Promise.race([
             Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Low, // 2km 반경이므로 LOW면 충분 (배터리 절약)
             }),
             gpsTimeout,
           ]) as Location.LocationObject;
+          clearTimeout(gpsTimeoutId!);
           
           // GPS 정확도 검증 (accuracy가 5000m 이상이면 신뢰할 수 없음)
           const gpsAccuracy = loc.coords.accuracy ?? Infinity;
@@ -525,13 +527,23 @@ export default function useReviews() {
   );
   const getAllReviews = useCallback((): EventReview[] => allReviewsSorted, [allReviewsSorted]);
 
-  /** 주최자별 후기 조회 (호스트 프로필용) */
+  /** 주최자별 후기 조회 (호스트 프로필용) — 결과 캐시 */
+  const _organizerCacheRef = useRef(new Map<string, EventReview[]>());
+  const _reviewsVersionRef = useRef(0);
+  useEffect(() => {
+    _reviewsVersionRef.current++;
+    _organizerCacheRef.current.clear();
+  }, [allReviewsSorted]);
   const getReviewsByOrganizer = useCallback((organizer: string): EventReview[] => {
     if (!organizer) return [];
     const normalized = organizer.trim().toLowerCase();
-    return allReviewsSorted.filter(
+    const cached = _organizerCacheRef.current.get(normalized);
+    if (cached) return cached;
+    const result = allReviewsSorted.filter(
       r => r.organizer?.trim().toLowerCase() === normalized
     );
+    _organizerCacheRef.current.set(normalized, result);
+    return result;
   }, [allReviewsSorted]);
 
   return {

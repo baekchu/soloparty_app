@@ -149,7 +149,7 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
     <SafeAreaView style={[legalStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
       {/* 헤더 */}
       <View style={[legalStyles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
-        <TouchableOpacity onPress={goBack} style={legalStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+        <TouchableOpacity onPress={goBack} style={legalStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
           <Text style={[legalStyles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>{'<'}</Text>
         </TouchableOpacity>
         <Text style={[legalStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
@@ -189,7 +189,7 @@ const legalStyles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   backButton: {
-    padding: 8,
+    padding: 12,
   },
   backButtonText: {
     fontSize: 20,

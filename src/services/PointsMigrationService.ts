@@ -109,7 +109,7 @@ const getDeviceId = async (): Promise<string> => {
     const rand = Math.random().toString(36).slice(2, 10);
     id = `d_${ts}_${rand}`;
   }
-  await safeSetItem(KEYS.DEVICE, id);
+  await safeSetItem(KEYS.DEVICE, id, true);
   return id;
 };
 

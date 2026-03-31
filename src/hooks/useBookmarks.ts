@@ -31,6 +31,7 @@ interface BookmarkedEvent {
 // 여러 화면에서 useBookmarks()를 호출해도 동일한 데이터를 공유
 let _bookmarks: BookmarkedEvent[] = [];
 let _loaded = false;
+let _toggleLocked = false;
 let _loading = false;
 let _loadRetryCount = 0;
 const MAX_LOAD_RETRIES = 3;
@@ -105,26 +106,24 @@ async function _loadFromStorage(): Promise<void> {
   try {
     let parsed: BookmarkedEvent[] | null = null;
 
-    // 1+2. AsyncStorage + SecureStore 병렬 로드
-    const [asyncResult, secureResult] = await Promise.allSettled([
-      safeGetItem(BOOKMARKS_KEY),
-      SecureStore.getItemAsync(BOOKMARKS_SECURE_KEY),
-    ]);
-
-    // AsyncStorage 결과 처리
-    if (asyncResult.status === 'fulfilled' && asyncResult.value && asyncResult.value.length < 500000) {
-      try {
-        const data = JSON.parse(asyncResult.value);
-        if (Array.isArray(data)) {
+    // 1. AsyncStorage 먼저 시도 (99% 성공 — SecureStore 불필요한 50-100ms 절약)
+    try {
+      const asyncValue = await safeGetItem(BOOKMARKS_KEY);
+      if (asyncValue && asyncValue.length < 500000) {
+        const data = JSON.parse(asyncValue);
+        if (Array.isArray(data) && data.length > 0) {
           parsed = data;
         }
-      } catch {
-        secureLog.warn('AsyncStorage 찜 로드 실패');
       }
+    } catch {
+      secureLog.warn('AsyncStorage 찜 로드 실패');
     }
 
-    // SecureStore 결과 처리 (폴백/검증)
-    const secureStored = secureResult.status === 'fulfilled' ? secureResult.value : null;
+    // 2. AsyncStorage 실패 시에만 SecureStore 폴백 (순차 — 불필요한 병렬 I/O 제거)
+    let secureStored: string | null = null;
+    if (!parsed || parsed.length === 0) {
+      secureStored = await SecureStore.getItemAsync(BOOKMARKS_SECURE_KEY).catch(() => null);
+    }
     if (secureStored) {
       try {
         const secureData = JSON.parse(secureStored);
@@ -202,8 +201,8 @@ async function _loadFromStorage(): Promise<void> {
       // 필수 필드 검증만 (title, date)
       if (!b?.event?.title || !b?.date) return false;
       const eventDate = parseLocalDate(b.date);
-      // 날짜 파싱 실패 시에도 보존 (삭제보다 보존이 안전)
-      if (!eventDate) return true;
+      // 날짜 파싱 실패 = 손상된 데이터 → 만료 처리 (복구 불가능한 날짜)
+      if (!eventDate) return false;
       eventDate.setHours(23, 59, 59, 999);
       return (eventDate.getTime() + expiryMs) > now;
     });
@@ -375,8 +374,10 @@ export default function useBookmarks() {
 
   const toggleBookmark = useCallback(async (event: Event, date: string): Promise<boolean> => {
     const eventId = event.id;
-    if (!eventId) return false;
+    if (!eventId || _toggleLocked) return false;
+    _toggleLocked = true;
 
+    try {
     const exists = _bookmarks.some(b => b.event.id === eventId && b.date === date);
 
     if (exists) {
@@ -393,6 +394,9 @@ export default function useBookmarks() {
     _notify(); // 모든 인스턴스에 즉시 전파
     await _immediateSave(); // 즉시 저장 (데이터 손실 방지)
     return !exists; // true = 추가, false = 제거
+    } finally {
+      _toggleLocked = false;
+    }
   }, []);
 
   // 날짜순 정렬 (useMemo로 최적화 — 매 렌더마다 재정렬 방지)

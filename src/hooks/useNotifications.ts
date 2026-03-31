@@ -17,6 +17,30 @@ import {
 } from '../services/NotificationService';
 import { secureLog } from '../utils/secureStorage';
 
+// 모듈 레벨 설정 캐시 (화면 전환 시 AsyncStorage 재접근 방지)
+let _settingsCache: NotificationSettings | null = null;
+let _settingsCacheTime = 0;
+const SETTINGS_CACHE_TTL = 60000; // 1분
+
+const getCachedSettings = async (): Promise<NotificationSettings> => {
+  if (_settingsCache && (Date.now() - _settingsCacheTime) < SETTINGS_CACHE_TTL) {
+    return _settingsCache;
+  }
+  const s = await getNotificationSettings();
+  _settingsCache = s;
+  _settingsCacheTime = Date.now();
+  return s;
+};
+
+const invalidateSettingsCache = (newSettings?: NotificationSettings) => {
+  if (newSettings) {
+    _settingsCache = newSettings;
+    _settingsCacheTime = Date.now();
+  } else {
+    _settingsCache = null;
+  }
+};
+
 export const useNotifications = () => {
   const [settings, setSettings] = useState<NotificationSettings>({
     enabled: false,
@@ -31,7 +55,7 @@ export const useNotifications = () => {
     
     const loadSettings = async () => {
       try {
-        const loadedSettings = await getNotificationSettings();
+        const loadedSettings = await getCachedSettings();
         
         // 권한 상태 확인 (알림이 enabled인 경우에만)
         // 중요: 사용자가 끈 설정을 권한 상태로 덮어쓰지 않음
@@ -76,6 +100,7 @@ export const useNotifications = () => {
           saveNotificationSettings(newSettings).catch(() => {
             secureLog.error('알림 설정 저장 실패');
           });
+          invalidateSettingsCache(newSettings);
           return newSettings;
         });
         return true;
@@ -95,6 +120,7 @@ export const useNotifications = () => {
       saveNotificationSettings(newSettings).catch(() => {
         secureLog.error('새 일정 알림 설정 저장 실패');
       });
+      invalidateSettingsCache(newSettings);
       return newSettings;
     });
   }, []);
@@ -106,6 +132,7 @@ export const useNotifications = () => {
       saveNotificationSettings(newSettings).catch(() => {
         secureLog.error('리마인더 설정 저장 실패');
       });
+      invalidateSettingsCache(newSettings);
       return newSettings;
     });
   }, []);

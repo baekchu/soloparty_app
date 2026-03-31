@@ -108,7 +108,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     try {
       _cachedThemeMode = mode;
       setThemeModeState(mode);
-      await safeSetItem(THEME_KEY, mode);
+      await safeSetItem(THEME_KEY, mode, true);
     } catch (error) {
       // 테마 저장 실패는 무시
     }

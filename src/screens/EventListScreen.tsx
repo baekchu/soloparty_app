@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { format } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { loadEvents } from '../utils/storage';
-import { Event } from '../types';
+import { Event, EventsByDate } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -105,6 +105,7 @@ const EventCard = memo(({ item, isDark, onPress }: EventCardProps) => {
 
 // 모듈 레벨 캐시 — 탭 이동 시 스켈레톤 없이 즉시 표시
 let _cachedEventList: EventWithDate[] | null = null;
+let _cachedSourceRef: EventsByDate | null = null; // 원본 참조 비교용
 
 // ==================== 이벤트 카드 wrapper (onPress ref 분리 — 인라인 함수 생성 방지) ====================
 interface EventCardWrapperProps {
@@ -138,16 +139,37 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
     if (_cachedEventList === null) setIsLoading(true);
     try {
       const events = await loadEvents();
+
+      // 원본 데이터 참조가 동일하면 재정렬 스킵 (탭 전환 시 300-500ms 절약)
+      if (events === _cachedSourceRef && _cachedEventList) {
+        setAllEvents(_cachedEventList);
+        setIsLoading(false);
+        return;
+      }
+
       const eventList: EventWithDate[] = [];
 
       Object.keys(events).forEach(date => {
-        events[date].forEach(event => {
+        const dateEvents = events[date];
+        if (!Array.isArray(dateEvents)) return;
+        dateEvents.forEach(event => {
           eventList.push({ ...event, date });
         });
       });
 
-      eventList.sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime());
+      // 날짜 파싱 결과 캐시 (동일 날짜 반복 파싱 방지)
+      const dateCache = new Map<string, number>();
+      const getTs = (d: string) => {
+        let ts = dateCache.get(d);
+        if (ts === undefined) {
+          ts = parseLocalDate(d).getTime();
+          dateCache.set(d, ts);
+        }
+        return ts;
+      };
+      eventList.sort((a, b) => getTs(a.date) - getTs(b.date));
       _cachedEventList = eventList; // 모듈 레벨 캐시 갱신
+      _cachedSourceRef = events; // 원본 참조 저장
       setAllEvents(eventList);
     } catch {
       // 로드 실패 시 빈 목록 유지

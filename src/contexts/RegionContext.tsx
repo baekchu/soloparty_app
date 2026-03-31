@@ -52,7 +52,10 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const setSelectedLocation = useCallback(async (location: string | null) => {
-    setSelectedLocationState(location);
+    setSelectedLocationState(prev => {
+      if (prev === location) return prev; // 동일 값 재설정 방지
+      return location;
+    });
     try {
       if (location) {
         await safeSetItem(SELECTED_LOCATION_KEY, location);
@@ -65,7 +68,10 @@ export const RegionProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const setSelectedRegion = useCallback(async (region: string | null) => {
-    setSelectedRegionState(region);
+    setSelectedRegionState(prev => {
+      if (prev === region) return prev; // 동일 값 재설정 방지
+      return region;
+    });
     try {
       if (region) {
         await safeSetItem(SELECTED_REGION_KEY, region);

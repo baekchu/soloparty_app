@@ -9,16 +9,19 @@
 import { Dimensions, Platform } from 'react-native';
 
 /**
- * 디바이스 타입 감지
- * 매 호출 시 현재 Dimensions를 읽어 회전/분할 화면 대응
+ * 디바이스 타입 감지 (결과 캐시 — 화면 크기 변경 시에만 재계산)
  */
+let _isTabletCache: boolean | null = null;
+let _lastWidth: number = 0;
+
 export const isTablet = (): boolean => {
-  const { width, height } = Dimensions.get('window');
+  const { width } = Dimensions.get('window');
+  if (_lastWidth === width && _isTabletCache !== null) return _isTabletCache;
+  const { height } = Dimensions.get('window');
   const aspectRatio = height / width;
-  return (
-    (Platform.OS === 'ios' && Platform.isPad) ||
-    (width >= 768 && aspectRatio < 1.6)
-  );
+  _isTabletCache = (Platform.OS === 'ios' && Platform.isPad) || (width >= 768 && aspectRatio < 1.6);
+  _lastWidth = width;
+  return _isTabletCache;
 };
 
 // 반응형 너비 계산

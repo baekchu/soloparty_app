@@ -18,8 +18,14 @@ export const sanitizeColor = (color: string | undefined, fallback: string): stri
   return fallback;
 };
 
-/** 날짜 문자열을 로컬 Date로 파싱 (UTC 해석 방지) */
+/** 날짜 문자열을 로컬 Date로 파싱 (UTC 해석 방지) + LRU 캐시 */
+const _dateCache = new Map<string, Date>();
+const DATE_CACHE_MAX = 400;
+
 export const parseLocalDate = (dateStr: string): Date => {
+  const cached = _dateCache.get(dateStr);
+  if (cached) return new Date(cached.getTime()); // 변이 방지를 위해 복사
+
   const parts = dateStr.split('-');
   if (parts.length === 3) {
     const y = parseInt(parts[0], 10);
@@ -27,13 +33,17 @@ export const parseLocalDate = (dateStr: string): Date => {
     const d = parseInt(parts[2], 10);
     if (!isNaN(y) && !isNaN(m) && !isNaN(d) && y >= 1970 && y <= 2100 && m >= 0 && m <= 11 && d >= 1 && d <= 31) {
       const date = new Date(y, m, d);
-      // Date 생성자가 알아서 보정한 값이 원래와 다르면 유효하지 않은 날짜
       if (date.getFullYear() === y && date.getMonth() === m && date.getDate() === d) {
-        return date;
+        if (_dateCache.size >= DATE_CACHE_MAX) {
+          // 가장 오래된 엔트리 삭제
+          const firstKey = _dateCache.keys().next().value;
+          if (firstKey !== undefined) _dateCache.delete(firstKey);
+        }
+        _dateCache.set(dateStr, date);
+        return new Date(date.getTime());
       }
     }
   }
-  // 폴백: 현재 날짜 (경고 로그)
   if (__DEV__) {
     console.warn(`parseLocalDate: invalid date string "${dateStr}", falling back to today`);
   }

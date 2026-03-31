@@ -134,7 +134,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         storedUserId = newId;
         
         // 암호화하여 저장
-        await safeSetItem(STORAGE_KEYS.USER_ID_SECURE, await encryptData(storedUserId));
+        await safeSetItem(STORAGE_KEYS.USER_ID_SECURE, await encryptData(storedUserId), true);
 
         // 사용자 데이터 생성
         const userDataWithoutHash = {

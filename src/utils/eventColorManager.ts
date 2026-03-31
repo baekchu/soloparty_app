@@ -10,6 +10,26 @@ class EventColorManager {
   private static saveTimer: ReturnType<typeof setTimeout> | null = null;
   private static isDirty = false;
 
+  // 해시 캐시: split+reduce 반복 제거 (문자열당 1회만 계산)
+  private static hashCache = new Map<string, number>();
+
+  private static computeHash(str: string): number {
+    if (!str) return 0;
+    const cached = this.hashCache.get(str);
+    if (cached !== undefined) return cached;
+    let h = 0;
+    const len = Math.min(str.length, 50);
+    for (let i = 0; i < len; i++) {
+      h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+    }
+    this.hashCache.set(str, h);
+    if (this.hashCache.size > 500) {
+      const first = this.hashCache.keys().next().value;
+      if (first !== undefined) this.hashCache.delete(first);
+    }
+    return h;
+  }
+
   // 라이트 모드용 파스텔 색상
   private static EVENT_COLORS = [
     '#fce7f3', // 부드러운 핑크
@@ -124,45 +144,38 @@ class EventColorManager {
     
     // 초기화 미완료 시 — 해시 기반 임시 색상 반환 (colorMap에 저장하지 않음)
     if (!this.isInitialized) {
-      const hash = (colorKey || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      const hash = this.computeHash(colorKey || eventTitle || '');
       const colors = isDark ? this.DARK_EVENT_COLORS : this.EVENT_COLORS;
-      return colors[hash % colors.length];
+      return colors[Math.abs(hash) % colors.length];
     }
     
     // 이미 색상이 할당되어 있으면 다크모드 변환 후 반환
     if (this.colorMap[colorKey]) {
       if (isDark) {
+        // 다크모드 변환 결과 캐시
+        const darkKey = `__dark_${colorKey}`;
+        if (this.colorMap[darkKey]) return this.colorMap[darkKey];
         const lightIdx = this.EVENT_COLORS.indexOf(this.colorMap[colorKey]);
         if (lightIdx >= 0) {
-          return this.DARK_EVENT_COLORS[lightIdx];
+          const darkColor = this.DARK_EVENT_COLORS[lightIdx];
+          this.colorMap[darkKey] = darkColor;
+          return darkColor;
         }
       }
       return this.colorMap[colorKey];
     }
 
-    // 현재 날짜 파싱 (로컬 시간 기준 — UTC 해석 방지)
+    // 인접 날짜 문자열 산술 계산 (Date 객체 3개 생성 제거)
     const parts = dateString.split('-');
-    const currentDate = new Date(
-      parseInt(parts[0], 10),
-      parseInt(parts[1], 10) - 1,
-      parseInt(parts[2], 10)
-    );
-    
-    // 전날, 다음날 날짜 계산
-    const prevDate = new Date(currentDate);
-    prevDate.setDate(prevDate.getDate() - 1);
-    const nextDate = new Date(currentDate);
-    nextDate.setDate(nextDate.getDate() + 1);
-    
-    const formatDate = (date: Date) => {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-    
-    const prevDateString = formatDate(prevDate);
-    const nextDateString = formatDate(nextDate);
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const pad2 = (n: number) => n < 10 ? `0${n}` : `${n}`;
+    // 전날/다음날은 Date 객체로 한 번만 계산 (월 경계 처리)
+    const prev = new Date(y, m, d - 1);
+    const next = new Date(y, m, d + 1);
+    const prevDateString = `${prev.getFullYear()}-${pad2(prev.getMonth() + 1)}-${pad2(prev.getDate())}`;
+    const nextDateString = `${next.getFullYear()}-${pad2(next.getMonth() + 1)}-${pad2(next.getDate())}`;
 
     // 사용된 색상 수집 (당일 + 전날 + 다음날) — 항상 라이트 색상 기준
     const usedColors = new Set<string>();
@@ -195,41 +208,22 @@ class EventColorManager {
     let selectedColor: string;
     const availableColors = this.EVENT_COLORS.filter(c => !usedColors.has(c));
     
+    const hash = Math.abs(this.computeHash(eventId || eventTitle || ''));
     if (availableColors.length > 0) {
-      const hash = (eventId || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
       selectedColor = availableColors[hash % availableColors.length];
     } else {
-      const hash = (eventId || eventTitle || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
       selectedColor = this.EVENT_COLORS[hash % this.EVENT_COLORS.length];
     }
 
     // 라이트 색상을 colorMap에 저장 (groupId 기준)
     this.colorMap[colorKey] = selectedColor;
     
-    // colorMap 크기 제한 (1000개 초과 시 오래된 항목 정리)
-    const MAX_COLOR_MAP_SIZE = 1000;
+    // colorMap 크기 제한 (1500개 초과 시 가장 오래된 500개 일괄 제거)
     const mapKeys = Object.keys(this.colorMap);
-    if (mapKeys.length > MAX_COLOR_MAP_SIZE) {
-      // 현재 활성 이벤트ID를 보존하고 나머지 제거
-      const activeIds = new Set<string>();
-      for (const dateEvents of Object.values(allEvents)) {
-        for (const ev of dateEvents) {
-          if (ev.id) activeIds.add(ev.id);
-        }
-      }
-      const newColorMap: Record<string, string> = {};
-      for (const key of mapKeys) {
-        if (activeIds.has(key)) {
-          newColorMap[key] = this.colorMap[key];
-        }
-      }
-      // 활성 이벤트만으로도 부족하면 최근 항목 유지
-      if (Object.keys(newColorMap).length < MAX_COLOR_MAP_SIZE) {
-        this.colorMap = newColorMap;
-      } else {
-        this.colorMap = Object.fromEntries(
-          Object.entries(newColorMap).slice(-MAX_COLOR_MAP_SIZE)
-        );
+    if (mapKeys.length > 1500) {
+      const keysToRemove = mapKeys.slice(0, 500);
+      for (const key of keysToRemove) {
+        delete this.colorMap[key];
       }
     }
     

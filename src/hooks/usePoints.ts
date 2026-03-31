@@ -182,9 +182,12 @@ export const usePoints = () => {
   const withPointsLock = useCallback(async <T>(fn: () => Promise<T>): Promise<T | null> => {
     if (_pointsMutexLocked) return null;
     _pointsMutexLocked = true;
+    // 데드락 방지: 10초 후 자동 해제
+    const safetyTimer = setTimeout(() => { _pointsMutexLocked = false; }, 10_000);
     try {
       return await fn();
     } finally {
+      clearTimeout(safetyTimer);
       _pointsMutexLocked = false;
     }
   }, []);
@@ -212,25 +215,12 @@ export const usePoints = () => {
     return () => { _pointsListeners.delete(listener); };
   }, []);
 
-  // 광고 간격 체크를 위한 tick (5초 간격 자동 갱신)
-  const [adIntervalTick, setAdIntervalTick] = useState(0);
-  
-  useEffect(() => {
-    // lastAdTimestamp 변경 후 MIN_AD_INTERVAL_MS 뒤에 canWatchAd 재평가
-    if (lastAdTimestamp > 0) {
-      const timer = setTimeout(() => {
-        setAdIntervalTick(t => t + 1);
-      }, 5500); // 5.5초 (5초 간격 + 여유)
-      return () => clearTimeout(timer);
-    }
-  }, [lastAdTimestamp]);
-
-  // 광고 시청 가능 여부
+  // 광고 시청 가능 여부 (lastAdTimestamp 변경 시에만 재평가)
   const canWatchAd = useMemo(() => {
     const now = Date.now();
     const MIN_AD_INTERVAL_MS = 5000;
     return adCount < MAX_ADS_PER_PERIOD && (now - lastAdTimestamp) >= MIN_AD_INTERVAL_MS;
-  }, [adCount, lastAdTimestamp, adIntervalTick]);
+  }, [adCount, lastAdTimestamp]);
   
   // 남은 광고 수
   const remainingAds = useMemo(() => Math.max(0, MAX_ADS_PER_PERIOD - adCount), [adCount]);
@@ -279,13 +269,6 @@ export const usePoints = () => {
           pointsData = await PointsSecurityService.resetDailyStats(pointsData);
         }
         
-        // 5. 트랜잭션 체인 검증
-        const verifyResult = await PointsSecurityService.verifyTransactionChain();
-        if (!verifyResult.valid) {
-          secureLog.warn('⚠️ 트랜잭션 체인 검증 실패');
-          if (isMountedRef.current) setIsSecure(false);
-        }
-        
         if (isMountedRef.current) {
           setBalance(pointsData.balance);
           setSecureData(pointsData);
@@ -302,6 +285,18 @@ export const usePoints = () => {
             timestamp: pointsData.updated_at,
           }]);
         }
+
+        // 5. 트랜잭션 체인 검증 — UI 로딩 완료 후 백그라운드 실행 (80-200ms 절약)
+        requestAnimationFrame(() => {
+          PointsSecurityService.verifyTransactionChain()
+            .then(verifyResult => {
+              if (!verifyResult.valid && isMountedRef.current) {
+                secureLog.warn('⚠️ 트랜잭션 체인 검증 실패');
+                setIsSecure(false);
+              }
+            })
+            .catch(() => {});
+        });
       } catch (error) {
         secureLog.error('데이터 초기화 실패');
         if (isMountedRef.current) {

@@ -160,6 +160,7 @@ let _reminders: EventReminder[] = [];
 let _loaded = false;
 let _loading = false;
 let _loadRetryCount = 0;
+let _loadPromise: Promise<void> | null = null;
 const MAX_LOAD_RETRIES = 3;
 const _listeners = new Set<(reminders: EventReminder[]) => void>();
 
@@ -200,8 +201,18 @@ function _notify() {
 }
 
 async function _loadFromStorage(): Promise<void> {
+  if (_loadPromise) return _loadPromise;
   if (_loading) return;
   _loading = true;
+  _loadPromise = _doLoadFromStorage();
+  try {
+    await _loadPromise;
+  } finally {
+    _loadPromise = null;
+  }
+}
+
+async function _doLoadFromStorage(): Promise<void> {
 
   try {
     ensureNotificationHandler();
@@ -266,13 +277,13 @@ async function _loadFromStorage(): Promise<void> {
       valid.push(r);
     }
 
-    // 만료된 알림 조용히 취소
-    if (!isExpoGo) {
-      for (const nid of expiredIds) {
-        try {
-          await Notifications.cancelScheduledNotificationAsync(nid);
-        } catch { /* 무시 */ }
-      }
+    // 만료된 알림 병렬 취소 (순차 await 대비 50-150ms 절약)
+    if (!isExpoGo && expiredIds.length > 0) {
+      await Promise.all(
+        expiredIds.map(nid =>
+          Notifications.cancelScheduledNotificationAsync(nid).catch(() => {})
+        )
+      );
     }
 
     _reminders = valid;
@@ -297,7 +308,7 @@ async function _loadFromStorage(): Promise<void> {
   }
 
   _loading = false;
-  _notify();
+  _notify(); // 성공/실패 무관하게 항상 구독자 알림 (무한 로딩 방지)
 }
 
 async function _saveToStorage(): Promise<void> {

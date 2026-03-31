@@ -104,23 +104,24 @@ function AppContent() {
       try {
         await initAsyncStorage();
         
-        // 병렬 초기화: EventColorManager, AdManager, 딥링크, 리뷰 프리페치 동시 실행
-        const EventColorManager = require('./src/utils/eventColorManager').default;
-        const { preWarmReviews } = require('./src/hooks/useReviews');
+        // Critical path: 딥링크 + 데이터 프리페치만 대기 (앱 시작 속도 최적화)
         const [initialUrl] = await Promise.all([
           Linking.getInitialURL(),
-          EventColorManager.initialize().catch(() => {}),
-          AdManager.initialize().catch(() => {}),
           // 데이터 프리페치: CalendarScreen 마운트 전에 인메모리 캐시 준비
           require('./src/utils/storage').loadEvents(false).catch(() => {}),
-          // 리뷰 프리페치: EventDetailScreen 진입 시 즉시 사용 가능
-          Promise.resolve().then(() => { preWarmReviews(); }).catch(() => {}),
         ]);
         
         handleDeepLink(initialUrl);
         
         if (mounted) {
           setIsReady(true);
+          
+          // Non-critical 초기화: 화면 렌더 후 백그라운드 실행
+          const EventColorManager = require('./src/utils/eventColorManager').default;
+          const { preWarmReviews } = require('./src/hooks/useReviews');
+          EventColorManager.initialize().catch(() => {});
+          AdManager.initialize().catch(() => {});
+          preWarmReviews();
         }
       } catch (err) {
         secureLog.error('앱 초기화 실패');

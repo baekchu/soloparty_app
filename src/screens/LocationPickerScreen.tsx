@@ -409,7 +409,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
         borderBottomColor: isDark ? '#334155' : '#e5e7eb',
       }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={lpStyles.headerBtn}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={lpStyles.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
           <Text style={[lpStyles.headerBtnText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
         <Text style={[lpStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
@@ -579,7 +579,7 @@ const lpStyles = StyleSheet.create({
     paddingBottom: 20,
     borderBottomWidth: 1,
   },
-  headerBtn: { padding: 8 },
+  headerBtn: { padding: 12 },
   headerBtnText: { fontSize: 24 },
   headerTitle: { fontSize: 20, fontWeight: '700' },
   headerSpacer: { width: 40 },

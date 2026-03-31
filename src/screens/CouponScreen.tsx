@@ -386,6 +386,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                 backgroundColor: canExchange(balance) 
                   ? (isDark ? '#a78bfa' : '#ec4899')
                   : (isDark ? '#334155' : '#e5e7eb'),
+                opacity: (isExchanging || !canExchange(balance)) ? 0.5 : 1,
               }
             ]}
           >
@@ -436,6 +437,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                 backgroundColor: canWatchAd 
                   ? (isDark ? '#10b981' : '#059669')
                   : (isDark ? '#334155' : '#e5e7eb'),
+                opacity: (isWatchingAd || !canWatchAd) ? 0.5 : 1,
               }
             ]}
           >

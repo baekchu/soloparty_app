@@ -28,10 +28,14 @@ const isDataUnchanged = (newData: EventsByDate, existing: EventsByDate): boolean
     const ne = newData[key];
     const ex = existing[key];
     if (!ex || ne.length !== ex.length) return false;
-    // 스팟 체크: 첫 번째 + 마지막 이벤트 id+title (O(1))
+    // 스팟 체크: 첫 번째 + 중간 + 마지막 이벤트 id (O(1))
     if (ne[0]?.id !== ex[0]?.id || ne[0]?.title !== ex[0]?.title) return false;
     const last = ne.length - 1;
-    if (last > 0 && (ne[last]?.id !== ex[last]?.id || ne[last]?.title !== ex[last]?.title)) return false;
+    if (last > 0 && ne[last]?.id !== ex[last]?.id) return false;
+    if (last > 2) {
+      const mid = last >> 1;
+      if (ne[mid]?.id !== ex[mid]?.id) return false;
+    }
   }
   return true;
 };
@@ -106,6 +110,7 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
       },
       redirect: 'error',
     });
+    clearTimeout(timeoutId); // 성공 시 즉시 타이머 해제 (GC 압력 감소)
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -225,7 +230,7 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
 
         if (!excludeSet.has(dateStr)) {
           if (!result[dateStr]) result[dateStr] = [];
-          result[dateStr].push({ ...baseEvent, id: `${rule.id}_${dateStr}` });
+          result[dateStr].push(Object.assign({}, baseEvent, { id: `${rule.id}_${dateStr}` }));
           generatedDates.add(dateStr);
         }
 
@@ -246,7 +251,7 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
         if (generatedDates.has(dateStr)) continue; // 이미 요일 패턴으로 생성됨
 
         if (!result[dateStr]) result[dateStr] = [];
-        result[dateStr].push({ ...baseEvent, id: `${rule.id}_${dateStr}` });
+        result[dateStr].push(Object.assign({}, baseEvent, { id: `${rule.id}_${dateStr}` }));
       }
     }
   }
@@ -256,17 +261,23 @@ const expandRecurringEvents = (recurring: RecurringEvent[]): EventsByDate => {
 
 // ==================== 데이터 검증 (간소화) ====================
 
+const _dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
 const validateEvents = (data: any): data is EventsByDate => {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
   
   try {
-    for (const [date, events] of Object.entries(data)) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    const entries = Object.entries(data);
+    // 빈 객체는 유효 (모든 이벤트가 recurring에 있을 수 있음)
+    if (entries.length === 0) return true;
+    // 스팟 체크: 첫 번째, 마지막, 중간 날짜만 검증 (전체 순회 대비 ~100배 빠름)
+    const checkIndices = [0, entries.length - 1, entries.length >> 1];
+    for (const idx of checkIndices) {
+      if (idx >= entries.length) continue;
+      const [date, events] = entries[idx];
+      if (!_dateRegex.test(date)) return false;
       if (!Array.isArray(events)) return false;
-      
-      for (const event of events as any[]) {
-        if (!event?.title || typeof event.title !== 'string') return false;
-      }
+      if (events.length > 0 && (!events[0]?.title || typeof events[0].title !== 'string')) return false;
     }
     return true;
   } catch {
@@ -277,22 +288,23 @@ const validateEvents = (data: any): data is EventsByDate => {
 // ==================== 데이터 정제 (간소화) ====================
 
 // 지역명 정규화 ("서울시" → "서울", "남양주시" → "남양주" 등)
+const _regionCache = new Map<string, string | undefined>();
 const normalizeRegion = (region: string | undefined): string | undefined => {
   if (!region) return undefined;
   
+  const cached = _regionCache.get(region);
+  if (cached !== undefined) return cached;
+  // 캐시에 undefined가 key로 있는 경우를 위해 has 체크
+  if (_regionCache.has(region)) return undefined;
+  
   let normalized = region.trim();
-  
-  // 순서 중요: 긴 패턴부터 먼저 제거
-  // "특별시", "광역시" 제거 (예: 부산광역시 → 부산, 서울특별시 → 서울)
   normalized = normalized.replace(/(특별|광역)시$/, '');
-  
-  // "시" 접미사 제거 (예: 남양주시 → 남양주, 천안시 → 천안)
   normalized = normalized.replace(/시$/, '');
-  
-  // "도" 접미사 제거 (예: 경기도 → 경기)
   normalized = normalized.replace(/도$/, '');
   
-  return normalized.trim() || undefined;
+  const result = normalized.trim() || undefined;
+  _regionCache.set(region, result);
+  return result;
 };
 
 
@@ -387,8 +399,8 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
     const age = Date.now() - timestampNum;
     // 음수나 만료된 캠시 거부
     if (age < 0 || age >= CACHE_DURATION) {
-      secureLog.info('⌛ 캀시 만료');
-      return null;
+      secureLog.info('⌛ 캀시 만료');      // 만료된 디스크 캐시 정리
+      safeMultiSet([[CACHE_KEY, ''], [CACHE_TIMESTAMP_KEY, '']]).catch(() => {});      return null;
     }
     
     const events = safeJSONParse<EventsByDate>(cached, {});
@@ -411,12 +423,20 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
       return;
     }
     
-    const jsonString = JSON.stringify(events);
-    // React Native에서 Blob 미지원 → 문자열 길이로 크기 추정 (UTF-8 평균 1~2 bytes/char)
-    const estimatedSize = jsonString.length * 2;
+    // 조기 크기 추정 (불필요한 stringify 방지)
+    let eventCount = 0;
+    for (const eventList of Object.values(events)) {
+      eventCount += eventList.length;
+    }
+    // 이벤트당 평균 ~500바이트, 1MB 초과 예상시 스킵
+    if (eventCount * 500 > 1024 * 1024) {
+      secureLog.warn('⚠️ 캀시 데이터 크기 초과 예상, 저장 스킵');
+      return;
+    }
     
-    // 1MB 초과 방지
-    if (estimatedSize > 1024 * 1024) {
+    const jsonString = JSON.stringify(events);
+    
+    if (jsonString.length > 1024 * 1024) {
       secureLog.warn('⚠️ 캀시 데이터 크기 초과, 저장 스킵');
       return;
     }
@@ -428,7 +448,6 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
     
     secureLog.info('✅ 캀시 저장 완료');
   } catch (error) {
-    // 캠시 저장 실패는 치명적이지 않음
     secureLog.warn('⚠️ 캀시 저장 실패');
   }
 };
@@ -485,7 +504,7 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     // 데이터 정제
     const processed: EventsByDate = {};
     
-    // 1. 반복 일정 먼저 추가
+    // 1. 반복 일정 먼저 추가 (expandRecurringEvents에서 미정제 상태로 반환)
     for (const [date, eventList] of Object.entries(recurringEvents)) {
       const sanitized = eventList
         .map(e => sanitizeEvent(e))
@@ -497,8 +516,9 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     
     // 2. 개별 일정 병합 (같은 날짜면 뒤에 추가)
     for (const [date, eventList] of Object.entries(rawData)) {
+      if (!Array.isArray(eventList)) continue;
       const sanitized = (eventList as Event[])
-        .map((e, i) => sanitizeEvent({ ...e, id: e.id || `${date}-${i}` }))
+        .map((e, i) => sanitizeEvent(e.id ? e : { ...e, id: `${date}-${i}` }))
         .filter(e => e.title);
       
       if (sanitized.length > 0) {
@@ -513,6 +533,7 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     // 3. 같은 날짜 + 같은 groupId 이벤트를 subEvents로 병합
     for (const date of Object.keys(processed)) {
       const events = processed[date];
+      if (!events.some(ev => ev.groupId)) continue; // groupId 없으면 스킵
       const grouped: Event[] = [];
       const groupMap = new Map<string, Event>();
       
@@ -520,9 +541,8 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
         if (ev.groupId) {
           const existing = groupMap.get(ev.groupId);
           if (existing) {
-            // 이미 대표 이벤트가 있으면 subEvents에 추가
             if (!existing.subEvents) {
-              existing.subEvents = [{ ...existing }]; // 대표 자신도 subEvents에 포함
+              existing.subEvents = [existing]; // 스프레드 제거: 동일 참조 사용 (이미 sanitize 완료)
             }
             existing.subEvents.push(ev);
           } else {

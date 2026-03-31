@@ -208,7 +208,7 @@ const saveCouponsData = async (data: CouponsData): Promise<boolean> => {
     const json = JSON.stringify(data);
     // 1. AsyncStorage에 암호화 저장
     const encrypted = await encryptData(json);
-    await safeSetItem(STORAGE_KEY, encrypted);
+    await safeSetItem(STORAGE_KEY, encrypted, true);
 
     // 2. SecureStore에 백업 (필수 데이터만 — 2KB 제한 대응)
     try {

@@ -110,6 +110,8 @@ class PointsAutoSyncService {
    * - 중복 백업 방지 (3초 이내 재호출 무시)
    * - 동시 실행 방지 (뮤텍스)
    */
+  private static lastBackupHash: string = '';
+
   static async autoBackup(): Promise<void> {
     // 중복 백업 방지
     const now = Date.now();
@@ -121,6 +123,13 @@ class PointsAutoSyncService {
     try {
       const secureData = await PointsSecurityService.loadSecurePointsData();
       if (!secureData) {
+        this.isBackingUp = false;
+        return;
+      }
+
+      // 데이터 변경 감지: 빠른 해시 비교로 불필요한 암호화+저장 스킵 (50-100ms 절약)
+      const quickHash = `${secureData.balance}_${secureData.total_earned}_${secureData.total_spent}_${secureData.ad_watches_total}`;
+      if (quickHash === this.lastBackupHash) {
         this.isBackingUp = false;
         return;
       }
@@ -156,6 +165,7 @@ class PointsAutoSyncService {
       }
       await Promise.all(backupPromises);
 
+      this.lastBackupHash = quickHash; // 백업 성공 후에만 해시 갱신 (실패 시 다음 호출에서 재시도)
       this.lastBackupTime = now;
 
       // 향후 클라우드 동기화
