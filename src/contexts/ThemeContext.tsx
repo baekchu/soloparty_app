@@ -8,17 +8,17 @@ type ThemeMode = 'light' | 'dark' | 'system';
 // 모든 스크린에서 공유하는 UI 색상 (EventColorManager와는 별개 — 이벤트별 고유 색상은 EventColorManager 담당)
 export const THEME_COLORS = {
   dark: {
-    bg: '#0f172a',
-    card: '#1e293b',
-    text: '#f8fafc',
-    subtext: '#94a3b8',
-    border: '#334155',
-    trackFalse: '#4b5563',
+    bg: '#0c0c16',
+    card: '#171728',
+    text: '#eaeaf2',
+    subtext: '#8888a0',
+    border: '#2a2a44',
+    trackFalse: '#32324c',
     accent: '#a78bfa',
     accentAlt: '#ec4899',
-    muted: '#64748b',
-    cardAlt: '#374151',
-    overlay: 'rgba(255, 255, 255, 0.15)',
+    muted: '#5c5c74',
+    cardAlt: '#1e1e32',
+    overlay: 'rgba(255, 255, 255, 0.1)',
   },
   light: {
     bg: '#ffffff',

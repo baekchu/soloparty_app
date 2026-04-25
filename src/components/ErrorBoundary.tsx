@@ -83,11 +83,11 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       const isDark = this.state.colorScheme === 'dark';
       return (
-        <View style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#fce7f3' }]}>
+        <View style={[styles.container, { backgroundColor: isDark ? '#0c0c16' : '#fce7f3' }]}>
           <View style={styles.content}>
             <Text style={styles.emoji}>😢</Text>
-            <Text style={[styles.title, { color: isDark ? '#f8fafc' : '#0f172a' }]}>앱 로딩 중 문제가 발생했습니다</Text>
-            <Text style={[styles.message, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+            <Text style={[styles.title, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>앱 로딩 중 문제가 발생했습니다</Text>
+            <Text style={[styles.message, { color: isDark ? '#8888a0' : '#64748b' }]}>
               일시적인 오류일 수 있습니다.{'\n'}
               아래 버튼을 눌러 다시 시도해주세요.
             </Text>

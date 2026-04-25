@@ -97,10 +97,10 @@ const AdOverlay = memo(({ visible, isDark, skipCountdown, canSkip, onDismiss }: 
     outputRange: ['0%', '100%'],
   });
 
-  const bg = isDark ? '#0f172a' : '#ffffff';
-  const cardBg = isDark ? '#1e293b' : '#f8f9fa';
-  const textPrimary = isDark ? '#f8fafc' : '#0f172a';
-  const textSecondary = isDark ? '#94a3b8' : '#64748b';
+  const bg = isDark ? '#0c0c16' : '#ffffff';
+  const cardBg = isDark ? '#141422' : '#f8f9fa';
+  const textPrimary = isDark ? '#eaeaf2' : '#0f172a';
+  const textSecondary = isDark ? '#8888a0' : '#64748b';
   const accent = isDark ? '#a78bfa' : '#ec4899';
   const accentLight = isDark ? 'rgba(167, 139, 250, 0.15)' : 'rgba(236, 72, 153, 0.08)';
 
@@ -132,7 +132,7 @@ const AdOverlay = memo(({ visible, isDark, skipCountdown, canSkip, onDismiss }: 
               style={[
                 styles.skipChip,
                 {
-                  backgroundColor: canSkip ? accent : (isDark ? '#334155' : '#e5e7eb'),
+                  backgroundColor: canSkip ? accent : (isDark ? '#1e1e32' : '#e5e7eb'),
                 },
               ]}
             >
@@ -163,7 +163,7 @@ const AdOverlay = memo(({ visible, isDark, skipCountdown, canSkip, onDismiss }: 
             </View>
 
             {/* 메인 비주얼 영역 (동영상 자리) */}
-            <View style={[styles.videoArea, { backgroundColor: isDark ? '#0f172a' : '#e2e8f0' }]}>
+            <View style={[styles.videoArea, { backgroundColor: isDark ? '#0c0c16' : '#e2e8f0' }]}>
               <Text style={styles.videoEmoji}>🎉</Text>
               <Text style={[styles.videoTitle, { color: textPrimary }]}>
                 소개팅 파티의 새로운 시작

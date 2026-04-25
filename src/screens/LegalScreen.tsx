@@ -146,13 +146,13 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
   }, [navigation]);
 
   return (
-    <SafeAreaView style={[legalStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+    <SafeAreaView style={[legalStyles.container, { backgroundColor: isDark ? '#0c0c16' : '#ffffff' }]}>
       {/* 헤더 */}
-      <View style={[legalStyles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
+      <View style={[legalStyles.header, { backgroundColor: isDark ? '#141422' : '#ffffff', borderBottomColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
         <TouchableOpacity onPress={goBack} style={legalStyles.backButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
-          <Text style={[legalStyles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>{'<'}</Text>
+          <Text style={[legalStyles.backButtonText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>{'<'}</Text>
         </TouchableOpacity>
-        <Text style={[legalStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <Text style={[legalStyles.headerTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
           {content.title}
         </Text>
         <View style={legalStyles.headerSpacer} />
@@ -164,8 +164,8 @@ export default function LegalScreen({ navigation, route }: LegalScreenProps) {
         contentContainerStyle={{ padding: 20, paddingBottom: Math.max(20, insets.bottom) }}
         showsVerticalScrollIndicator={false}
       >
-        <View style={[legalStyles.contentBox, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={[legalStyles.contentText, { color: isDark ? '#e2e8f0' : '#1e293b' }]}>
+        <View style={[legalStyles.contentBox, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
+          <Text style={[legalStyles.contentText, { color: isDark ? '#c0c0d0' : '#1e293b' }]}>
             {content.text}
           </Text>
         </View>

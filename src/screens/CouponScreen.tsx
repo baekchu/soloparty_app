@@ -37,6 +37,8 @@ import { useCoupons, Coupon } from '../hooks/useCoupons';
 import { useRewardedAd } from '../services/AdService';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
+import { useToast } from '../contexts/ToastContext';
+import { hapticSuccess, hapticError, hapticLight } from '../utils/haptics';
 
 // ==================== 상수 정의 ====================
 const SECTION_PADDING = 20;
@@ -48,6 +50,7 @@ interface CouponScreenProps {
 export default function CouponScreen({ navigation }: CouponScreenProps) {
   const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   
   // 포인트 및 쿠폰 훅
   const { 
@@ -115,11 +118,13 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
       if (!isMountedRef.current) return;
       setIsWatchingAd(false);
       
-      Alert.alert(
-        result.success ? '💰 적립 완료!' : '알림',
-        result.message,
-        [{ text: '확인' }]
-      );
+      if (result.success) {
+        hapticSuccess();
+        showToast({ message: result.message, type: 'success', icon: '💰' });
+      } else {
+        hapticError();
+        showToast({ message: result.message, type: 'error' });
+      }
     }
   );
 
@@ -147,11 +152,8 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
   // AD_CONFIG.disableAll 상태에서는 adLoaded가 항상 false이므로 watchAdForPoints 직접 호출
   const handleWatchAd = useCallback(async () => {
     if (!canWatchAd) {
-      Alert.alert(
-        '🚫 광고 한도 초과',
-        `6시간당 최대 ${maxAds}개까지 시청 가능합니다.\n\n⏰ 리셋까지: ${resetTimeDisplayRef.current}`,
-        [{ text: '확인' }]
-      );
+      hapticError();
+      showToast({ message: `6시간당 최대 ${maxAds}개까지 시청 가능합니다. 리셋까지: ${resetTimeDisplayRef.current}`, type: 'warning', icon: '🚫' });
       return;
     }
 
@@ -166,24 +168,24 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
           if (!isMountedRef.current) return;
           setIsWatchingAd(false);
           adTimeoutRef.current = null;
-          Alert.alert(
-            '⏰ 광고 로드 실패',
-            '광고를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.',
-            [{ text: '확인' }]
-          );
+          hapticError();
+          showToast({ message: '광고를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.', type: 'error', icon: '⏰' });
         }, 60000);
       } else {
         // 광고 SDK 비활성화 상태: watchAdForPoints로 직접 포인트 적립
         const result = await watchAdForPoints();
-        Alert.alert(
-          result.success ? '💰 적립 완료!' : '알림',
-          result.message,
-          [{ text: '확인' }]
-        );
+        if (result.success) {
+          hapticSuccess();
+          showToast({ message: result.message, type: 'success', icon: '💰' });
+        } else {
+          hapticError();
+          showToast({ message: result.message, type: 'error' });
+        }
         setIsWatchingAd(false);
       }
     } catch (error) {
-      Alert.alert('오류', '광고 로드 중 오류가 발생했습니다.');
+      hapticError();
+      showToast({ message: '광고 로드 중 오류가 발생했습니다.', type: 'error' });
       setIsWatchingAd(false);
     }
   }, [canWatchAd, adLoaded, maxAds, showRewardedAd, watchAdForPoints]);
@@ -192,11 +194,8 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
   const handleExchange = useCallback(async () => {
     if (!canExchange(balance)) {
       const needed = pointsNeededForCoupon(balance);
-      Alert.alert(
-        '포인트 부족',
-        `쿠폰 교환에 ${needed.toLocaleString()}P가 더 필요합니다.\n\n현재 보유: ${balance.toLocaleString()}P\n필요 포인트: ${POINTS_PER_COUPON.toLocaleString()}P`,
-        [{ text: '확인' }]
-      );
+      hapticError();
+      showToast({ message: `쿠폰 교환에 ${needed.toLocaleString()}P가 더 필요합니다.`, type: 'warning' });
       return;
     }
 
@@ -212,13 +211,16 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
             try {
               const result = await exchangePointsForCoupon(balance, spendPoints, 'free_event', addPoints);
               
-              Alert.alert(
-                result.success ? '🎉 교환 완료!' : '교환 실패',
-                result.message,
-                [{ text: '확인' }]
-              );
+              if (result.success) {
+                hapticSuccess();
+                showToast({ message: result.message, type: 'success', icon: '🎉' });
+              } else {
+                hapticError();
+                showToast({ message: result.message, type: 'error' });
+              }
             } catch {
-              Alert.alert('오류', '쿠폰 교환 중 오류가 발생했습니다.');
+              hapticError();
+              showToast({ message: '쿠폰 교환 중 오류가 발생했습니다.', type: 'error' });
             } finally {
               setIsExchanging(false);
             }
@@ -242,11 +244,13 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
             setShowCouponModal(false);
             setSelectedCoupon(null);
             
-            Alert.alert(
-              result.success ? '✅ 사용 완료!' : '사용 실패',
-              result.message,
-              [{ text: '확인' }]
-            );
+            if (result.success) {
+              hapticSuccess();
+              showToast({ message: result.message, type: 'success', icon: '✅' });
+            } else {
+              hapticError();
+              showToast({ message: result.message, type: 'error' });
+            }
           },
         },
       ]
@@ -274,7 +278,8 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
   // 코드 복사
   const handleCopyCode = useCallback(async (code: string) => {
     await Clipboard.setStringAsync(code);
-    Alert.alert('복사 완료', '비밀 코드가 클립보드에 복사되었습니다.');
+    hapticLight();
+    showToast({ message: '비밀 코드가 클립보드에 복사되었습니다.', type: 'success', icon: '📋' });
   }, []);
 
   // 뒤로가기
@@ -309,19 +314,19 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#0c0c16' : '#ffffff' }]}>
         {/* 헤더 */}
-        <View style={[styles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#141422' : '#ffffff', borderBottomColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
           <TouchableOpacity onPress={goBack} style={styles.backButton}>
-            <Text style={[styles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
+            <Text style={[styles.backButtonText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>‹</Text>
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>쿠폰</Text>
+          <Text style={[styles.headerTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>쿠폰</Text>
           <View style={styles.headerSpacer} />
         </View>
         
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={isDark ? '#a78bfa' : '#ec4899'} />
-          <Text style={[styles.loadingText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+          <Text style={[styles.loadingText, { color: isDark ? '#8888a0' : '#64748b' }]}>
             로딩 중...
           </Text>
         </View>
@@ -330,13 +335,13 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#0c0c16' : '#ffffff' }]}>
       {/* 헤더 */}
-      <View style={[styles.header, { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderBottomColor: isDark ? '#334155' : '#e5e7eb' }]}>
+      <View style={[styles.header, { backgroundColor: isDark ? '#141422' : '#ffffff', borderBottomColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
         <TouchableOpacity onPress={goBack} style={styles.backButton}>
-          <Text style={[styles.backButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
+          <Text style={[styles.backButtonText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <Text style={[styles.headerTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
           포인트 & 쿠폰
         </Text>
         <View style={styles.headerSpacer} />
@@ -348,17 +353,17 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         showsVerticalScrollIndicator={false}
       >
         {/* 포인트 현황 카드 */}
-        <View style={[styles.pointCard, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={[styles.pointLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+        <View style={[styles.pointCard, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
+          <Text style={[styles.pointLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>
             보유 포인트
           </Text>
-          <Text style={[styles.pointValue, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+          <Text style={[styles.pointValue, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
             {balance.toLocaleString()}P
           </Text>
           
           {/* 진행 바 */}
           <View style={styles.progressContainer}>
-            <View style={[styles.progressBar, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]}>
+            <View style={[styles.progressBar, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
               <View 
                 style={[
                   styles.progressFill, 
@@ -369,7 +374,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                 ]} 
               />
             </View>
-            <Text style={[styles.progressText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+            <Text style={[styles.progressText, { color: isDark ? '#8888a0' : '#64748b' }]}>
               {progressPercent >= 100 
                 ? '🎉 쿠폰 교환 가능!' 
                 : `쿠폰까지 ${pointsNeededForCoupon(balance).toLocaleString()}P 남음`}
@@ -385,7 +390,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
               {
                 backgroundColor: canExchange(balance) 
                   ? (isDark ? '#a78bfa' : '#ec4899')
-                  : (isDark ? '#334155' : '#e5e7eb'),
+                  : (isDark ? '#1e1e32' : '#e5e7eb'),
                 opacity: (isExchanging || !canExchange(balance)) ? 0.5 : 1,
               }
             ]}
@@ -395,7 +400,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
             ) : (
               <Text style={[
                 styles.exchangeButtonText,
-                { color: canExchange(balance) ? '#ffffff' : (isDark ? '#64748b' : '#9ca3af') }
+                { color: canExchange(balance) ? '#ffffff' : (isDark ? '#5c5c74' : '#9ca3af') }
               ]}>
                 {canExchange(balance) 
                   ? `${POINTS_PER_COUPON.toLocaleString()}P → 쿠폰 교환`
@@ -406,19 +411,19 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         </View>
 
         {/* 광고 시청 섹션 */}
-        <View style={[styles.adSection, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+        <View style={[styles.adSection, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
           <View style={styles.adHeader}>
-            <Text style={[styles.adTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+            <Text style={[styles.adTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
               📺 광고 시청으로 포인트 적립
             </Text>
-            <View style={[styles.adBadge, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]}>
+            <View style={[styles.adBadge, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
               <Text style={[styles.adBadgeText, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
                 {remainingAds}/{maxAds}
               </Text>
             </View>
           </View>
           
-          <Text style={[styles.adDescription, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+          <Text style={[styles.adDescription, { color: isDark ? '#8888a0' : '#64748b' }]}>
             광고 1회 시청 시 {adRewardPoints}P 적립 • 6시간마다 {maxAds}회 가능
           </Text>
           
@@ -436,7 +441,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
               {
                 backgroundColor: canWatchAd 
                   ? (isDark ? '#10b981' : '#059669')
-                  : (isDark ? '#334155' : '#e5e7eb'),
+                  : (isDark ? '#1e1e32' : '#e5e7eb'),
                 opacity: (isWatchingAd || !canWatchAd) ? 0.5 : 1,
               }
             ]}
@@ -446,7 +451,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
             ) : (
               <Text style={[
                 styles.adButtonText,
-                { color: canWatchAd ? '#ffffff' : (isDark ? '#64748b' : '#9ca3af') }
+                { color: canWatchAd ? '#ffffff' : (isDark ? '#5c5c74' : '#9ca3af') }
               ]}>
                 {canWatchAd 
                   ? `🎬 광고 보고 ${adRewardPoints}P 받기`
@@ -458,46 +463,46 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
 
         {/* 통계 */}
         <View style={styles.statsRow}>
-          <View style={[styles.statCard, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+          <View style={[styles.statCard, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
             <Text style={[styles.statValue, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
               {availableCoupons.length}
             </Text>
-            <Text style={[styles.statLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+            <Text style={[styles.statLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>
               보유 쿠폰
             </Text>
           </View>
-          <View style={[styles.statCard, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+          <View style={[styles.statCard, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
             <Text style={[styles.statValue, { color: isDark ? '#10b981' : '#059669' }]}>
               {totalExchanged}
             </Text>
-            <Text style={[styles.statLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+            <Text style={[styles.statLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>
               총 교환
             </Text>
           </View>
-          <View style={[styles.statCard, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
+          <View style={[styles.statCard, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
             <Text style={[styles.statValue, { color: isDark ? '#f472b6' : '#ec4899' }]}>
               {totalUsed}
             </Text>
-            <Text style={[styles.statLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+            <Text style={[styles.statLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>
               총 사용
             </Text>
           </View>
         </View>
 
         {/* 🔐 입장권 인증 섹션 */}
-        <View style={[styles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <View style={[styles.section, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
+          <Text style={[styles.sectionTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
             🔐 입장권 인증
           </Text>
-          <Text style={[styles.adDescription, { color: isDark ? '#94a3b8' : '#64748b', marginBottom: 12 }]}>
+          <Text style={[styles.adDescription, { color: isDark ? '#8888a0' : '#64748b', marginBottom: 12 }]}>
             쿠폰의 비밀 코드를 입력하여 입장권을 인증하세요
           </Text>
 
-          <View style={[styles.verifyInputRow, { borderColor: isDark ? '#334155' : '#e5e7eb' }]}>
+          <View style={[styles.verifyInputRow, { borderColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
             <TextInput
-              style={[styles.verifyInput, { color: isDark ? '#f8fafc' : '#0f172a', backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}
+              style={[styles.verifyInput, { color: isDark ? '#eaeaf2' : '#0f172a', backgroundColor: isDark ? '#0c0c16' : '#ffffff' }]}
               placeholder="XXXX-XXXX-XXXX"
-              placeholderTextColor={isDark ? '#4b5563' : '#9ca3af'}
+              placeholderTextColor={isDark ? '#32324c' : '#9ca3af'}
               value={verifyCode}
               onChangeText={setVerifyCode}
               autoCapitalize="characters"
@@ -510,13 +515,13 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
               disabled={isVerifying || !verifyCode.trim()}
               style={[
                 styles.verifyButton,
-                { backgroundColor: verifyCode.trim() ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#334155' : '#e5e7eb') }
+                { backgroundColor: verifyCode.trim() ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#1e1e32' : '#e5e7eb') }
               ]}
             >
               {isVerifying ? (
                 <ActivityIndicator size="small" color="#ffffff" />
               ) : (
-                <Text style={[styles.verifyButtonText, { color: verifyCode.trim() ? '#ffffff' : (isDark ? '#64748b' : '#9ca3af') }]}>
+                <Text style={[styles.verifyButtonText, { color: verifyCode.trim() ? '#ffffff' : (isDark ? '#5c5c74' : '#9ca3af') }]}>
                   인증
                 </Text>
               )}
@@ -526,7 +531,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
           {verifyResult && (
             <View style={[
               styles.verifyResult,
-              { backgroundColor: verifyResult.success ? (isDark ? '#064e3b' : '#d1fae5') : (isDark ? '#7f1d1d' : '#fee2e2') }
+              { backgroundColor: verifyResult.success ? (isDark ? '#0a2a1a' : '#d1fae5') : (isDark ? '#2a0c10' : '#fee2e2') }
             ]}>
               <Text style={[
                 styles.verifyResultText,
@@ -539,18 +544,18 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         </View>
 
         {/* 보유 쿠폰 목록 */}
-        <View style={[styles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <View style={[styles.section, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
+          <Text style={[styles.sectionTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
             🎟️ 보유 쿠폰
           </Text>
           
           {availableCoupons.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyEmoji}>📭</Text>
-              <Text style={[styles.emptyText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+              <Text style={[styles.emptyText, { color: isDark ? '#8888a0' : '#64748b' }]}>
                 보유 중인 쿠폰이 없습니다
               </Text>
-              <Text style={[styles.emptySubText, { color: isDark ? '#64748b' : '#9ca3af' }]}>
+              <Text style={[styles.emptySubText, { color: isDark ? '#5c5c74' : '#9ca3af' }]}>
                 {POINTS_PER_COUPON.toLocaleString()}P를 모아 쿠폰을 교환하세요!
               </Text>
             </View>
@@ -569,13 +574,13 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                     styles.couponItem,
                     { 
                       backgroundColor: isExpired
-                        ? (isDark ? '#1a1a2e' : '#f1f5f9')
-                        : (isDark ? '#0f172a' : '#ffffff'),
+                        ? (isDark ? '#141422' : '#f1f5f9')
+                        : (isDark ? '#0c0c16' : '#ffffff'),
                       borderColor: isExpired
-                        ? (isDark ? '#4b5563' : '#d1d5db')
+                        ? (isDark ? '#32324c' : '#d1d5db')
                         : isExpiringSoon 
                           ? '#f59e0b' 
-                          : (isDark ? '#334155' : '#e5e7eb'),
+                          : (isDark ? '#1e1e32' : '#e5e7eb'),
                       opacity: isExpired ? 0.6 : 1,
                     }
                   ]}
@@ -587,7 +592,7 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                     <View style={styles.couponNameRow}>
                       <Text style={[
                         styles.couponName,
-                        { color: isDark ? '#f8fafc' : '#0f172a' },
+                        { color: isDark ? '#eaeaf2' : '#0f172a' },
                         isExpired && { textDecorationLine: 'line-through' },
                       ]}>
                         {coupon.name}
@@ -603,12 +608,12 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                         🔑 {coupon.secretCode}
                       </Text>
                     </TouchableOpacity>
-                    <Text style={[styles.couponExpiry, { color: isExpired ? '#ef4444' : isExpiringSoon ? '#f59e0b' : (isDark ? '#94a3b8' : '#64748b') }]}>
+                    <Text style={[styles.couponExpiry, { color: isExpired ? '#ef4444' : isExpiringSoon ? '#f59e0b' : (isDark ? '#8888a0' : '#64748b') }]}>
                       {isExpired ? '❌ 만료됨' : isExpiringSoon ? `⚠️ ${daysLeft}일 후 만료` : `만료: ${formatDate(coupon.expiresAt)}`}
                     </Text>
                   </View>
                   <View style={styles.couponRight}>
-                    <Text style={[styles.couponArrow, { color: isDark ? '#94a3b8' : '#64748b' }]}>›</Text>
+                    <Text style={[styles.couponArrow, { color: isDark ? '#8888a0' : '#64748b' }]}>›</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -617,40 +622,49 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         </View>
 
         {/* 최근 내역 */}
-        {history.length > 0 && (
-          <View style={[styles.section, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-            <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
-              📋 최근 내역
-            </Text>
-            {history.slice(0, 5).map((item) => (
+        <View style={[styles.section, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
+          <Text style={[styles.sectionTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
+            📋 최근 내역
+          </Text>
+          {history.length === 0 ? (
+            <View style={styles.emptyHistoryContainer}>
+              <Text style={[styles.emptyHistoryText, { color: isDark ? '#5c5c74' : '#9ca3af' }]}>
+                아직 포인트 내역이 없어요
+              </Text>
+              <Text style={[styles.emptyHistorySubText, { color: isDark ? '#3a3a5a' : '#cbd5e1' }]}>
+                광고를 시청하고 포인트를 모아보세요
+              </Text>
+            </View>
+          ) : (
+            history.slice(0, 5).map((item) => (
               <View key={item.id} style={styles.historyItem}>
                 <View style={styles.historyLeft}>
                   <Text style={styles.historyIcon}>
                     {item.action === 'exchange' ? '🔄' : item.action === 'use' ? '✅' : '⏰'}
                   </Text>
                   <View>
-                    <Text style={[styles.historyText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                    <Text style={[styles.historyText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                       {item.action === 'exchange' ? '쿠폰 교환' : item.action === 'use' ? '쿠폰 사용' : '쿠폰 만료'}
                     </Text>
-                    <Text style={[styles.historySubText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+                    <Text style={[styles.historySubText, { color: isDark ? '#8888a0' : '#64748b' }]}>
                       {item.couponName}
                     </Text>
                   </View>
                 </View>
-                <Text style={[styles.historyDate, { color: isDark ? '#64748b' : '#9ca3af' }]}>
+                <Text style={[styles.historyDate, { color: isDark ? '#5c5c74' : '#9ca3af' }]}>
                   {formatDate(item.timestamp)}
                 </Text>
               </View>
-            ))}
-          </View>
-        )}
+            ))
+          )}
+        </View>
 
         {/* 안내 */}
-        <View style={[styles.infoSection, { backgroundColor: isDark ? '#1e293b' : '#f9fafb' }]}>
-          <Text style={[styles.infoTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <View style={[styles.infoSection, { backgroundColor: isDark ? '#141422' : '#f9fafb' }]}>
+          <Text style={[styles.infoTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
             💡 포인트 & 쿠폰 안내
           </Text>
-          <Text style={[styles.infoText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+          <Text style={[styles.infoText, { color: isDark ? '#8888a0' : '#64748b' }]}>
             • 광고 1회 시청 시 {adRewardPoints}P 적립{'\n'}
             • 6시간마다 최대 {maxAds}개 광고 시청 가능{'\n'}
             • {POINTS_PER_COUPON.toLocaleString()}P 모으면 쿠폰으로 교환 가능{'\n'}
@@ -669,24 +683,24 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
         statusBarTranslucent
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
+          <View style={[styles.modalContent, { backgroundColor: isDark ? '#141422' : '#ffffff' }]}>
             {selectedCoupon && (
               <>
                 <Text style={styles.modalEmoji}>🎟️</Text>
-                <Text style={[styles.modalTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                <Text style={[styles.modalTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                   {selectedCoupon.name}
                 </Text>
-                <Text style={[styles.modalDescription, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+                <Text style={[styles.modalDescription, { color: isDark ? '#8888a0' : '#64748b' }]}>
                   {selectedCoupon.description}
                 </Text>
 
                 {/* 비밀 코드 표시 */}
                 <TouchableOpacity
                   onPress={() => handleCopyCode(selectedCoupon.secretCode)}
-                  style={[styles.secretCodeBox, { backgroundColor: isDark ? '#0f172a' : '#f1f5f9', borderColor: isDark ? '#334155' : '#e5e7eb' }]}
+                  style={[styles.secretCodeBox, { backgroundColor: isDark ? '#0c0c16' : '#f1f5f9', borderColor: isDark ? '#1e1e32' : '#e5e7eb' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.secretCodeLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+                  <Text style={[styles.secretCodeLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>
                     🔑 비밀 코드 (탭하여 복사)
                   </Text>
                   <Text style={[styles.secretCodeText, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
@@ -694,8 +708,8 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                   </Text>
                 </TouchableOpacity>
 
-                <View style={[styles.modalDivider, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]} />
-                <Text style={[styles.modalInfo, { color: isDark ? '#64748b' : '#9ca3af' }]}>
+                <View style={[styles.modalDivider, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]} />
+                <Text style={[styles.modalInfo, { color: isDark ? '#5c5c74' : '#9ca3af' }]}>
                   발급일: {formatDate(selectedCoupon.createdAt)}{'\n'}
                   만료일: {formatDate(selectedCoupon.expiresAt)}{'\n'}
                   남은 기간: {getDaysLeft(selectedCoupon.expiresAt)}일
@@ -707,9 +721,9 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
                       setShowCouponModal(false);
                       setSelectedCoupon(null);
                     }}
-                    style={[styles.modalButton, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]}
+                    style={[styles.modalButton, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]}
                   >
-                    <Text style={[styles.modalButtonText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                    <Text style={[styles.modalButtonText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                       닫기
                     </Text>
                   </TouchableOpacity>
@@ -773,7 +787,7 @@ const styles = StyleSheet.create({
   pointCard: {
     margin: SECTION_PADDING,
     padding: SECTION_PADDING,
-    borderRadius: 16,
+    borderRadius: 20,
   },
   pointLabel: {
     fontSize: 14,
@@ -802,7 +816,7 @@ const styles = StyleSheet.create({
   },
   exchangeButton: {
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
   },
   exchangeButtonText: {
@@ -818,7 +832,7 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
   },
   statValue: {
@@ -833,7 +847,7 @@ const styles = StyleSheet.create({
     marginHorizontal: SECTION_PADDING,
     marginBottom: SECTION_PADDING,
     padding: SECTION_PADDING,
-    borderRadius: 12,
+    borderRadius: 20,
   },
   sectionTitle: {
     fontSize: 18,
@@ -856,11 +870,23 @@ const styles = StyleSheet.create({
   emptySubText: {
     fontSize: 14,
   },
+  emptyHistoryContainer: {
+    alignItems: 'center' as const,
+    paddingVertical: 20,
+  },
+  emptyHistoryText: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    marginBottom: 6,
+  },
+  emptyHistorySubText: {
+    fontSize: 12,
+  },
   couponItem: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     marginBottom: 8,
     borderWidth: 1,
   },
@@ -933,7 +959,7 @@ const styles = StyleSheet.create({
     marginHorizontal: SECTION_PADDING,
     marginBottom: SECTION_PADDING,
     padding: SECTION_PADDING,
-    borderRadius: 12,
+    borderRadius: 20,
   },
   infoTitle: {
     fontSize: 16,
@@ -949,7 +975,7 @@ const styles = StyleSheet.create({
     marginHorizontal: SECTION_PADDING,
     marginBottom: SECTION_PADDING,
     padding: SECTION_PADDING,
-    borderRadius: 12,
+    borderRadius: 20,
   },
   adHeader: {
     flexDirection: 'row',

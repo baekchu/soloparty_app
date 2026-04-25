@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -34,12 +34,12 @@ const CALENDAR_THEME_BASE = {
 
 const CALENDAR_THEME_DARK = {
   ...CALENDAR_THEME_BASE,
-  backgroundColor: '#1e293b',
-  calendarBackground: '#1e293b',
-  textSectionTitleColor: '#d1d5db',
-  dayTextColor: '#f9fafb',
-  textDisabledColor: '#374151',
-  monthTextColor: '#f9fafb',
+  backgroundColor: '#141422',
+  calendarBackground: '#141422',
+  textSectionTitleColor: '#a0a0b8',
+  dayTextColor: '#eaeaf2',
+  textDisabledColor: '#1e1e32',
+  monthTextColor: '#eaeaf2',
 };
 
 const CALENDAR_THEME_LIGHT = {
@@ -75,6 +75,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
   const handleSave = useCallback(async () => {
     // 중복 저장 방지 (ref로 즉시 체크 — state 기반 경쟁 조건 해소)
     if (isSavingRef.current) return;
+    isSavingRef.current = true;
 
     // 인라인 유효성 검사
     const errors: { date?: string; title?: string } = {};
@@ -82,6 +83,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
     if (!title.trim()) errors.title = '이벤트 제목을 입력해주세요.';
     if (errors.date || errors.title) {
       setFieldErrors(errors);
+      isSavingRef.current = false;
       return;
     }
     setFieldErrors({});
@@ -90,10 +92,10 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
     const trimmedLink = link.trim();
     if (trimmedLink && !/^https?:\/\/.+/i.test(trimmedLink)) {
       Alert.alert('알림', '링크는 http:// 또는 https://로 시작해야 합니다.');
+      isSavingRef.current = false;
       return;
     }
 
-    isSavingRef.current = true;
     setIsSaving(true);
     try {
       const newEvent = {
@@ -131,13 +133,13 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
     [selectedDate]: { selected: true, selectedColor: '#10b981' },
   }), [selectedDate]);
 
-  const bgColor = isDark ? '#0f172a' : '#ffffff';
-  const cardBg = isDark ? '#1e293b' : '#f9fafb';
-  const inputBg = isDark ? '#1f2937' : '#ffffff';
-  const labelColor = isDark ? '#d1d5db' : '#374151';
-  const textColor = isDark ? '#f3f4f6' : '#111827';
-  const placeholderColor = isDark ? '#6b7280' : '#9ca3af';
-  const borderColor = isDark ? '#1f2937' : '#e5e7eb';
+  const bgColor = isDark ? '#0c0c16' : '#ffffff';
+  const cardBg = isDark ? '#141422' : '#f9fafb';
+  const inputBg = isDark ? '#1e1e32' : '#ffffff';
+  const labelColor = isDark ? '#a0a0b8' : '#374151';
+  const textColor = isDark ? '#eaeaf2' : '#111827';
+  const placeholderColor = isDark ? '#5c5c74' : '#9ca3af';
+  const borderColor = isDark ? '#1e1e32' : '#e5e7eb';
 
   return (
     <View style={[aStyles.root, { backgroundColor: bgColor, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
@@ -239,7 +241,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
               onPress={() => {
                 Alert.alert('알림', '지도 기능은 준비 중입니다');
               }}
-              style={[aStyles.mapBtn, { backgroundColor: inputBg, borderColor: isDark ? '#374151' : '#e5e7eb' }]}
+              style={[aStyles.mapBtn, { backgroundColor: inputBg, borderColor: isDark ? '#1e1e32' : '#e5e7eb' }]}
             >
               <Text style={[aStyles.mapBtnIcon, { color: isDark ? '#60a5fa' : '#3b82f6' }]}>📌</Text>
               <Text style={[aStyles.mapBtnText, { color: isDark ? '#60a5fa' : '#3b82f6' }]}>
@@ -249,7 +251,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
             {coordinates && (
               <View style={[aStyles.coordBadge, { backgroundColor: isDark ? 'rgba(59, 130, 246, 0.1)' : '#dbeafe' }]}>
                 <Text style={[aStyles.coordText, { color: isDark ? '#93c5fd' : '#1e40af' }]}>
-                  📍 {coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}
+                   {coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}
                 </Text>
               </View>
             )}

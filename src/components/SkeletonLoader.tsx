@@ -60,7 +60,7 @@ export const Skeleton: React.FC<SkeletonProps> = ({
           width,
           height,
           borderRadius,
-          backgroundColor: isDark ? '#334155' : '#e5e7eb',
+          backgroundColor: isDark ? '#1e1e32' : '#e5e7eb',
           opacity,
         },
         style,
@@ -75,8 +75,8 @@ export const EventCardSkeleton: React.FC = () => {
   const isDark = theme === 'dark';
 
   return (
-    <View style={[styles.eventCardSkeleton, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
-      <View style={[styles.accent, { backgroundColor: isDark ? '#334155' : '#e5e7eb' }]} />
+    <View style={[styles.eventCardSkeleton, { backgroundColor: isDark ? '#141422' : '#ffffff' }]}>
+      <View style={[styles.accent, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]} />
       <View style={styles.content}>
         <Skeleton width={100} height={12} style={{ marginBottom: 8 }} />
         <Skeleton width="80%" height={18} style={{ marginBottom: 8 }} />
@@ -107,7 +107,7 @@ export const CalendarSkeleton: React.FC = () => {
   const isDark = theme === 'dark';
 
   return (
-    <View style={[styles.calendarSkeleton, { backgroundColor: isDark ? '#0f172a' : '#fce7f3' }]}>
+    <View style={[styles.calendarSkeleton, { backgroundColor: isDark ? '#0c0c16' : '#fce7f3' }]}>
       <View style={styles.calendarHeader}>
         <Skeleton width={150} height={24} style={{ marginBottom: 16 }} />
       </View>

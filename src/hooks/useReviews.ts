@@ -169,16 +169,10 @@ function _setupAppStateListener() {
 
 // 모든 인스턴스가 unmount될 때 AppState listener 정리
 function _cleanupAppStateListener() {
-  if (_cleanupScheduled) return;
-  _cleanupScheduled = true;
-  // 약간의 지연 후 리스너 수 확인 (마지막 인스턴스인지)
-  setTimeout(() => {
-    if (_listeners.size === 0 && _appStateSubscription) {
-      _appStateSubscription.remove();
-      _appStateSubscription = null;
-    }
-    _cleanupScheduled = false;
-  }, 100);
+  if (_listeners.size === 0 && _appStateSubscription) {
+    _appStateSubscription.remove();
+    _appStateSubscription = null;
+  }
 }
 
 function _notify() {

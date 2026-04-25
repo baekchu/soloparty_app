@@ -403,16 +403,16 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   }, [selectedLocation, allLocations, saveLocationStats, setContextLocation, setContextRegion, route, navigation]);
 
   return (
-    <SafeAreaView style={[lpStyles.root, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+    <SafeAreaView style={[lpStyles.root, { backgroundColor: isDark ? '#0c0c16' : '#ffffff' }]}>
       {/* 헤더 */}
       <View style={[lpStyles.header, {
-        backgroundColor: isDark ? '#1e293b' : '#ffffff',
-        borderBottomColor: isDark ? '#334155' : '#e5e7eb',
+        backgroundColor: isDark ? '#141422' : '#ffffff',
+        borderBottomColor: isDark ? '#1e1e32' : '#e5e7eb',
       }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={lpStyles.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
-          <Text style={[lpStyles.headerBtnText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>‹</Text>
+          <Text style={[lpStyles.headerBtnText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
-        <Text style={[lpStyles.headerTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <Text style={[lpStyles.headerTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
           위치 선택
         </Text>
         <View style={lpStyles.headerSpacer} />
@@ -427,11 +427,11 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
         <View style={lpStyles.searchWrap}>
           <TextInput
             style={[lpStyles.searchInput, {
-              backgroundColor: isDark ? '#1e293b' : '#f3f4f6',
-              color: isDark ? '#f8fafc' : '#0f172a',
+              backgroundColor: isDark ? '#141422' : '#f3f4f6',
+              color: isDark ? '#eaeaf2' : '#0f172a',
             }]}
             placeholder="장소 검색..."
-            placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+            placeholderTextColor={isDark ? '#5c5c74' : '#94a3b8'}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
@@ -448,11 +448,11 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
             style={[lpStyles.filterChip, {
               backgroundColor: selectedRegionFilter === null 
                 ? (isDark ? '#a78bfa' : '#ec4899') 
-                : (isDark ? '#334155' : '#f1f5f9'),
+                : (isDark ? '#1e1e32' : '#f1f5f9'),
             }]}
           >
             <Text style={[lpStyles.filterChipText, {
-              color: selectedRegionFilter === null ? '#ffffff' : (isDark ? '#94a3b8' : '#64748b'),
+              color: selectedRegionFilter === null ? '#ffffff' : (isDark ? '#8888a0' : '#64748b'),
             }]}>
               전체
             </Text>
@@ -464,11 +464,11 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
               style={[lpStyles.filterChip, {
                 backgroundColor: selectedRegionFilter === region 
                   ? (isDark ? '#a78bfa' : '#ec4899') 
-                  : (isDark ? '#334155' : '#f1f5f9'),
+                  : (isDark ? '#1e1e32' : '#f1f5f9'),
               }]}
             >
               <Text style={[lpStyles.filterChipText, {
-                color: selectedRegionFilter === region ? '#ffffff' : (isDark ? '#94a3b8' : '#64748b'),
+                color: selectedRegionFilter === region ? '#ffffff' : (isDark ? '#8888a0' : '#64748b'),
               }]}>
                 {region}
               </Text>
@@ -481,7 +481,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           {isLoadingLocations ? (
             <View style={lpStyles.loadingWrap}>
               <ActivityIndicator size="large" color={isDark ? '#a78bfa' : '#ec4899'} />
-              <Text style={[lpStyles.loadingText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+              <Text style={[lpStyles.loadingText, { color: isDark ? '#8888a0' : '#64748b' }]}>
                 장소 데이터를 불러오는 중...
               </Text>
             </View>
@@ -494,13 +494,13 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
               </Text>
             </View>
           )}
-          <Text style={[lpStyles.listTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+          <Text style={[lpStyles.listTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
             {selectedRegionFilter ? `${selectedRegionFilter} 지역 장소` : '인기 장소'}
             {searchQuery.trim() ? ` (${filteredLocations.length}건)` : ''}
           </Text>
           {filteredLocations.length === 0 ? (
             <View style={lpStyles.emptyWrap}>
-              <Text style={[lpStyles.emptyText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+              <Text style={[lpStyles.emptyText, { color: isDark ? '#8888a0' : '#64748b' }]}>
                 검색 결과가 없습니다
               </Text>
             </View>
@@ -514,16 +514,16 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
               style={[lpStyles.locItem, {
                 backgroundColor: isSelected
                   ? (isDark ? 'rgba(167, 139, 250, 0.15)' : 'rgba(236, 72, 153, 0.08)')
-                  : (isDark ? '#1e293b' : '#f9fafb'),
+                  : (isDark ? '#141422' : '#f9fafb'),
                 borderWidth: isSelected ? 2 : 1,
                 borderColor: isSelected
                   ? (isDark ? '#a78bfa' : '#ec4899')
-                  : (isDark ? '#334155' : '#e5e7eb'),
+                  : (isDark ? '#1e1e32' : '#e5e7eb'),
               }]}
             >
               <View style={lpStyles.locRow}>
                 <View style={lpStyles.flex1}>
-                  <Text style={[lpStyles.locName, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                  <Text style={[lpStyles.locName, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                     {normalizeDisplayName(location.region)} {normalizeDisplayName(location.name)}
                   </Text>
                 </View>
@@ -543,8 +543,8 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
       {/* 하단 버튼 */}
       <View style={[lpStyles.bottomBar, {
         paddingBottom: Math.max(20, insets.bottom),
-        backgroundColor: isDark ? '#1e293b' : '#ffffff',
-        borderTopColor: isDark ? '#334155' : '#e5e7eb',
+        backgroundColor: isDark ? '#141422' : '#ffffff',
+        borderTopColor: isDark ? '#1e1e32' : '#e5e7eb',
       }]}>
         <TouchableOpacity
           onPress={handleConfirm}
@@ -552,7 +552,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           style={[lpStyles.confirmBtn, {
             backgroundColor: selectedLocation 
               ? (isDark ? '#a78bfa' : '#ec4899')
-              : (isDark ? '#374151' : '#e5e7eb'),
+              : (isDark ? '#1e1e32' : '#e5e7eb'),
           }]}
         >
           <Text style={[lpStyles.confirmBtnText, {

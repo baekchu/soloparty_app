@@ -9,14 +9,28 @@ const GIST_RAW_URL = env.GIST_RAW_URL;
 
 const CACHE_KEY = '@events_cache';
 const CACHE_TIMESTAMP_KEY = '@events_cache_timestamp';
-const CACHE_DURATION = 900000; // 15분 디스크 캐시
-const FETCH_TIMEOUT = 10000; // 10초 타임아웃
+const CACHE_ETAG_KEY = '@events_cache_etag';
+const CACHE_DURATION = 1800000; // 30분 디스크 캐시 (15→30분: 동시접속 시 서버 부하 50% 감소)
+const FETCH_TIMEOUT = 8000;       // 기본 타임아웃
+const FETCH_TIMEOUT_RETRY = 12000; // 재시도 시 타임아웃 (적응형)
 
 // 인메모리 캐시: 앱 세션 동안 AsyncStorage 접근을 최소화
 let _memCache: EventsByDate | null = null;
 let _memCacheTime = 0;
-const MEM_CACHE_DURATION = 300000; // 5분 메모리 캐시 (디스크보다 짧게)
+const MEM_CACHE_DURATION = 900000; // 15분 메모리 캐시 (10→15분: SWR 백그라운드 재검증으로 커버)
 const MAX_JSON_SIZE = 5 * 1024 * 1024; // 5MB 최대 JSON 크기 (DoS 방지)
+
+// ETag 기반 조건부 요청 (304 Not Modified → 네트워크 전송량 제로)
+let _lastETag: string | null = null;
+
+// Exponential Backoff: 연속 실패 시 서버 부하 방지 (동시 접속자 가용성)
+let _consecutiveFailures = 0;
+const MAX_BACKOFF_MS = 60000; // 최대 1분
+const getBackoffDelay = (): number => {
+  if (_consecutiveFailures === 0) return 0;
+  return Math.min(1000 * Math.pow(2, _consecutiveFailures - 1), MAX_BACKOFF_MS);
+};
+let _lastFailureTime = 0;
 
 // 데이터 변경 감지: 네트워크 fetch 후 기존 캐시와 빠른 비교 (O(날짜 수))
 // 동일하면 기존 참조를 반환 → 하류 useMemo 재계산 전부 방지
@@ -91,27 +105,46 @@ const isAllowedUrl = (url: string): boolean => {
   }
 };
 
-const fetchData = async (url: string): Promise<EventsByDate> => {
+const fetchData = async (url: string): Promise<EventsByDate | 'NOT_MODIFIED'> => {
   // URL 화이트리스트 검증
   if (!isAllowedUrl(url)) {
     secureLog.warn('⚠️ 허용되지 않은 URL');
     throw new Error('Blocked URL');
   }
+
+  // Exponential Backoff: 연속 실패 중이면 대기
+  const backoff = getBackoffDelay();
+  if (backoff > 0 && (Date.now() - _lastFailureTime) < backoff) {
+    throw new Error('Backoff active');
+  }
   
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+  // 적응형 타임아웃: 재시도 중이면 12초, 첫 시도면 8초
+  const timeout = _consecutiveFailures > 0 ? FETCH_TIMEOUT_RETRY : FETCH_TIMEOUT;
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
   
   try {
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+    };
+    // ETag 조건부 요청: 서버 데이터 미변경 시 304 응답 → 전송량 0
+    if (_lastETag) {
+      headers['If-None-Match'] = _lastETag;
+    }
+
     const response = await fetch(url, { 
       signal: controller.signal,
-      headers: { 
-        'Cache-Control': 'no-cache',
-        'Accept': 'application/json',
-      },
+      headers,
       redirect: 'error',
     });
-    clearTimeout(timeoutId); // 성공 시 즉시 타이머 해제 (GC 압력 감소)
+    clearTimeout(timeoutId);
     
+    // 304 Not Modified: 데이터 변경 없음 → 캐시 그대로 사용
+    if (response.status === 304) {
+      _consecutiveFailures = 0;
+      return 'NOT_MODIFIED';
+    }
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -120,6 +153,13 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     if (response.url && !isAllowedUrl(response.url)) {
       secureLog.warn('⚠️ 응답 URL이 허용되지 않은 도메인');
       throw new Error('Redirected to blocked URL');
+    }
+
+    // ETag 저장 (다음 요청에 사용)
+    const etag = response.headers.get('etag');
+    if (etag) {
+      _lastETag = etag;
+      safeMultiSet([[CACHE_ETAG_KEY, etag]]).catch(() => {});
     }
     
     const text = await response.text();
@@ -130,6 +170,8 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
       throw new Error('Response too large');
     }
     
+    _consecutiveFailures = 0;
+    
     // 2단계 파싱만 (간소화) - 안전한 파싱 사용
     const parsed = safeJSONParse<EventsByDate>(text, {});
     if (Object.keys(parsed).length > 0) {
@@ -138,6 +180,8 @@ const fetchData = async (url: string): Promise<EventsByDate> => {
     // 정제 후 재시도
     return safeJSONParse<EventsByDate>(cleanJSON(text), {});
   } catch (error: any) {
+    _consecutiveFailures++;
+    _lastFailureTime = Date.now();
     if (error.name === 'AbortError') {
       secureLog.warn('⚠️ 네트워크 타임아웃');
     } else {
@@ -383,13 +427,19 @@ const sanitizeEvent = (event: Event): Event => {
 // AsyncStorage 초기화는 asyncStorageManager에서 처리
 
 const loadFromCache = async (): Promise<EventsByDate | null> => {
-  // 캠시 비활성화 시 바로 반환
+  // 캐시 비활성화 시 바로 반환
   if (CACHE_DURATION <= 0) return null;
   
   try {
-    const results = await safeMultiGet([CACHE_KEY, CACHE_TIMESTAMP_KEY]);
+    const results = await safeMultiGet([CACHE_KEY, CACHE_TIMESTAMP_KEY, CACHE_ETAG_KEY]);
     const cached = results[0][1];
     const timestamp = results[1][1];
+    const savedETag = results[2]?.[1];
+    
+    // ETag 복원 (앱 재시작 시에도 조건부 요청 가능)
+    if (savedETag && !_lastETag) {
+      _lastETag = savedETag;
+    }
     
     if (!cached || !timestamp) return null;
     
@@ -397,21 +447,24 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
     if (isNaN(timestampNum) || timestampNum <= 0) return null;
     
     const age = Date.now() - timestampNum;
-    // 음수나 만료된 캠시 거부
+    // 음수나 만료된 캐시 거부 — 하지만 만료 캐시도 ETag 복원 후 반환 안 함
+    // (SWR 패턴에서 만료 캐시는 loadStaleCache에서 처리)
     if (age < 0 || age >= CACHE_DURATION) {
-      secureLog.info('⌛ 캀시 만료');      // 만료된 디스크 캐시 정리
-      safeMultiSet([[CACHE_KEY, ''], [CACHE_TIMESTAMP_KEY, '']]).catch(() => {});      return null;
+      secureLog.info('⌛ 캐시 만료');
+      // 캐시 만료 시 ETag도 무효화 → 다음 fetch에서 304 대신 200 전체 데이터 수신
+      _lastETag = null;
+      return null;
     }
     
     const events = safeJSONParse<EventsByDate>(cached, {});
     if (!validateEvents(events)) {
-      secureLog.warn('⚠️ 캀시 데이터 검증 실패');
+      secureLog.warn('⚠️ 캐시 데이터 검증 실패');
       return null;
     }
     
     return events;
   } catch (error) {
-    secureLog.warn('⚠️ 캀시 로드 실패:', error instanceof Error ? error.message : 'Unknown error');
+    secureLog.warn('⚠️ 캐시 로드 실패:', error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 };
@@ -457,6 +510,25 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
 // 네트워크 요청 중복 방지 (동시 호출 시 단일 요청만 실행)
 let _pendingLoadPromise: Promise<EventsByDate> | null = null;
 
+// SWR 백그라운드 재검증: 캐시 반환 후 네트워크에서 최신 데이터 확인
+const _revalidateInBackground = (): void => {
+  loadEvents(true).then((freshData) => {
+    if (freshData && Object.keys(freshData).length > 0) {
+      _swrListeners.forEach(listener => {
+        try { listener(freshData); } catch {}
+      });
+    }
+  }).catch(() => { /* 백그라운드 실패는 무시: 이미 캐시 반환됨 */ });
+};
+
+// SWR 백그라운드 재검증 리스너 (CalendarScreen 등에서 구독)
+type SWRListener = (data: EventsByDate) => void;
+const _swrListeners = new Set<SWRListener>();
+export const onSWRUpdate = (listener: SWRListener): (() => void) => {
+  _swrListeners.add(listener);
+  return () => _swrListeners.delete(listener);
+};
+
 export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsByDate> => {
   // 1순위: 인메모리 캐시 (AsyncStorage보다 100배 빠름)
   if (!forceRefresh) {
@@ -473,6 +545,13 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
       secureLog.info('✅ 디스크 캐시 사용');
       _memCache = cached;
       _memCacheTime = Date.now();
+      
+      // SWR: 캐시 반환 후 백그라운드에서 네트워크 재검증
+      // 새 데이터가 있으면 _swrListeners로 전파
+      if (!_pendingLoadPromise) {
+        _revalidateInBackground();
+      }
+      
       return cached;
     }
   }
@@ -485,8 +564,35 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
   const doLoad = async (): Promise<EventsByDate> => {
   try {
     secureLog.info('🔄 데이터 로딩...');
-    const url = GIST_RAW_URL; // 캐시버스팅 파라미터 제거: Cache-Control 헤더로 처리
-    const rawData = await fetchData(url);
+    const url = GIST_RAW_URL;
+    const fetchResult = await fetchData(url);
+    
+    // 304 Not Modified: 서버 데이터 미변경 → 기존 캐시 그대로 반환
+    let rawData: EventsByDate;
+    if (fetchResult === 'NOT_MODIFIED') {
+      secureLog.info('✅ 304 Not Modified - 캐시 유지');
+      if (_memCache) {
+        _memCacheTime = Date.now();
+        return _memCache;
+      }
+      const cached = await loadFromCache();
+      if (cached) {
+        _memCache = cached;
+        _memCacheTime = Date.now();
+        return cached;
+      }
+      // 304인데 캐시가 전혀 없음 → ETag 무효화 후 전체 데이터 재요청
+      secureLog.warn('⚠️ 304인데 캐시 없음 → 전체 재요청');
+      _lastETag = null;
+      safeMultiSet([[CACHE_ETAG_KEY, '']]).catch(() => {});
+      const retryResult = await fetchData(url);
+      if (retryResult === 'NOT_MODIFIED') {
+        throw new Error('Unexpected 304 after ETag clear');
+      }
+      rawData = retryResult;
+    } else {
+      rawData = fetchResult;
+    }
     
     // recurring 필드 추출 후 제거
     const rawAny = rawData as any;
@@ -574,22 +680,33 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     
     return processed;
   } catch (error) {
-    secureLog.warn('⚠️ 네트워크 오류, 캀시 복구 시도');
+    secureLog.warn('⚠️ 네트워크 오류, 캐시 복구 시도');
     
-    // 1. 유효한 캐시 시도
+    // 1. 인메모리 캐시가 있으면 즉시 반환 (디스크 접근 불필요)
+    if (_memCache && Object.keys(_memCache).length > 0) {
+      _memCacheTime = Date.now(); // TTL 갱신: 네트워크 실패 동안 메모리 캐시 유지
+      secureLog.info('✅ 메모리 캐시 복구');
+      return _memCache;
+    }
+    
+    // 2. 유효한 디스크 캐시 시도
     const cached = await loadFromCache();
     if (cached) {
-      secureLog.info('✅ 캐시 복구');
+      _memCache = cached;
+      _memCacheTime = Date.now();
+      secureLog.info('✅ 디스크 캐시 복구');
       return cached;
     }
     
-    // 2. 만료된 캐시라도 반환 (빈 화면보다 나음)
+    // 3. 만료된 캐시라도 반환 (빈 화면보다 나음)
     try {
       const results = await safeMultiGet([CACHE_KEY]);
       const rawCached = results[0]?.[1];
       if (rawCached) {
         const staleEvents = safeJSONParse<EventsByDate>(rawCached, {});
         if (validateEvents(staleEvents) && Object.keys(staleEvents).length > 0) {
+          _memCache = staleEvents;
+          _memCacheTime = Date.now();
           secureLog.warn('⚠️ 만료된 캐시 사용 (네트워크 오류 대비)');
           return staleEvents;
         }

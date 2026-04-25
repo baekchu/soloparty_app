@@ -36,25 +36,25 @@ export const Colors = {
     saturday: '#3b82f6',
   },
 
-  // 다크 테마
+  // 다크 테마 — Deep Violet: 보라/핑크 브랜드에 어울리는 깊은 다크
   dark: {
-    background: '#0f172a',
-    surface: '#1e293b',
-    surfaceAlt: '#334155',
-    card: '#1e293b',
-    border: '#334155',
-    borderLight: '#1e293b',
-    text: '#f8fafc',
-    textSecondary: '#94a3b8',
-    textTertiary: '#64748b',
-    textInverse: '#0f172a',
-    overlay: 'rgba(0, 0, 0, 0.7)',
-    divider: '#334155',
-    switchTrack: '#4b5563',
-    danger: '#f87171',
-    dangerBg: 'rgba(239, 68, 68, 0.1)',
-    sunday: '#f87171',
-    saturday: '#60a5fa',
+    background: '#0c0c16',      // 깊은 차콜 + 은은한 바이올렛
+    surface: '#141422',         // 1단계 엘리베이션
+    surfaceAlt: '#1e1e32',      // 2단계 (칩, 태그, 인풋)
+    card: '#171728',            // 플로팅 카드
+    border: '#2a2a44',          // 명확한 보더
+    borderLight: '#1e1e30',     // 은은한 보더
+    text: '#eaeaf2',            // 부드러운 오프화이트 (눈부심 ↓)
+    textSecondary: '#8888a0',   // 균형잡힌 세컨더리
+    textTertiary: '#5c5c74',    // 은은한 터셔리
+    textInverse: '#0c0c16',
+    overlay: 'rgba(0, 0, 0, 0.72)',
+    divider: '#242440',
+    switchTrack: '#32324c',
+    danger: '#ff6b7a',
+    dangerBg: 'rgba(255, 107, 122, 0.12)',
+    sunday: '#ff6b7a',
+    saturday: '#6b9fff',
   },
 } as const;
 

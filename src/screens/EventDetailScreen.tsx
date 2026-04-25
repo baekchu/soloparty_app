@@ -27,6 +27,8 @@ import useReviews from '../hooks/useReviews';
 import { useShareInterstitialAd } from '../services/AdService';
 import AdOverlay from '../components/AdOverlay';
 import { HostProfileModal } from '../components/HostProfileModal';
+import { useToast } from '../contexts/ToastContext';
+import { hapticLight, hapticSuccess, hapticError, hapticSelection } from '../utils/haptics';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'EventDetail'>;
@@ -60,6 +62,7 @@ import { sanitizeText, sanitizeColor } from '../utils/sanitize';
 
 // 상수: 렌더마다 재생성 방지
 const STAR_ARRAY = [1, 2, 3, 4, 5] as const;
+const EMPTY_REVIEWS: any[] = []; // 빈 리뷰 배열 불변 참조
 
 // 정원 표시 컴포넌트 (memo로 최적화)
 const CapacityBar = memo(({ 
@@ -75,14 +78,14 @@ const CapacityBar = memo(({
 }) => (
   <View style={styles.attendanceItem}>
     <View style={styles.attendanceHeader}>
-      <Text style={[styles.attendanceLabel, { color: isDark ? '#e2e8f0' : '#374151' }]}>
+      <Text style={[styles.attendanceLabel, { color: isDark ? '#c0c0d0' : '#374151' }]}>
         {label}
       </Text>
-      <Text style={[styles.attendanceCount, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+      <Text style={[styles.attendanceCount, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
         {capacity}명
       </Text>
     </View>
-    <View style={[styles.progressBarBg, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+    <View style={[styles.progressBarBg, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
       <View style={[styles.progressBarFill, { width: '100%', backgroundColor: color }]} />
     </View>
   </View>
@@ -106,16 +109,16 @@ const InfoCard = memo(({
   
   return (
     <Wrapper 
-      style={[styles.infoCard, { backgroundColor: isDark ? '#1e293b' : '#f8fafc' }]}
+      style={[styles.infoCard, { backgroundColor: isDark ? '#141422' : '#f8fafc', borderColor: isDark ? '#2a2a44' : 'transparent' }]}
       onPress={onPress}
       activeOpacity={0.7}
     >
       <View style={styles.infoContent}>
-        <Text style={[styles.infoTitle, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+        <Text style={[styles.infoTitle, { color: isDark ? '#8888a0' : '#64748b' }]}>
           {title}
         </Text>
         <Text 
-          style={[styles.infoText, { color: isDark ? '#f8fafc' : '#0f172a' }, onPress && styles.linkText]}
+          style={[styles.infoText, { color: isDark ? '#eaeaf2' : '#0f172a' }, onPress && styles.linkText]}
           numberOfLines={2}
         >
           {content}
@@ -124,6 +127,93 @@ const InfoCard = memo(({
       {onPress && <Text style={styles.arrowIcon}>›</Text>}
     </Wrapper>
   );
+});
+
+// ==================== 리뷰 폼 컴포넌트 (분리 — 상위 리렌더 방지) ====================
+interface ReviewFormProps {
+  isDark: boolean;
+  onSubmit: (rating: number, comment: string) => void;
+  onCancel: () => void;
+}
+const ReviewForm = memo(function ReviewForm({ isDark, onSubmit, onCancel }: ReviewFormProps) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState('');
+
+  const handleSubmit = useCallback(() => {
+    onSubmit(rating, comment);
+  }, [onSubmit, rating, comment]);
+
+  const handleRating = useCallback((star: number) => {
+    hapticSelection();
+    setRating(star);
+  }, []);
+
+  const handleComment = useCallback((t: string) => {
+    setComment(t.slice(0, 100));
+  }, []);
+
+  const isReady = rating > 0 && comment.trim().length > 0;
+
+  return (
+    <View style={styles.reviewItemWrap}>
+      <Text style={[styles.starLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>
+        별점을 선택해주세요
+      </Text>
+      <View style={styles.starRow}>
+        {STAR_ARRAY.map((star) => (
+          <TouchableOpacity
+            key={star}
+            onPress={() => handleRating(star)}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            style={rfStyles.starBtn}
+            accessibilityLabel={`별점 ${star}점`}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.starLarge, { opacity: star <= rating ? 1 : 0.3 }]}>⭐</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <TextInput
+        style={[styles.reviewInput, {
+          backgroundColor: isDark ? '#1e1e32' : '#f1f5f9',
+          color: isDark ? '#eaeaf2' : '#0f172a',
+        }]}
+        placeholder="한줄평을 남겨주세요 (최대 100자)"
+        placeholderTextColor={isDark ? '#5c5c74' : '#94a3b8'}
+        value={comment}
+        onChangeText={handleComment}
+        maxLength={100}
+        returnKeyType="done"
+      />
+
+      <View style={styles.reviewBtnRow}>
+        <TouchableOpacity
+          style={[styles.reviewCancelBtn, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]}
+          onPress={onCancel}
+        >
+          <Text style={[styles.reviewCancelText, { color: isDark ? '#eaeaf2' : '#374151' }]}>취소</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.reviewSubmitBtn, {
+            backgroundColor: isReady
+              ? (isDark ? '#a78bfa' : '#ec4899')
+              : (isDark ? '#1e1e32' : '#e5e7eb'),
+          }]}
+          onPress={handleSubmit}
+        >
+          <Text style={[styles.reviewSubmitText, {
+            color: isReady ? '#ffffff' : (isDark ? '#5c5c74' : '#94a3b8'),
+          }]}>
+            등록하기
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
+const rfStyles = StyleSheet.create({
+  starBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
 });
 
 export default function EventDetailScreen({ navigation, route }: Props) {
@@ -154,6 +244,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   const { isBookmarked, toggleBookmark } = useBookmarks();
   const { hasReminder, scheduleReminder, cancelReminder } = useReminders();
   const { isShowing: isAdShowing, skipCountdown, canSkip, showAfterShare, dismiss: dismissAd } = useShareInterstitialAd();
+  const { showToast } = useToast();
   const bookmarked = isBookmarked(event.id, date);
   const reminderSet = hasReminder(event.id, date);
 
@@ -173,8 +264,6 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   const showWriteReview = canWriteReview(event.id, date);
 
   // 후기 작성 UI 상태
-  const [reviewRating, setReviewRating] = useState(0);
-  const [reviewComment, setReviewComment] = useState('');
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [showHostProfile, setShowHostProfile] = useState(false);
   const isProcessing = useRef(false); // 중복 탭 방지
@@ -213,18 +302,18 @@ export default function EventDetailScreen({ navigation, route }: Props) {
 
   // 테마 의존 색상 캐싱 (isDark 변경 시에만 재계산)
   const themeColors = useMemo(() => ({
-    bg: isDark ? '#0f172a' : '#ffffff',
-    headerBg: isDark ? '#1e293b' : '#ffffff',
-    headerBorder: isDark ? '#334155' : '#e5e7eb',
-    text: isDark ? '#f8fafc' : '#0f172a',
-    subText: isDark ? '#cbd5e1' : '#64748b',
-    bodyText: isDark ? '#e2e8f0' : '#374151',
-    cardBg: isDark ? '#1e293b' : '#ffffff',
+    bg: isDark ? '#0c0c16' : '#ffffff',
+    headerBg: isDark ? '#141422' : '#ffffff',
+    headerBorder: isDark ? '#2a2a44' : '#e5e7eb',
+    text: isDark ? '#eaeaf2' : '#0f172a',
+    subText: isDark ? '#a0a0b8' : '#64748b',
+    bodyText: isDark ? '#c0c0d0' : '#374151',
+    cardBg: isDark ? '#141422' : '#ffffff',
     accent: isDark ? '#a78bfa' : '#ec4899',
-    inactiveBg: isDark ? '#374151' : '#f1f5f9',
-    inactiveBorder: isDark ? '#475569' : '#e5e7eb',
-    buttonBg: isDark ? '#374151' : '#f1f5f9',
-    tagBg: isDark ? '#374151' : '#fce7f3',
+    inactiveBg: isDark ? '#1e1e32' : '#f1f5f9',
+    inactiveBorder: isDark ? '#2a2a44' : '#e5e7eb',
+    buttonBg: isDark ? '#1e1e32' : '#f1f5f9',
+    tagBg: isDark ? '#1e1e32' : '#fce7f3',
     tagText: isDark ? '#f472b6' : '#ec4899',
   }), [isDark]);
   
@@ -290,7 +379,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     } catch { /* 웹 지도 오픈 실패 무시 */ }
   }, [event.address, event.venue, event.location]);
   
-  // 공유하기 — 보내는 기기 기준 스토어 링크 1개만 깔끔하게
+  // 공유하기 — 보내는 기기 기준 스토어 링크 1개만 깔끔하게 + 토스트/햅틱
   const handleShare = useCallback(async () => {
     const storeLink = Platform.OS === 'ios' ? STORE_LINKS.ios : STORE_LINKS.android;
     
@@ -306,10 +395,12 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       );
       // 공유 완료 후 광고 표시 (15초 후 건너뛰기 가능)
       if (result.action === Share.sharedAction) {
+        hapticSuccess();
+        showToast({ message: '공유 완료!', type: 'success', icon: '🎉' });
         showAfterShare();
       }
     } catch { /* 공유 취소 무시 */ }
-  }, [showAfterShare]);
+  }, [showAfterShare, showToast]);
   
   // 참가 신청
   const handleJoin = useCallback(() => {
@@ -323,41 +414,55 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     ]);
   }, [safeLink, handleOpenLink]);
 
-  // 찜 토글 핸들러 (useCallback으로 최적화 + 해제 시 확인)
+  // 찜 토글 핸들러 (useCallback으로 최적화 + 해제 시 확인 + 토스트/햅틱)
   const handleToggleBookmark = useCallback(() => {
     if (bookmarked) {
       Alert.alert('찜 해제', '이 파티의 찜을 해제할까요?', [
         { text: '취소', style: 'cancel' },
-        { text: '해제', style: 'destructive', onPress: () => toggleBookmark(event, date) },
+        { text: '해제', style: 'destructive', onPress: async () => {
+          await toggleBookmark(event, date);
+          hapticLight();
+          showToast({ message: '찜 목록에서 제거했어요', type: 'info', icon: '💔' });
+        }},
       ]);
     } else {
-      toggleBookmark(event, date);
+      toggleBookmark(event, date).then(() => {
+        hapticLight();
+        showToast({ message: '찜 목록에 추가했어요', type: 'success', icon: '❤️' });
+      });
     }
-  }, [event, date, bookmarked, toggleBookmark]);
+  }, [event, date, bookmarked, toggleBookmark, showToast]);
 
   // 뒤로가기 핸들러
   const handleGoBack = useCallback(() => navigation.goBack(), [navigation]);
 
-  // 알림 토글 핸들러 (중복 탭 방지)
+  // 알림 토글 핸들러 (중복 탭 방지 + 토스트/햅틱)
   const handleToggleReminder = useCallback(async () => {
     if (isProcessing.current) return;
     if (!event.id) {
-      Alert.alert('알림', '이벤트 정보가 올바르지 않습니다.');
+      showToast({ message: '이벤트 정보가 올바르지 않아요', type: 'error' });
       return;
     }
     isProcessing.current = true;
     try {
       if (reminderSet) {
         await cancelReminder(event.id, date);
-        Alert.alert('알림 해제', '해당 파티 알림이 해제되었습니다.');
+        hapticLight();
+        showToast({ message: '알림이 해제되었어요', type: 'info', icon: '🔕' });
       } else {
         const result = await scheduleReminder(event, date);
-        Alert.alert(result.success ? '🔔 알림 등록' : '알림', result.message);
+        if (result.success) {
+          hapticSuccess();
+          showToast({ message: '알림이 설정되었어요', type: 'success', icon: '🔔' });
+        } else {
+          hapticError();
+          showToast({ message: result.message, type: 'error' });
+        }
       }
     } finally {
       isProcessing.current = false;
     }
-  }, [event, date, reminderSet, cancelReminder, scheduleReminder]);
+  }, [event, date, reminderSet, cancelReminder, scheduleReminder, showToast]);
 
   // 참가 예약 핸들러
   const handleReserve = useCallback(async () => {
@@ -365,11 +470,16 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     isProcessing.current = true;
     try {
       const result = await doReserve(event, date);
-      Alert.alert(result.success ? '🎫 예약 완료' : '알림', result.message);
+      if (result.success) {
+        hapticSuccess();
+        showToast({ message: '참가 예약이 완료되었어요!', type: 'success', icon: '🎫' });
+      } else {
+        showToast({ message: result.message, type: 'warning' });
+      }
     } finally {
       isProcessing.current = false;
     }
-  }, [event, date, doReserve]);
+  }, [event, date, doReserve, showToast]);
 
   // 예약 취소 핸들러
   const handleCancelReservation = useCallback(() => {
@@ -390,49 +500,55 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     );
   }, [event.id, date, cancelReservation]);
 
-  // 체크인 핸들러 (중복 탭 방지)
+  // 체크인 핸들러 (중복 탭 방지 + 토스트/햅틱)
   const handleCheckIn = useCallback(async () => {
     if (isProcessing.current) return;
     isProcessing.current = true;
     try {
       const result = await doCheckIn(event, date);
-      Alert.alert(result.success ? '✅ 체크인' : '알림', result.message);
+      if (result.success) {
+        hapticSuccess();
+        showToast({ message: '체크인 완료!', type: 'success', icon: '✅' });
+      } else {
+        hapticError();
+        showToast({ message: result.message, type: 'error' });
+      }
     } finally {
       isProcessing.current = false;
     }
-  }, [event, date, doCheckIn]);
+  }, [event, date, doCheckIn, showToast]);
 
-  // 후기 등록 핸들러 (중복 탭 방지)
-  const handleSubmitReview = useCallback(async () => {
+  // 후기 등록 핸들러 (ReviewForm에서 rating/comment 전달받음)
+  const handleSubmitReview = useCallback(async (reviewRating: number, reviewComment: string) => {
     if (isProcessing.current) return;
     if (reviewRating === 0) {
-      Alert.alert('알림', '별점을 선택해주세요.');
+      showToast({ message: '별점을 선택해주세요', type: 'warning', icon: '⭐' });
       return;
     }
     if (reviewComment.trim().length === 0) {
-      Alert.alert('알림', '한줄평을 입력해주세요.');
+      showToast({ message: '한줄평을 입력해주세요', type: 'warning', icon: '✏️' });
       return;
     }
     isProcessing.current = true;
     try {
       const result = await submitReview(event, date, reviewRating, reviewComment);
-      Alert.alert(result.success ? '🎉 후기 등록' : '알림', result.message);
       if (result.success) {
+        hapticSuccess();
+        showToast({ message: '후기가 등록되었어요!', type: 'success', icon: '🎉' });
         setShowReviewForm(false);
-        setReviewRating(0);
-        setReviewComment('');
         scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      } else {
+        hapticError();
+        showToast({ message: result.message, type: 'error' });
       }
     } finally {
       isProcessing.current = false;
     }
-  }, [event, date, reviewRating, reviewComment, submitReview]);
+  }, [event, date, submitReview, showToast]);
 
   // 후기 폼 취소
   const handleCancelReview = useCallback(() => {
     setShowReviewForm(false);
-    setReviewRating(0);
-    setReviewComment('');
     Keyboard.dismiss();
   }, []);
 
@@ -453,8 +569,9 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   }), [event.venue, event.location, event.address, event.region, event.detailDescription, event.description, event.organizer, event.contact]);
 
   // 주최자 리뷰 (memoized)
+  // 주최자 리뷰 (memoized) — deps 최소화: organizer만 의존
   const organizerReviews = useMemo(
-    () => event.organizer ? getReviewsByOrganizer(event.organizer) : [],
+    () => event.organizer ? getReviewsByOrganizer(event.organizer) : EMPTY_REVIEWS,
     [event.organizer, getReviewsByOrganizer]
   );
 
@@ -469,16 +586,16 @@ export default function EventDetailScreen({ navigation, route }: Props) {
 
   // 헤더 버튼 색상 메모이제이션
   const headerColors = useMemo(() => ({
-    containerBg: isDark ? '#0f172a' : '#ffffff',
-    headerBg: isDark ? '#1e293b' : '#ffffff',
-    headerBorder: isDark ? '#334155' : '#e5e7eb',
-    titleColor: isDark ? '#f8fafc' : '#0f172a',
-    reminderBg: reminderSet ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#374151' : '#f1f5f9'),
-    reminderIcon: reminderSet ? '#ffffff' : (isDark ? '#f8fafc' : '#374151'),
-    bookmarkBg: bookmarked ? '#ec4899' : (isDark ? '#374151' : '#f1f5f9'),
-    bookmarkIcon: bookmarked ? '#ffffff' : (isDark ? '#f8fafc' : '#374151'),
-    shareBg: isDark ? '#374151' : '#f1f5f9',
-    shareIcon: isDark ? '#f8fafc' : '#374151',
+    containerBg: isDark ? '#0c0c16' : '#ffffff',
+    headerBg: isDark ? '#141422' : '#ffffff',
+    headerBorder: isDark ? '#2a2a44' : '#e5e7eb',
+    titleColor: isDark ? '#eaeaf2' : '#0f172a',
+    reminderBg: reminderSet ? (isDark ? '#a78bfa' : '#ec4899') : (isDark ? '#1e1e32' : '#f1f5f9'),
+    reminderIcon: reminderSet ? '#ffffff' : (isDark ? '#eaeaf2' : '#374151'),
+    bookmarkBg: bookmarked ? '#ec4899' : (isDark ? '#1e1e32' : '#f1f5f9'),
+    bookmarkIcon: bookmarked ? '#ffffff' : (isDark ? '#eaeaf2' : '#374151'),
+    shareBg: isDark ? '#1e1e32' : '#f1f5f9',
+    shareIcon: isDark ? '#eaeaf2' : '#374151',
   }), [isDark, reminderSet, bookmarked]);
 
   return (
@@ -576,7 +693,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         )}
 
         {/* 메인 정보 카드 */}
-        <View style={[styles.mainCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
+        <View style={[styles.mainCard, { backgroundColor: isDark ? '#141422' : '#ffffff', borderWidth: isDark ? 1 : 0, borderColor: '#2a2a44' }]}>
           {/* 프로모션 뱃지 */}
           {event.promoted && (
             <View style={styles.promoBadgeRow}>
@@ -609,22 +726,22 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           )}
           
           {/* 제목 */}
-          <Text style={[styles.eventTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]} numberOfLines={2}>
+          <Text style={[styles.eventTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]} numberOfLines={2}>
             {sanitizeText(event.title)}
           </Text>
           
           {/* 날짜 & 시간 */}
           <View style={styles.dateTimeRow}>
-            <View style={[styles.dateTimeBadge, { backgroundColor: isDark ? '#374151' : '#fce7f3' }]}>
+            <View style={[styles.dateTimeBadge, { backgroundColor: isDark ? '#1e1e32' : '#fce7f3', borderColor: isDark ? '#2a2a44' : 'transparent' }]}>
               <Text style={styles.dateTimeIcon}>📅</Text>
-              <Text style={[styles.dateTimeText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+              <Text style={[styles.dateTimeText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                 {formattedDate}
               </Text>
             </View>
             {event.time && (
-              <View style={[styles.dateTimeBadge, { backgroundColor: isDark ? '#374151' : '#e0e7ff' }]}>
+              <View style={[styles.dateTimeBadge, { backgroundColor: isDark ? '#1e1e32' : '#e0e7ff', borderColor: isDark ? '#2a2a44' : 'transparent' }]}>
                 <Text style={styles.dateTimeIcon}>⏰</Text>
-                <Text style={[styles.dateTimeText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                <Text style={[styles.dateTimeText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                   {sanitizeText(event.time, 30)}
                 </Text>
               </View>
@@ -633,16 +750,16 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           
           {/* 상세 설명 */}
           {sanitized.description && (
-            <Text style={[styles.description, { color: isDark ? '#cbd5e1' : '#475569' }]}>
+            <Text style={[styles.description, { color: isDark ? '#a0a0b8' : '#475569' }]}>
               {sanitized.description}
             </Text>
           )}
         </View>
         
         {/* 정원 정보 */}
-        <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
+        <View style={[styles.sectionCard, { backgroundColor: isDark ? '#141422' : '#ffffff', borderWidth: isDark ? 1 : 0, borderColor: '#2a2a44' }]}>
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+            <Text style={[styles.sectionTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
               모집 정원
             </Text>
             {capacityInfo.hasAnyData && (
@@ -659,7 +776,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             <CapacityBar label="여자" capacity={capacityInfo.female} color="#ec4899" isDark={isDark} />
           )}
           {!capacityInfo.hasAnyData && (
-            <Text style={[styles.noDataText, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+            <Text style={[styles.noDataText, { color: isDark ? '#8888a0' : '#64748b' }]}>
               정원 정보가 없습니다
             </Text>
           )}
@@ -667,17 +784,17 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {/* 참가비 & 연령대 */}
           <View style={styles.additionalInfoRow}>
             {event.price !== undefined && (
-              <View style={[styles.additionalInfoItem, { backgroundColor: isDark ? '#374151' : '#f1f5f9' }]}>
+              <View style={[styles.additionalInfoItem, { backgroundColor: isDark ? '#1e1e32' : '#f1f5f9', borderColor: isDark ? '#2a2a44' : 'transparent' }]}>
                 <Text style={styles.additionalInfoIcon}>💰</Text>
-                <Text style={[styles.additionalInfoText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                <Text style={[styles.additionalInfoText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                   {event.price === 0 ? '무료' : `${event.price.toLocaleString()}원`}
                 </Text>
               </View>
             )}
             {event.ageRange && (
-              <View style={[styles.additionalInfoItem, { backgroundColor: isDark ? '#374151' : '#f1f5f9' }]}>
+              <View style={[styles.additionalInfoItem, { backgroundColor: isDark ? '#1e1e32' : '#f1f5f9', borderColor: isDark ? '#2a2a44' : 'transparent' }]}>
                 <Text style={styles.additionalInfoIcon}>🎂</Text>
-                <Text style={[styles.additionalInfoText, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                <Text style={[styles.additionalInfoText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                   {sanitizeText(event.ageRange, 20)}세
                 </Text>
               </View>
@@ -686,8 +803,8 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         </View>
 
         {/* 장소 정보 */}
-        <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
-          <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a', marginBottom: 16 }]}>
+        <View style={[styles.sectionCard, { backgroundColor: isDark ? '#141422' : '#ffffff', borderWidth: isDark ? 1 : 0, borderColor: '#2a2a44' }]}>
+          <Text style={[styles.sectionTitle, { color: isDark ? '#eaeaf2' : '#0f172a', marginBottom: 16 }]}>
             장소
           </Text>
           
@@ -717,7 +834,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         {/* 주최자 정보 */}
         {event.organizer && (
           <TouchableOpacity
-            style={[styles.organizerCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}
+            style={[styles.organizerCard, { backgroundColor: isDark ? '#141422' : '#ffffff' }]}
             onPress={handleOpenHostProfile}
             activeOpacity={0.7}
           >
@@ -732,10 +849,10 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               </View>
               <View style={styles.organizerInfo}>
                 <View style={styles.organizerNameRow}>
-                  <Text style={[styles.organizerName, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                  <Text style={[styles.organizerName, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                     {sanitizeText(event.organizer, 50)}
                   </Text>
-                  <View style={[styles.organizerBadge, { backgroundColor: isDark ? '#2e1f4d' : '#fce7f3' }]}>
+                  <View style={[styles.organizerBadge, { backgroundColor: isDark ? '#241840' : '#fce7f3' }]}>
                     <Text style={[styles.organizerBadgeText, { color: isDark ? '#a78bfa' : '#ec4899' }]}>주최자</Text>
                   </View>
                 </View>
@@ -744,19 +861,19 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                     <Text style={[styles.organizerStarText, { color: isDark ? '#fbbf24' : '#f59e0b' }]}>
                       ★ {(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length).toFixed(1)}
                     </Text>
-                    <Text style={[styles.organizerDot, { color: isDark ? '#475569' : '#cbd5e1' }]}>·</Text>
-                    <Text style={[styles.organizerSub, { color: isDark ? '#94a3b8' : '#64748b' }]}>
+                    <Text style={[styles.organizerDot, { color: isDark ? '#2a2a44' : '#cbd5e1' }]}>·</Text>
+                    <Text style={[styles.organizerSub, { color: isDark ? '#8888a0' : '#64748b' }]}>
                       리뷰 {organizerReviews.length}개
                     </Text>
                   </View>
                 ) : (
-                  <Text style={[styles.organizerSub, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                  <Text style={[styles.organizerSub, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                     프로필 보기
                   </Text>
                 )}
               </View>
               <View style={[styles.organizerArrowWrap, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }]}>
-                <Text style={[styles.organizerArrow, { color: isDark ? '#64748b' : '#94a3b8' }]}>›</Text>
+                <Text style={[styles.organizerArrow, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>›</Text>
               </View>
             </View>
 
@@ -774,7 +891,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                     ]}
                   />
                 </View>
-                <Text style={[styles.organizerRatingLabel, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                <Text style={[styles.organizerRatingLabel, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                   {(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length / 5 * 100).toFixed(0)}%
                 </Text>
               </View>
@@ -784,8 +901,8 @@ export default function EventDetailScreen({ navigation, route }: Props) {
 
         {/* 주최자 정보 */}
         {/* {(event.organizer || event.contact) && (
-          <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
-            <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a', marginBottom: 16 }]}>
+          <View style={[styles.sectionCard, { backgroundColor: isDark ? '#141422' : '#ffffff' }]}>
+            <Text style={[styles.sectionTitle, { color: isDark ? '#eaeaf2' : '#0f172a', marginBottom: 16 }]}>
               👤 주최자 정보
             </Text>
             
@@ -807,16 +924,16 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         {/* 링크 */}
         {event.link && (
           <TouchableOpacity 
-            style={[styles.linkCard, { backgroundColor: isDark ? '#1e293b' : '#fce7f3' }]}
+            style={[styles.linkCard, { backgroundColor: isDark ? '#141422' : '#fce7f3' }]}
             onPress={handleOpenLink}
           >
             <View style={styles.linkContent}>
               <Text style={styles.linkIcon}>🔗</Text>
               <View>
-                <Text style={[styles.linkTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                <Text style={[styles.linkTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                   상세 정보 & 신청 페이지
                 </Text>
-                <Text style={[styles.linkUrl, { color: isDark ? '#94a3b8' : '#64748b' }]} numberOfLines={1}>
+                <Text style={[styles.linkUrl, { color: isDark ? '#8888a0' : '#64748b' }]} numberOfLines={1}>
                   {sanitizeText(event.link, 100)}
                 </Text>
               </View>
@@ -826,32 +943,32 @@ export default function EventDetailScreen({ navigation, route }: Props) {
         )}
 
         {/* ==================== 예약 & 체크인 & 후기 섹션 ==================== */}
-        <View style={[styles.sectionCard, { backgroundColor: isDark ? '#1e293b' : '#ffffff' }]}>
-          <Text style={[styles.sectionTitle, { color: isDark ? '#f8fafc' : '#0f172a', marginBottom: 16 }]}>
+        <View style={[styles.sectionCard, { backgroundColor: isDark ? '#141422' : '#ffffff', borderWidth: isDark ? 1 : 0, borderColor: '#2a2a44' }]}>
+          <Text style={[styles.sectionTitle, { color: isDark ? '#eaeaf2' : '#0f172a', marginBottom: 16 }]}>
             📝 참가 후기
           </Text>
 
           {/* 3단계 프로그레스: 예약 → 체크인 → 후기 */}
           <View style={styles.progressRow}>
             <View style={styles.progressStep}>
-              <View style={[styles.progressDot, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]}>
+              <View style={[styles.progressDot, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]}>
                 <Text style={styles.progressDotText}>{reserved || checkedIn ? '✓' : '1'}</Text>
               </View>
-              <Text style={[styles.progressLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>예약</Text>
+              <Text style={[styles.progressLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>예약</Text>
             </View>
-            <View style={[styles.progressLine, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]} />
+            <View style={[styles.progressLine, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]} />
             <View style={styles.progressStep}>
-              <View style={[styles.progressDot, { backgroundColor: checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]}>
+              <View style={[styles.progressDot, { backgroundColor: checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]}>
                 <Text style={styles.progressDotText}>{checkedIn ? '✓' : '2'}</Text>
               </View>
-              <Text style={[styles.progressLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>체크인</Text>
+              <Text style={[styles.progressLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>체크인</Text>
             </View>
-            <View style={[styles.progressLine, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]} />
+            <View style={[styles.progressLine, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]} />
             <View style={styles.progressStep}>
-              <View style={[styles.progressDot, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#475569' : '#cbd5e1') }]}>
+              <View style={[styles.progressDot, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]}>
                 <Text style={styles.progressDotText}>{reviewExists ? '✓' : '3'}</Text>
               </View>
-              <Text style={[styles.progressLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>후기</Text>
+              <Text style={[styles.progressLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>후기</Text>
             </View>
           </View>
 
@@ -866,7 +983,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                 <Text style={styles.checkinBtnIcon}>🎫</Text>
                 <Text style={styles.checkinBtnText}>참가 예약하기</Text>
               </TouchableOpacity>
-              <Text style={[styles.checkinHint, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+              <Text style={[styles.checkinHint, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                 예약 후 파티 당일에 체크인할 수 있습니다
               </Text>
             </View>
@@ -875,14 +992,14 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {/* 예약 완료 상태 (체크인 전) */}
           {reserved && !checkedIn && !showCheckIn && (
             <View style={styles.reviewItemWrap}>
-              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#374151' : '#eef2ff' }]}>
+              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#1e1e32' : '#eef2ff' }]}>
                 <Text style={styles.checkinDoneIcon}>🎫</Text>
                 <Text style={[styles.checkinDoneText, { color: isDark ? '#a5b4fc' : '#6366f1' }]}>
                   예약 완료 · 파티 당일에 체크인해주세요
                 </Text>
               </View>
               <TouchableOpacity onPress={handleCancelReservation} activeOpacity={0.7}>
-                <Text style={[styles.cancelReservationText, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+                <Text style={[styles.cancelReservationText, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                   예약 취소
                 </Text>
               </TouchableOpacity>
@@ -892,7 +1009,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {/* STEP 2: 체크인 버튼 (예약 완료 + 당일) */}
           {showCheckIn && (
             <View style={styles.reviewItemWrap}>
-              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#374151' : '#eef2ff', marginBottom: 8 }]}>
+              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#1e1e32' : '#eef2ff', marginBottom: 8 }]}>
                 <Text style={styles.checkinDoneIcon}>🎫</Text>
                 <Text style={[styles.checkinDoneText, { color: isDark ? '#a5b4fc' : '#6366f1' }]}>
                   예약 확인됨
@@ -906,7 +1023,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                 <Text style={styles.checkinBtnIcon}>📍</Text>
                 <Text style={styles.checkinBtnText}>파티 체크인하기</Text>
               </TouchableOpacity>
-              <Text style={[styles.checkinHint, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+              <Text style={[styles.checkinHint, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                 {event.coordinates ? '📍 위치 인증(500m) 필수 + ⏰ 시간 인증' : '⏰ 시간대 인증'}
                 {'\n'}파티 시작 1시간 전 ~ 종료 1시간 후 | 하루 최대 3회
               </Text>
@@ -916,7 +1033,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {/* 체크인 완료 상태 → STEP 3: 후기 작성 */}
           {checkedIn && !reviewExists && !showReviewForm && (
             <View style={styles.reviewItemWrap}>
-              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#374151' : '#f0fdf4' }]}>
+              <View style={[styles.checkinDoneBadge, { backgroundColor: isDark ? '#1e1e32' : '#f0fdf4' }]}>
                 <Text style={styles.checkinDoneIcon}>✅</Text>
                 <Text style={[styles.checkinDoneText, { color: isDark ? '#86efac' : '#16a34a' }]}>
                   체크인 완료
@@ -924,12 +1041,12 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               </View>
               {showWriteReview && (
                 <TouchableOpacity
-                  style={[styles.writeReviewBtn, { backgroundColor: isDark ? '#374151' : '#fce7f3' }]}
+                  style={[styles.writeReviewBtn, { backgroundColor: isDark ? '#1e1e32' : '#fce7f3' }]}
                   onPress={() => { Keyboard.dismiss(); setShowReviewForm(true); }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.writeReviewIcon}>✏️</Text>
-                  <Text style={[styles.writeReviewText, { color: isDark ? '#f8fafc' : '#ec4899' }]}>
+                  <Text style={[styles.writeReviewText, { color: isDark ? '#eaeaf2' : '#ec4899' }]}>
                     후기 작성하기
                   </Text>
                 </TouchableOpacity>
@@ -939,59 +1056,16 @@ export default function EventDetailScreen({ navigation, route }: Props) {
 
           {/* 후기 작성 폼 */}
           {showReviewForm && (
-            <View style={styles.reviewItemWrap}>
-              <Text style={[styles.starLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>
-                별점을 선택해주세요
-              </Text>
-              <View style={styles.starRow}>
-                {STAR_ARRAY.map((star) => (
-                  <TouchableOpacity key={star} onPress={() => setReviewRating(star)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={[styles.starLarge, { opacity: star <= reviewRating ? 1 : 0.3 }]}>⭐</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <TextInput
-                style={[styles.reviewInput, {
-                  backgroundColor: isDark ? '#374151' : '#f1f5f9',
-                  color: isDark ? '#f8fafc' : '#0f172a',
-                }]}
-                placeholder="한줄평을 남겨주세요 (최대 100자)"
-                placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
-                value={reviewComment}
-                onChangeText={(t) => setReviewComment(t.slice(0, 100))}
-                maxLength={100}
-                returnKeyType="done"
-              />
-
-              <View style={styles.reviewBtnRow}>
-                <TouchableOpacity
-                  style={[styles.reviewCancelBtn, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}
-                  onPress={handleCancelReview}
-                >
-                  <Text style={[styles.reviewCancelText, { color: isDark ? '#f8fafc' : '#374151' }]}>취소</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.reviewSubmitBtn, {
-                    backgroundColor: reviewRating > 0 && reviewComment.trim().length > 0
-                      ? (isDark ? '#a78bfa' : '#ec4899')
-                      : (isDark ? '#374151' : '#e5e7eb'),
-                  }]}
-                  onPress={handleSubmitReview}
-                >
-                  <Text style={[styles.reviewSubmitText, {
-                    color: reviewRating > 0 && reviewComment.trim().length > 0 ? '#ffffff' : (isDark ? '#64748b' : '#94a3b8'),
-                  }]}>
-                    등록하기
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+            <ReviewForm
+              isDark={isDark}
+              onSubmit={handleSubmitReview}
+              onCancel={handleCancelReview}
+            />
           )}
 
           {/* 작성된 후기 표시 */}
           {reviewExists && existingReview && (
-            <View style={[styles.existingReview, { backgroundColor: isDark ? '#374151' : '#fefce8' }]}>
+            <View style={[styles.existingReview, { backgroundColor: isDark ? '#1e1e32' : '#fefce8' }]}>
               <View style={styles.starRowSmall}>
                 {STAR_ARRAY.map((star) => (
                   <Text key={star} style={[styles.starSmall, { opacity: star <= existingReview.rating ? 1 : 0.3 }]}>
@@ -999,10 +1073,10 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                   </Text>
                 ))}
               </View>
-              <Text style={[styles.existingReviewComment, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+              <Text style={[styles.existingReviewComment, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                 {sanitizeText(existingReview.comment, 200)}
               </Text>
-              <Text style={[styles.existingReviewMeta, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+              <Text style={[styles.existingReviewMeta, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                 내가 작성한 후기
               </Text>
             </View>
@@ -1011,7 +1085,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {/* 안내 (예약도 체크인도 안 한 상태 + 예약 불가 = 이미 지남) */}
           {!checkedIn && !showCheckIn && !showReserve && !reserved && (
             <View style={styles.checkinGuide}>
-              <Text style={[styles.checkinGuideText, { color: isDark ? '#64748b' : '#94a3b8' }]}>
+              <Text style={[styles.checkinGuideText, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                 참가 예약 → 당일 체크인 → 후기 작성{'\n'}3단계를 완료하면 후기를 남길 수 있습니다
               </Text>
             </View>
@@ -1022,10 +1096,10 @@ export default function EventDetailScreen({ navigation, route }: Props) {
        
       
       {/* 하단 참가 버튼 */}
-      <View style={[styles.bottomBar, { backgroundColor: isDark ? '#1e293b' : '#ffffff', paddingBottom: insets.bottom + 16, borderTopColor: isDark ? '#334155' : '#e5e7eb' }]}>
+      <View style={[styles.bottomBar, { backgroundColor: isDark ? '#141422' : '#ffffff', paddingBottom: insets.bottom + 16, borderTopColor: isDark ? '#2a2a44' : '#e5e7eb' }]}>
         <View style={styles.bottomInfo}>
-          <Text style={[styles.bottomLabel, { color: isDark ? '#94a3b8' : '#64748b' }]}>참가비</Text>
-          <Text style={[styles.bottomPrice, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+          <Text style={[styles.bottomLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>참가비</Text>
+          <Text style={[styles.bottomPrice, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
             {event.price === 0 ? '무료' : event.price ? `${event.price.toLocaleString()}원` : '문의'}
           </Text>
         </View>
@@ -1141,34 +1215,36 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   mainCard: {
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 24,
+    padding: 22,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 4,
   },
   tagsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   tag: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 24,
   },
   tagText: {
     fontSize: 12,
     fontWeight: '600',
+    letterSpacing: 0.2,
   },
   eventTitle: {
     fontSize: 24,
     fontWeight: '800',
-    marginBottom: 16,
+    marginBottom: 18,
     lineHeight: 32,
+    letterSpacing: -0.3,
   },
   dateTimeRow: {
     flexDirection: 'row',
@@ -1180,9 +1256,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingVertical: 9,
+    borderRadius: 14,
     gap: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   dateTimeIcon: {
     fontSize: 16,
@@ -1197,13 +1275,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   sectionCard: {
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 24,
+    padding: 22,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 4,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1214,11 +1292,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
+    letterSpacing: -0.2,
   },
   remainingBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 24,
   },
   remainingText: {
     color: '#ffffff',
@@ -1260,8 +1339,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 12,
+    borderRadius: 14,
     gap: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   additionalInfoIcon: {
     fontSize: 16,
@@ -1274,8 +1355,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   infoContent: {
     flex: 1,
@@ -1299,8 +1382,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
-    borderRadius: 20,
+    padding: 22,
+    borderRadius: 24,
   },
   linkContent: {
     flexDirection: 'row',
@@ -1350,7 +1433,7 @@ const styles = StyleSheet.create({
   joinButton: {
     flex: 1,
     paddingVertical: 16,
-    borderRadius: 14,
+    borderRadius: 16,
     alignItems: 'center',
   },
   joinButtonText: {

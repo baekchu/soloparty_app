@@ -13,6 +13,7 @@ import * as SecureStore from 'expo-secure-store';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog } from '../utils/secureStorage';
 import { Event } from '../types';
+import { parseLocalDate as _parseLocalDate } from '../utils/sanitize';
 
 const BOOKMARKS_KEY = '@event_bookmarks_v3';
 const BOOKMARKS_SECURE_KEY = 'sp_bookmarks_v3';
@@ -84,16 +85,22 @@ function _notify() {
   _listeners.forEach(fn => fn([..._bookmarks]));
 }
 
+/** parseLocalDate wrapper — null 반환으로 만료 판정에 사용 */
 function parseLocalDate(dateStr: string): Date | null {
   if (!dateStr || typeof dateStr !== 'string') return null;
   const parts = dateStr.split('-');
   if (parts.length !== 3) return null;
-  const y = parseInt(parts[0], 10);
-  const m = parseInt(parts[1], 10) - 1;
-  const d = parseInt(parts[2], 10);
-  if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
-  const date = new Date(y, m, d);
-  return isNaN(date.getTime()) ? null : date;
+  try {
+    const d = _parseLocalDate(dateStr);
+    // _parseLocalDate는 실패 시 today를 반환하므로, 입력과 결과를 대조
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    if (d.getFullYear() === y && d.getMonth() === m && d.getDate() === day) return d;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**

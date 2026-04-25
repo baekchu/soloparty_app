@@ -26,6 +26,53 @@ const getFirstDayOfMonth = (year: number, month: number) => {
   return new Date(year, month - 1, 1).getDay();
 };
 
+// weeks 계산 캐시 (year-month 키) — 월 이동 시 재계산 제거
+const weeksCache = new Map<string, Array<Array<{ day: number; isOtherMonth: boolean }>>>();
+
+function calculateWeeks(year: number, month: number): Array<Array<{ day: number; isOtherMonth: boolean }>> {
+  const key = `${year}-${month}`;
+  const cached = weeksCache.get(key);
+  if (cached) return cached;
+
+  const daysInMonth = getDaysInMonth(year, month);
+  const firstDay = getFirstDayOfMonth(year, month);
+
+  const weeks: Array<Array<{ day: number; isOtherMonth: boolean }>> = [];
+  let currentDay = 1;
+  let nextMonthDay = 1;
+
+  const prevMonthDays = getDaysInMonth(month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
+  const prevMonthStart = prevMonthDays - firstDay + 1;
+
+  for (let weekIndex = 0; weekIndex < 6; weekIndex++) {
+    const week: Array<{ day: number; isOtherMonth: boolean }> = [];
+
+    for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+      const totalDayIndex = weekIndex * 7 + dayIndex;
+
+      if (totalDayIndex < firstDay) {
+        week.push({ day: prevMonthStart + totalDayIndex, isOtherMonth: true });
+      } else if (currentDay <= daysInMonth) {
+        week.push({ day: currentDay++, isOtherMonth: false });
+      } else {
+        week.push({ day: nextMonthDay++, isOtherMonth: true });
+      }
+    }
+
+    weeks.push(week);
+  }
+
+  weeksCache.set(key, weeks);
+
+  // 캐시 크기 제한 (최대 24개월 — 2년치)
+  if (weeksCache.size > 24) {
+    const firstKey = weeksCache.keys().next().value;
+    if (firstKey) weeksCache.delete(firstKey);
+  }
+
+  return weeks;
+}
+
 // 컴포넌트 외부로 이동 — 매 렌더마다 원시 함수 재생성 방지
 const getTodayStr = () => {
   const today = new Date();
@@ -36,22 +83,49 @@ const getTodayStr = () => {
 const EMPTY_EVENTS: Event[] = [];
 const EMPTY_COLORS: string[] = [];
 
+// 매일 다른 순서로 이벤트를 보여주기 위한 결정론적 셔플 유틸
+// - 같은 날 같은 날짜 셀은 항상 동일한 순서 (일관성)
+// - 날이 바뀌면 순서가 바뀜 (신선함)
+function fnvHash(str: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
+
+function seededShuffle<T>(arr: T[], seed: number): T[] {
+  const copy = [...arr];
+  let s = seed >>> 0;
+  for (let i = copy.length - 1; i > 0; i--) {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0; // LCG
+    const j = s % (i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 // 성능 최적화: 개별 셀을 React.memo로 분리 → 변경되지 않은 셀 재렌더 방지
 const DayCell = React.memo(function DayCell({
   day, weekIndex, dayIndex, dateString, dayEvents, dayColors,
   isToday, onDatePress, cellStyles, dateTextStyles,
-  holidayTextStyle, eventTextStyle, todayCircleStyle, themeColors,
+  holidayTextStyle, eventTextStyle, themeColors,
 }: {
   day: number; weekIndex: number; dayIndex: number;
   dateString: string; dayEvents: Event[]; dayColors: string[];
   isToday: boolean; onDatePress?: (date: string) => void;
   cellStyles: any; dateTextStyles: any; holidayTextStyle: any;
-  eventTextStyle: any; todayCircleStyle: any; themeColors: any;
+  eventTextStyle: any; themeColors: any;
 }) {
   const isSunday = dayIndex === 0;
   const isSaturday = dayIndex === 6;
   const holidayName = getHolidayName(dateString);
   const isHolidayDay = !!holidayName && !isSunday;
+
+  const handlePress = React.useCallback(() => {
+    onDatePress?.(dateString);
+  }, [onDatePress, dateString]);
 
   const dateStyle = isToday
     ? dateTextStyles.today
@@ -65,14 +139,21 @@ const DayCell = React.memo(function DayCell({
     <TouchableOpacity
       key={`${weekIndex}-${dayIndex}`}
       style={cellStyles.cell}
-      onPress={() => onDatePress?.(dateString)}
+      onPress={handlePress}
       activeOpacity={0.7}
     >
       <View style={cellStyles.innerView}>
-        <View style={monthStyles.dateHeader}>
-          <View style={isToday ? todayCircleStyle : undefined}>
-            <Text style={dateStyle}>{day}</Text>
-          </View>
+        <View style={[monthStyles.dateHeader, { height: cellStyles.dateHeaderHeight, marginTop: cellStyles.dateHeaderMarginTop }]}>
+          <Text style={dateStyle}>{day}</Text>
+          {isToday && (
+            <View style={{
+              width: cellStyles.todayDotSize,
+              height: cellStyles.todayDotSize,
+              borderRadius: cellStyles.todayDotSize / 2,
+              backgroundColor: themeColors.todayBg,
+              marginTop: 2,
+            }} />
+          )}
           {holidayName && (
             <Text numberOfLines={1} style={holidayTextStyle}>
               {holidayName.length > 5 ? holidayName.substring(0, 5) : holidayName}
@@ -80,23 +161,36 @@ const DayCell = React.memo(function DayCell({
           )}
         </View>
         <View style={monthStyles.eventList}>
-          {dayEvents.slice(0, 3).map((event, idx) => (
-            <View
-              key={event.id}
-              style={[monthStyles.eventItem, { backgroundColor: dayColors[idx] ?? '#e2e8f0', height: cellStyles.eventHeight }]}
-            >
-              <Text style={eventTextStyle} numberOfLines={1}>
-                {event.title}
-              </Text>
-            </View>
-          ))}
-          {dayEvents.length > 3 && (
-            <View style={[monthStyles.moreEventsContainer, { backgroundColor: themeColors.moreIndicatorBg }]}>
-              <Text style={[monthStyles.moreEventsText, { fontSize: cellStyles.moreFontSize, color: themeColors.moreTextColor }]}>
-                +{dayEvents.length - 3}
-              </Text>
-            </View>
-          )}
+          {(() => {
+            // +N 배지가 필요할 때는 이벤트 1개를 줄여 배지 공간 확보
+            // (overflow:hidden 셀에서 배지가 잘리는 문제 방지)
+            const hasMore = dayEvents.length > cellStyles.maxVisibleEvents;
+            const visibleCount = hasMore
+              ? cellStyles.maxVisibleEvents - 1
+              : dayEvents.length;
+            const moreCount = dayEvents.length - visibleCount;
+            return (
+              <>
+                {dayEvents.slice(0, visibleCount).map((event, idx) => (
+                  <View
+                    key={event.id}
+                    style={[monthStyles.eventItem, { backgroundColor: dayColors[idx] ?? themeColors.eventFallbackBg, height: cellStyles.eventHeight }]}
+                  >
+                    <Text style={eventTextStyle} numberOfLines={1}>
+                      {event.title}
+                    </Text>
+                  </View>
+                ))}
+                {hasMore && (
+                  <View style={[monthStyles.moreEventsContainer, { backgroundColor: themeColors.moreIndicatorBg }]}>
+                    <Text style={[monthStyles.moreEventsText, { fontSize: cellStyles.moreFontSize, color: themeColors.moreTextColor }]}>
+                      +{moreCount}
+                    </Text>
+                  </View>
+                )}
+              </>
+            );
+          })()}
         </View>
       </View>
     </TouchableOpacity>
@@ -120,7 +214,25 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
       return acc;
     }, {} as EventsByDate);
   }, [events, selectedLocation, selectedRegion]);
-  
+
+  // 날짜별 이벤트를 오늘 날짜 기반 시드로 셔플 → 매일 다른 이벤트가 상단 3개에 표시됨
+  // 셔플 전에 id 기준 정렬 → 서버에서 순서가 달라져도 항상 동일한 입력 보장 (새로고침해도 고정)
+  const shuffledEvents = useMemo(() => {
+    const todaySeed = fnvHash(getTodayStr());
+    const result: EventsByDate = {};
+    for (const [dateString, dayEvents] of Object.entries(filteredEvents)) {
+      if (dayEvents.length <= 1) {
+        result[dateString] = dayEvents;
+      } else {
+        const stable = [...dayEvents].sort((a, b) =>
+          (a.id ?? a.title ?? '').localeCompare(b.id ?? b.title ?? '')
+        );
+        result[dateString] = seededShuffle(stable, fnvHash(dateString) ^ todaySeed);
+      }
+    }
+    return result;
+  }, [filteredEvents]);
+
   const [dimensions, setDimensions] = React.useState(() => {
     const { width, height } = Dimensions.get('window');
     const cellWidth = width / 7;
@@ -130,14 +242,14 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     
     let cellHeight;
     if (isSmallScreen) {
-      // 작은 화면 (예: iPhone SE)
-      cellHeight = Math.max(height * 0.09, 65);
+      // 작은 화면 — 이벤트 3개 + 배지 확보
+      cellHeight = Math.max(height * 0.10, 82);
     } else if (isMediumScreen) {
-      // 중간 화면 (예: iPhone 12, 13)
-      cellHeight = Math.max(height * 0.1, 75);
+      // 중간 화면
+      cellHeight = Math.max(height * 0.10, 84);
     } else {
-      // 큰 화면 (예: iPhone 14 Pro Max, 태블릿)
-      cellHeight = Math.max(height * 0.11, 85);
+      // 큰 화면 — 이벤트 4개 + 배지 확보
+      cellHeight = Math.max(height * 0.115, 100);
     }
     
     return { cellWidth, cellHeight };
@@ -151,42 +263,45 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   const cellStyles = useMemo(() => {
     const { cellWidth, cellHeight } = dimensions;
     const isSmall = cellWidth < 50;
-    const circleSize = isSmall ? 22 : 25;
     const eventHeight = Math.max(Math.min(cellHeight / 6, 14), 11);
+    const fontSize = isSmall ? 12 : 15;
+    // 날짜 숫자 아래 오늘 점 표시: 텍스트 줄 높이 + 점(4px) + 간격(2px)
+    const dotSpace = 6;
+    const dateHeaderHeight = Math.max(fontSize + dotSpace + 2, cellHeight < 70 ? 24 : cellHeight < 80 ? 26 : 28);
     return {
       emptyCell: { width: cellWidth, height: cellHeight, backgroundColor: 'transparent' as const },
       cell: { width: cellWidth, height: cellHeight, borderBottomWidth: 0 as const, backgroundColor: 'transparent' as const },
       innerView: { padding: isSmall ? 1 : 2, height: '100%' as const, flexDirection: 'column' as const },
-      todayCircle: {
-        width: circleSize, height: circleSize,
-        borderRadius: isSmall ? 11 : 13,
-        alignItems: 'center' as const, justifyContent: 'center' as const,
-      },
-      fontSize: isSmall ? 12 : 15,
+      fontSize,
       holidayFontSize: cellWidth < 46 ? 5 : 6,
-      // eventHeight를 미리 계산해 글자 크기에 반영 (이전 코드의 Math.min(8, eventHeight*0.6) 복원)
       eventFontSize: isSmall ? 7 : Math.min(8, eventHeight * 0.6),
       moreFontSize: isSmall ? 7 : 8,
       eventHeight,
+      dateHeaderHeight,
+      dateHeaderMarginTop: cellHeight < 70 ? 1 : cellHeight < 80 ? 2 : 3,
+      todayDotSize: isSmall ? 3 : 4,
+      maxVisibleEvents: cellHeight >= 100 ? 4 : 3, // 큰화면 4개, 작은화면 3개
     };
   }, [dimensions]);
 
   // 테마 의존 색상을 useMemo로 미리 계산
   const themeColors = useMemo(() => ({
     todayBg: isDark ? '#a78bfa' : '#ec4899',
-    text: isDark ? '#e5e7eb' : '#1f2937',
+    text: isDark ? '#c0c0d0' : '#1f2937',
     eventText: isDark ? '#ffffff' : '#374151',
-    moreIndicatorBg: isDark ? '#374151' : '#f3f4f6',
-    moreTextColor: isDark ? '#d1d5db' : '#4b5563',
+    moreIndicatorBg: isDark ? '#1e1e32' : '#f3f4f6',
+    moreTextColor: isDark ? '#a0a0b8' : '#4b5563',
+    eventFallbackBg: isDark ? '#2a2a44' : '#e2e8f0', // 폴백 배경 (다크: 진한 회색, 라이트: 연한 회색)
   }), [isDark]);
 
   // renderDay 내부 반복 생성 방지: 텍스트 스타일을 미리 계산
   const dateTextStyles = useMemo(() => ({
-    today: { fontSize: cellStyles.fontSize, fontWeight: '800' as const, color: '#ffffff' },
+    // 원 배경 제거 → 텍스트 자체를 강조색으로 표시 (아래 점과 조합)
+    today: { fontSize: cellStyles.fontSize, fontWeight: '800' as const, color: themeColors.todayBg },
     normal: { fontSize: cellStyles.fontSize, fontWeight: '500' as const, color: themeColors.text },
     sunday: { fontSize: cellStyles.fontSize, fontWeight: '500' as const, color: '#ef4444' },
     saturday: { fontSize: cellStyles.fontSize, fontWeight: '500' as const, color: '#3b82f6' },
-  }), [cellStyles.fontSize, themeColors.text]);
+  }), [cellStyles.fontSize, themeColors.text, themeColors.todayBg]);
 
   const holidayTextStyle = useMemo(() => ({
     fontSize: cellStyles.holidayFontSize,
@@ -198,29 +313,30 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
   }), [cellStyles.holidayFontSize, dimensions.cellWidth]);
 
   const eventTextStyle = useMemo(() => ({
-    color: themeColors.eventText,
+    color: isDark ? '#ffffff' : '#1e293b',
     fontSize: cellStyles.eventFontSize,
     fontWeight: '700' as const,
     letterSpacing: -0.2,
-  }), [themeColors.eventText, cellStyles.eventFontSize]);
+    textShadowColor: isDark ? 'rgba(0,0,0,0.6)' : 'transparent',
+    textShadowOffset: isDark ? { width: 0, height: 1 } : { width: 0, height: 0 },
+    textShadowRadius: isDark ? 2 : 0,
+  }), [isDark, cellStyles.eventFontSize]);
 
-  const todayCircleStyle = useMemo(() => (
-    [cellStyles.todayCircle, { backgroundColor: themeColors.todayBg }]
-  ), [cellStyles.todayCircle, themeColors.todayBg]);
+  // todayCircle 제거됨 — DayCell 내부에서 점(dot)으로 대체
 
   // 성능 최적화: 고유 이벤트 색상을 한 번만 계산 후 재사용 (중복 호출 90% 감소)
   const dayColorsMap = useMemo(() => {
     const map: Record<string, string[]> = {};
     const colorCache = new Map<string, string>(); // eventId/groupId → color
-    for (const dateString of Object.keys(filteredEvents)) {
-      const dayEvents = filteredEvents[dateString];
+    for (const dateString of Object.keys(shuffledEvents)) {
+      const dayEvents = shuffledEvents[dateString];
       map[dateString] = dayEvents.slice(0, 3).map((event, idx) => {
         const cacheKey = `${event.groupId || event.id || `${dateString}-${idx}`}_${isDark ? 1 : 0}`;
         let color = colorCache.get(cacheKey);
         if (!color) {
           color = EventColorManager.getColorForEvent(
             event.id || `${dateString}-${idx}`,
-            event.title, dateString, filteredEvents, dayEvents, idx, isDark, event.groupId
+            event.title, dateString, shuffledEvents, dayEvents, idx, isDark, event.groupId
           );
           colorCache.set(cacheKey, color);
         }
@@ -228,7 +344,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
       });
     }
     return map;
-  }, [filteredEvents, isDark]);
+  }, [shuffledEvents, isDark]);
 
   React.useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
@@ -239,23 +355,23 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
       const isMediumScreen = height >= 700 && height < 850;
       
       let cellHeight;
-      if (isSmallScreen) {
-        cellHeight = Math.max(height * 0.09, 65);
-      } else if (isMediumScreen) {
-        cellHeight = Math.max(height * 0.1, 75);
-      } else {
-        cellHeight = Math.max(height * 0.11, 85);
-      }
-      
-      setDimensions({ cellWidth, cellHeight });
+    if (isSmallScreen) {
+      cellHeight = Math.max(height * 0.10, 82);
+    } else if (isMediumScreen) {
+      cellHeight = Math.max(height * 0.10, 84);
+    } else {
+      cellHeight = Math.max(height * 0.115, 100);
+    }
+    
+    setDimensions({ cellWidth, cellHeight });
     });
 
     return () => subscription?.remove();
   }, []);
 
   // useMemo로 계산 값 메모이제이션 (성능 최적화)
-  const daysInMonth = useMemo(() => getDaysInMonth(year, month), [year, month]);
-  const firstDay = useMemo(() => getFirstDayOfMonth(year, month), [year, month]);
+  // weeks 계산 (외부 캐싱 함수 사용 — 월 이동 시 재계산 제거)
+  const weeks = useMemo(() => calculateWeeks(year, month), [year, month]);
   
   // 오늘 날짜 (자정 넘김 감지)
   const [todayString, setTodayString] = useState(getTodayStr);
@@ -270,53 +386,17 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
     return () => clearTimeout(timer);
   }, [todayString]);
 
-  const renderWeeks = useCallback(() => {
-    const weeks: Array<Array<{ day: number; isOtherMonth: boolean }>> = [];
-    let currentDay = 1;
-    let nextMonthDay = 1;
-    
-    // 이전 달의 마지막 날짜들
-    const prevMonthDays = getDaysInMonth(month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
-    const prevMonthStart = prevMonthDays - firstDay + 1;
-    
-    // 6주(42일)를 모두 채움
-    for (let weekIndex = 0; weekIndex < 6; weekIndex++) {
-      const week: Array<{ day: number; isOtherMonth: boolean }> = [];
-      
-      for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
-        const totalDayIndex = weekIndex * 7 + dayIndex;
-        
-        if (totalDayIndex < firstDay) {
-          // 이전 달
-          week.push({ day: prevMonthStart + totalDayIndex, isOtherMonth: true });
-        } else if (currentDay <= daysInMonth) {
-          // 현재 달
-          week.push({ day: currentDay++, isOtherMonth: false });
-        } else {
-          // 다음 달
-          week.push({ day: nextMonthDay++, isOtherMonth: true });
-        }
-      }
-      
-      weeks.push(week);
-    }
-
-    return weeks;
-  }, [daysInMonth, firstDay, year, month]);
-
-  const weeks = useMemo(() => renderWeeks(), [renderWeeks]);
-
   return (
-    <View style={[monthStyles.container, { backgroundColor: isDark ? '#0f172a' : '#ffffff' }]}>
+    <View style={[monthStyles.container, { backgroundColor: isDark ? '#0c0c16' : '#ffffff' }]}>
       {/* 월 헤더 */}
       <View style={[
         monthStyles.monthHeader,
         { 
-          backgroundColor: isDark ? '#0f172a' : '#ffffff',
-          borderBottomColor: isDark ? '#374151' : '#e5e7eb',
+          backgroundColor: isDark ? '#0c0c16' : '#ffffff',
+          borderBottomColor: isDark ? '#1e1e32' : '#e5e7eb',
         }
       ]}>
-        <Text style={[monthStyles.monthTitle, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+        <Text style={[monthStyles.monthTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
           {MONTH_NAMES[month - 1]}
         </Text>
       </View>
@@ -337,7 +417,7 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                   weekIndex={weekIndex}
                   dayIndex={dayIndex}
                   dateString={dateString}
-                  dayEvents={filteredEvents[dateString] || EMPTY_EVENTS}
+                  dayEvents={shuffledEvents[dateString] || EMPTY_EVENTS}
                   dayColors={dayColorsMap[dateString] || EMPTY_COLORS}
                   isToday={dateString === todayString}
                   onDatePress={onDatePress}
@@ -345,7 +425,6 @@ export default React.memo(function MonthCalendar({ year, month, events, isDark, 
                   dateTextStyles={dateTextStyles}
                   holidayTextStyle={holidayTextStyle}
                   eventTextStyle={eventTextStyle}
-                  todayCircleStyle={todayCircleStyle}
                   themeColors={themeColors}
                 />
               );
@@ -378,13 +457,13 @@ const monthStyles = StyleSheet.create({
   },
   dateHeader: {
     alignItems: 'center',
-    marginTop: 3,
-    height: 28,
     justifyContent: 'flex-start',
+    // height / marginTop은 cellStyles에서 동적으로 주입 (작은 화면 겹침 방지)
   },
   eventList: {
     flex: 1,
     gap: 1,
+    overflow: 'hidden',
   },
   eventItem: {
     borderRadius: 2,

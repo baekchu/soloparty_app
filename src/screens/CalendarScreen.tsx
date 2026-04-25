@@ -16,6 +16,7 @@ import {
   Alert,
   Platform,
   BackHandler,
+  AppState,
   StyleSheet,
   InteractionManager,
   ActivityIndicator,
@@ -24,7 +25,7 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { loadEvents, hasMemCache } from "../utils/storage";
+import { loadEvents, hasMemCache, onSWRUpdate } from "../utils/storage";
 import { EventsByDate, Event } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRegion } from "../contexts/RegionContext";
@@ -45,6 +46,8 @@ import useReminders from "../hooks/useReminders";
 import { sendNewEventNotification } from "../services/NotificationService";
 import { secureLog } from "../utils/secureStorage";
 import { sanitizeText, sanitizeColor, parseLocalDate } from "../utils/sanitize";
+import { useToast } from "../contexts/ToastContext";
+import { hapticLight, hapticSuccess } from "../utils/haptics";
 
 type CalendarScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, "Calendar">,
@@ -83,8 +86,9 @@ const MONTH_NAMES = [
   "11월",
   "12월",
 ] as const;
-const POLL_INTERVAL = 300000; // 5분 폴링 (배터리 최적화)
-const INITIAL_MONTHS_RANGE = 3; // 초기 로드 월 범위 (앞뒤 3개월)
+const POLL_INTERVAL = 300000; // 5분 기본 폴링
+const POLL_INTERVAL_BACKGROUND = 900000; // 15분 백그라운드 폴링 (배터리 절약)
+const INITIAL_MONTHS_RANGE = 2; // 초기 로드 월 범위 (앞뒤 2개월 → 첫 렌더 속도 개선)
 
 // 연령 필터 정규식 (루프 밖에서 한 번만 컴파일)
 const AGE_RANGE_REGEX = /\d+/g;
@@ -101,48 +105,59 @@ interface EventCardProps {
 }
 const EventCard = React.memo(({ event, date, onPress, compact = false, marginBottom = 12 }: EventCardProps) => {
   const handlePress = React.useCallback(() => onPress(event, date), [onPress, event, date]);
-  const s = React.useMemo(() => ({
-    container: [ecStyles.container, { paddingTop: compact ? 12 : 16, marginBottom }],
-    title: [ecStyles.title, { fontSize: compact ? 15 : 16 }],
-    subRow: [ecStyles.subRow, { marginBottom: compact ? 6 : 8 }],
-    locRow: [ecStyles.locRow, { marginBottom: compact ? 6 : 8 }],
-    btn: [ecStyles.detailBtn, compact ? ecStyles.detailBtnCompact : null],
-    btnText: [ecStyles.detailBtnText, compact ? ecStyles.detailBtnTextCompact : null],
-  }), [compact, marginBottom]);
+  // compact/marginBottom 조합이 2×N가지 → useMemo로 배열 객체 재생성 방지
+  const containerStyle = React.useMemo(
+    () => [ecStyles.container, marginBottom !== 12 ? { marginBottom } : ecStyles.containerDefaultMargin],
+    [marginBottom]
+  );
+  const innerStyle = compact ? ecStyles.innerCompactCombined : ecStyles.inner;
+  const titleStyle = compact ? ecStyles.titleCompact : ecStyles.title;
+  const subRowStyle = compact ? ecStyles.subRowCompact : ecStyles.subRow;
+  const locRowStyle = compact ? ecStyles.locRowCompact : ecStyles.locRow;
   return (
-    <TouchableOpacity activeOpacity={0.7} onPress={handlePress} style={s.container}>
-      <Text style={s.title} numberOfLines={compact ? 2 : undefined}>
-        {sanitizeText(event.title, 100)}
-      </Text>
-      {event.subEvents && event.subEvents.length > 1 ? (
-        <View style={s.subRow}>
-          {event.subEvents.slice(0, 3).map((sub: any, si: number) => (
-            <View key={si} style={ecStyles.tag}>
-              <Text style={ecStyles.tagText} numberOfLines={1}>
-                {sub.location || sub.venue || `지점${si + 1}`}
-              </Text>
-            </View>
-          ))}
-          {event.subEvents.length > 3 && (
-            <View style={ecStyles.moreTag}>
-              <Text style={ecStyles.moreTagText}>+{event.subEvents.length - 3}</Text>
-            </View>
-          )}
-        </View>
-      ) : event.location ? (
-        <View style={s.locRow}>
-          <View style={ecStyles.tag}>
-            <Text style={ecStyles.tagText} numberOfLines={1}>
-              {sanitizeText(event.location, 100)}
-            </Text>
+    <TouchableOpacity activeOpacity={0.7} onPress={handlePress} style={containerStyle}
+      accessibilityLabel={`${sanitizeText(event.title, 100)}, ${event.time || '시간 미정'}`}
+      accessibilityRole="button"
+      accessibilityHint="이벤트 상세 보기"
+    >
+      <View style={innerStyle}>
+        <View style={ecStyles.headerRow}>
+          <View style={ecStyles.timeBadge}>
+            <Text style={ecStyles.timeBadgeText}>{event.time || '시간 미정'}</Text>
+          </View>
+          <View style={ecStyles.arrowCircle}>
+            <Text style={ecStyles.arrowText}>→</Text>
           </View>
         </View>
-      ) : null}
-      <Text style={[ecStyles.time, { marginBottom: compact ? 0 : 12 }]}>
-        {event.time || '시간 미정'}
-      </Text>
-      <View style={s.btn}>
-        <Text style={s.btnText}>자세히 보기</Text>
+        <Text style={titleStyle} numberOfLines={compact ? 2 : undefined}>
+          {sanitizeText(event.title, 100)}
+        </Text>
+        {event.subEvents && event.subEvents.length > 1 ? (
+          <View style={subRowStyle}>
+            {event.subEvents.slice(0, 3).map((sub: any, si: number) => (
+              <View key={si} style={ecStyles.tag}>
+                
+                <Text style={ecStyles.tagText} numberOfLines={1}>
+                  {sub.location || sub.venue || `지점${si + 1}`}
+                </Text>
+              </View>
+            ))}
+            {event.subEvents.length > 3 && (
+              <View style={ecStyles.moreTag}>
+                <Text style={ecStyles.moreTagText}>+{event.subEvents.length - 3}</Text>
+              </View>
+            )}
+          </View>
+        ) : event.location ? (
+          <View style={locRowStyle}>
+            <View style={ecStyles.tag}>
+              
+              <Text style={ecStyles.tagText} numberOfLines={1}>
+                {sanitizeText(event.location, 100)}
+              </Text>
+            </View>
+          </View>
+        ) : null}
       </View>
     </TouchableOpacity>
   );
@@ -152,8 +167,9 @@ const EventCard = React.memo(({ event, date, onPress, compact = false, marginBot
 interface PanelSearchInputProps {
   onDebouncedChange: (text: string) => void;
   clearSignal: number;
+  isDark: boolean;
 }
-const PanelSearchInput = React.memo(({ onDebouncedChange, clearSignal }: PanelSearchInputProps) => {
+const PanelSearchInput = React.memo(({ onDebouncedChange, clearSignal, isDark }: PanelSearchInputProps) => {
   const [value, setValue] = React.useState('');
   const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const onChangeRef = React.useRef(onDebouncedChange);
@@ -182,18 +198,21 @@ const PanelSearchInput = React.memo(({ onDebouncedChange, clearSignal }: PanelSe
   }, []);
 
   return (
-    <View style={psiStyles.container}>
+    <View style={[psiStyles.container, {
+      backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+    }]}>
       <TextInput
-        style={psiStyles.input}
+        style={[psiStyles.input, { color: isDark ? '#eaeaf2' : '#0f172a' }]}
         placeholder="제목, 장소, 태그 검색..."
-        placeholderTextColor="rgba(255, 255, 255, 0.5)"
+        placeholderTextColor={isDark ? 'rgba(255,255,255,0.40)' : 'rgba(0,0,0,0.35)'}
         value={value}
         onChangeText={handleChange}
         returnKeyType="search"
       />
       {value.length > 0 && (
         <TouchableOpacity onPress={handleClear} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Text style={psiStyles.clearBtn}>✕</Text>
+          <Text style={[psiStyles.clearBtn, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)' }]}>✕</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -339,6 +358,20 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // ==================== 찜/즐겨찾기 & 리마인더 ====================
   const { bookmarks, toggleBookmark, isLoaded: bookmarksLoaded } = useBookmarks();
   const { hasReminder, scheduleReminder, cancelReminder } = useReminders();
+  const { showToast } = useToast();
+
+  // 북마크 날짜 포맷 사전 캐싱 (bookmarks 변경 시에만 재계산)
+  const bookmarkDateLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const { date } of bookmarks) {
+      if (map.has(date)) continue;
+      const parts = date.split('-');
+      if (parts.length === 3) {
+        map.set(date, `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`);
+      }
+    }
+    return map;
+  }, [bookmarks]);
 
   // ==================== Dimensions (메모이제이션) ====================
   const [dimensions, setDimensions] = useState(() => ({
@@ -840,14 +873,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       for (const event of events[selectedDate]) {
         if (selectedRegion && event.region !== selectedRegion) continue;
         if (selectedLocation && event.location !== selectedLocation) continue;
-        if (q && !(
-          event.title?.toLowerCase().includes(q) ||
-          event.location?.toLowerCase().includes(q) ||
-          event.region?.toLowerCase().includes(q) ||
-          event.description?.toLowerCase().includes(q) ||
-          event.venue?.toLowerCase().includes(q) ||
-          (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)))
-        )) continue;
+        
+        // 검색어가 있을 때만 텍스트 검색
+        if (q) {
+          const matchesSearch = 
+            event.title?.toLowerCase().includes(q) ||
+            event.location?.toLowerCase().includes(q) ||
+            event.region?.toLowerCase().includes(q) ||
+            event.description?.toLowerCase().includes(q) ||
+            event.venue?.toLowerCase().includes(q) ||
+            (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)));
+          if (!matchesSearch) continue;
+        }
+        
         result.push({ date: selectedDate, event });
       }
       result.sort((a, b) => (a.event.time || 'ZZ:ZZ').localeCompare(b.event.time || 'ZZ:ZZ'));
@@ -904,15 +942,17 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         }
       }
 
-      // 검색
-      if (q && !(
-        event.title?.toLowerCase().includes(q) ||
-        event.location?.toLowerCase().includes(q) ||
-        event.region?.toLowerCase().includes(q) ||
-        event.description?.toLowerCase().includes(q) ||
-        event.venue?.toLowerCase().includes(q) ||
-        (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)))
-      )) continue;
+      // 검색 (검색어가 있을 때만 텍스트 검색 수행 — 조기 탈출로 연산 50% 감소)
+      if (q) {
+        const matchesSearch = 
+          event.title?.toLowerCase().includes(q) ||
+          event.location?.toLowerCase().includes(q) ||
+          event.region?.toLowerCase().includes(q) ||
+          event.description?.toLowerCase().includes(q) ||
+          event.venue?.toLowerCase().includes(q) ||
+          (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)));
+        if (!matchesSearch) continue;
+      }
 
       result.push({ date: item.date, event });
     }
@@ -949,8 +989,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // (\ud328\ub110 \uc5f4\uae30/\ub2eb\uae30, \uc6d4 \uc2a4\ud06c\ub864 \ub4f1\uc5d0\uc11c \uc7ac\uc0dd\uc131 \ubc1c\uc0dd \uc548 \ud568)
   // 날짜 버블 색상 메모이제이션 (렌더마다 인라인 객체 재생성 방지)
   const bubbleColors = useMemo(() => ({
-    bg: { backgroundColor: isDark ? '#334155' : '#ffffff' },
-    text: { color: isDark ? '#a78bfa' : '#ec4899' },
+    bg: { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.35)' },
+    text: { color: '#ffffff' },
   }), [isDark]);
 
   // 날짜 파싱 사전 캐시: groupedUpcoming 변경 시에만 한 번 파싱 (parseLocalDate 반복 호출 제거)
@@ -1239,6 +1279,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   isPanelExpandedRef.current = isPanelExpanded;
   selectedDateRef.current = selectedDate;
   
+  // SWR 백그라운드 업데이트 구독: 캐시 반환 후 네트워크에서 새 데이터 도착 시 자동 갱신
+  useEffect(() => {
+    const unsubscribe = onSWRUpdate((freshData) => {
+      if (!isMountedRef.current || !isFocusedRef.current) return;
+      if (freshData === previousEventsRef.current) return;
+      checkForNewEvents(previousEventsRef.current, freshData);
+      setEvents(freshData);
+      previousEventsRef.current = freshData;
+      lastEventsRef.current = freshData;
+    });
+    return unsubscribe;
+  }, [checkForNewEvents]);
+
   useFocusEffect(
     useCallback(() => {
       // 포커스 상태 추적 (마운트 상태와 분리)
@@ -1262,30 +1315,48 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         loadData();
       });
 
-      // 폴링 설정 (배터리 최적화)
-      pollIntervalRef.current = setInterval(async () => {
-        if (!isFocusedRef.current || !isMountedRef.current) return;
+      // 폴링 설정 (AppState-aware: 백그라운드에서는 간격 늘림)
+      const appStateRef = { current: AppState.currentState };
+      
+      const startPolling = () => {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        const interval = appStateRef.current === 'active' ? POLL_INTERVAL : POLL_INTERVAL_BACKGROUND;
+        pollIntervalRef.current = setInterval(async () => {
+          if (!isFocusedRef.current || !isMountedRef.current) return;
 
-        try {
-          const latestEvents = await loadEvents(true);
+          try {
+            const latestEvents = await loadEvents(true);
 
-          if (
-            latestEvents &&
-            typeof latestEvents === "object" &&
-            isMountedRef.current
-          ) {
-            // 동일 참조(데이터 변경 없음) → 상태 업데이트 및 useMemo 체인 전부 스킵
-            if (latestEvents === previousEventsRef.current) return;
-
-            // 새 일정 감지 및 알림
-            checkForNewEvents(previousEventsRef.current, latestEvents);
-            setEvents(latestEvents);
-            previousEventsRef.current = latestEvents;
+            if (
+              latestEvents &&
+              typeof latestEvents === "object" &&
+              isMountedRef.current
+            ) {
+              if (latestEvents === previousEventsRef.current) return;
+              checkForNewEvents(previousEventsRef.current, latestEvents);
+              setEvents(latestEvents);
+              previousEventsRef.current = latestEvents;
+            }
+          } catch (error) {
+            // 실패 시 조용히 무시
           }
-        } catch (error) {
-          // 실패 시 조용히 무시
+        }, interval);
+      };
+      startPolling();
+
+      // AppState 변경 시 폴링 간격 조정 + 포그라운드 복귀 시 즉시 새로고침
+      const appStateSub = AppState.addEventListener('change', (nextState) => {
+        const wasBackground = appStateRef.current !== 'active';
+        appStateRef.current = nextState;
+        if (nextState === 'active' && wasBackground && isFocusedRef.current && isMountedRef.current) {
+          // 포그라운드 복귀: 즉시 데이터 갱신 + 폴링 간격 복원
+          loadEventsData().then(() => { if (isMountedRef.current) setIsDataReady(true); }).catch(() => {});
+          startPolling();
+        } else if (nextState !== 'active') {
+          // 백그라운드 진입: 긴 간격으로 전환
+          startPolling();
         }
-      }, POLL_INTERVAL);
+      });
 
       // 안드로이드 뒤로가기 버튼 처리
       const backHandler = BackHandler.addEventListener(
@@ -1308,6 +1379,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       return () => {
         isFocusedRef.current = false;
         interactionHandle.cancel();
+        appStateSub.remove();
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
@@ -1347,7 +1419,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         paddingHorizontal: 20,
         paddingTop: 10,
         paddingBottom: 0,
-        backgroundColor: isDark ? "#1e293b" : "#ffffff",
+        backgroundColor: isDark ? "#141422" : "#ffffff",
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.08,
@@ -1378,7 +1450,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             style={{
               fontSize: 28,
               fontWeight: "900",
-              color: isDark ? "#f8fafc" : "#0f172a",
+              color: isDark ? "#eaeaf2" : "#0f172a",
             }}
           >
             {currentYear}
@@ -1390,14 +1462,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               paddingHorizontal: 12,
               paddingVertical: 6,
               borderRadius: 12,
-              backgroundColor: isDark ? "#334155" : "#f1f5f9",
+              backgroundColor: isDark ? "#1e1e32" : "#f1f5f9",
             }}
           >
             <Text
               style={{
                 fontSize: 13,
                 fontWeight: "700",
-                color: isDark ? "#e2e8f0" : "#475569",
+                color: isDark ? "#c0c0d0" : "#2a2a44",
               }}
             >
               오늘
@@ -1459,7 +1531,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 style={{
                   width: 22,
                   height: 2,
-                  backgroundColor: isDark ? "#f8fafc" : "#0f172a",
+                  backgroundColor: isDark ? "#eaeaf2" : "#0f172a",
                   borderRadius: 2,
                 }}
               />
@@ -1467,7 +1539,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 style={{
                   width: 22,
                   height: 2,
-                  backgroundColor: isDark ? "#f8fafc" : "#0f172a",
+                  backgroundColor: isDark ? "#eaeaf2" : "#0f172a",
                   borderRadius: 2,
                 }}
               />
@@ -1475,7 +1547,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 style={{
                   width: 22,
                   height: 2,
-                  backgroundColor: isDark ? "#f8fafc" : "#0f172a",
+                  backgroundColor: isDark ? "#eaeaf2" : "#0f172a",
                   borderRadius: 2,
                 }}
               />
@@ -1546,7 +1618,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     <View
       style={{
         flexDirection: "row",
-        backgroundColor: isDark ? "#1e293b" : "#ffffff",
+        backgroundColor: isDark ? "#141422" : "#ffffff",
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
@@ -1569,7 +1641,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                   ? "#3b82f6"
                   : isDark
                   ? "#cbd5e1"
-                  : "#475569",
+                  : "#2a2a44",
             }}
           >
             {day}
@@ -1583,7 +1655,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const regionFilterBar = useMemo(() => (
     <View
       style={{
-        backgroundColor: isDark ? "#1e293b" : "#ffffff",
+        backgroundColor: isDark ? "#141422" : "#ffffff",
         paddingVertical: 8,
         paddingHorizontal: 16,
       }}
@@ -1599,7 +1671,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             backgroundColor:
               !selectedRegion && !selectedLocation
                 ? isDark ? "#a78bfa" : "#ec4899"
-                : isDark ? "#334155" : "#f1f5f9",
+                : isDark ? "#1e1e32" : "#f1f5f9",
             marginRight: 8,
             minWidth: 60,
             alignItems: "center",
@@ -1612,7 +1684,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               color:
                 !selectedRegion && !selectedLocation
                   ? "#ffffff"
-                  : isDark ? "#94a3b8" : "#64748b",
+                  : isDark ? "#8888a0" : "#64748b",
             }}
           >
             전체
@@ -1626,16 +1698,16 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             paddingHorizontal: 16,
             paddingVertical: 10,
             borderRadius: 20,
-            backgroundColor: isDark ? "#334155" : "#f1f5f9",
+            backgroundColor: isDark ? "#1e1e32" : "#f1f5f9",
             marginRight: 8,
             minWidth: 60,
             alignItems: "center",
             borderWidth: 1,
-            borderColor: isDark ? "#475569" : "#e2e8f0",
+            borderColor: isDark ? "#2a2a44" : "#e2e8f0",
             borderStyle: "dashed",
           }}
         >
-          <Text style={{ fontSize: 14, fontWeight: "700", color: isDark ? "#94a3b8" : "#64748b" }}>
+          <Text style={{ fontSize: 14, fontWeight: "700", color: isDark ? "#8888a0" : "#64748b" }}>
             + 상세
           </Text>
         </TouchableOpacity>
@@ -1652,7 +1724,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               backgroundColor:
                 selectedRegion === region
                   ? isDark ? "#a78bfa" : "#ec4899"
-                  : isDark ? "#334155" : "#f1f5f9",
+                  : isDark ? "#1e1e32" : "#f1f5f9",
               marginRight: 8,
               minWidth: 60,
               alignItems: "center",
@@ -1665,7 +1737,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                 color:
                   selectedRegion === region
                     ? "#ffffff"
-                    : isDark ? "#94a3b8" : "#64748b",
+                    : isDark ? "#8888a0" : "#64748b",
               }}
             >
               {region}
@@ -1680,7 +1752,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // 훅은 early return 전에 선언해야 React 규칙 준수
   const rootStyle = useMemo(() => ({
     flex: 1,
-    backgroundColor: isDark ? "#0f172a" : "#ffffff",
+    backgroundColor: isDark ? "#0c0c16" : "#ffffff",
     paddingTop: insets.top,
     paddingBottom: Platform.OS === "android" ? insets.bottom : 0,
     paddingLeft: insets.left,
@@ -1709,7 +1781,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         style={[
           styles.loadingContainer,
           {
-            backgroundColor: isDark ? "#0f172a" : "#ffffff",
+            backgroundColor: isDark ? "#0c0c16" : "#ffffff",
             paddingTop: insets.top,
           },
         ]}
@@ -1721,7 +1793,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         <Text
           style={[
             styles.loadingText,
-            { color: isDark ? "#94a3b8" : "#64748b" },
+            { color: isDark ? "#8888a0" : "#64748b" },
           ]}
         >
           로딩 중...
@@ -1944,6 +2016,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             <PanelSearchInput
               onDebouncedChange={setDebouncedSearch}
               clearSignal={searchClearSignal}
+              isDark={isDark}
             />
             {/* 탭: 전체 / 찜 */}
             <View style={panelStyles.tabRow}>
@@ -2054,9 +2127,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             ) : (
               bookmarks.map((bookmark) => {
                 const { event, date } = bookmark;
-                const parts = date.split('-');
-                const month = parseInt(parts[1], 10);
-                const day = parseInt(parts[2], 10);
+                const dateLabel = bookmarkDateLabels.get(date) ?? date;
                 const reminderSet = hasReminder(event.id, date);
                 return (
                   <TouchableOpacity
@@ -2068,15 +2139,21 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                     <View style={panelStyles.bmRow}>
                       <View style={{ flex: 1 }}>
                         <Text style={panelStyles.bmDateText}>
-                          {month}/{day} · {event.time || '시간 미정'}
+                          {dateLabel} · {event.time || '시간 미정'}
                         </Text>
                         <Text style={panelStyles.bmTitle}>
                           {event.title}
                         </Text>
                       </View>
                       <TouchableOpacity
-                        onPress={() => toggleBookmark(event, date)}
+                        onPress={() => {
+                          toggleBookmark(event, date);
+                          hapticLight();
+                          showToast({ message: bookmarks.some((b: any) => b.eventId === event.id && b.date === date) ? '찜 목록에서 제거했어요' : '찜 목록에 추가했어요', type: 'success', icon: '❤️' });
+                        }}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="찜하기"
+                        accessibilityRole="button"
                       >
                         <Text style={[panelStyles.bmHeart, { color: reminderSet ? '#ffffff' : 'rgba(255,255,255,0.6)' }]}>♥</Text>
                       </TouchableOpacity>
@@ -2116,13 +2193,16 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                           if (!event.id) return;
                           if (reminderSet) {
                             await cancelReminder(event.id, date);
-                            Alert.alert('알림 해제', '해당 파티 알림이 해제되었습니다.');
+                            hapticLight();
+                            showToast({ message: '알림이 해제되었어요', type: 'info', icon: '🔕' });
                           } else {
                             const result = await scheduleReminder(event, date);
-                            Alert.alert(
-                              result.success ? '🔔 알림 등록' : '알림',
-                              result.message
-                            );
+                            if (result.success) {
+                              hapticSuccess();
+                              showToast({ message: '알림이 설정되었어요', type: 'success', icon: '🔔' });
+                            } else {
+                              showToast({ message: result.message, type: 'error' });
+                            }
                           }
                         }}
                         style={reminderSet ? panelStyles.bmBtnActive : panelStyles.bmBtnInactive}
@@ -2165,7 +2245,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             right: 0,
             bottom: -insets.bottom,
             height: insets.bottom,
-            backgroundColor: isDark ? "#0f172a" : "#ffffff",
+            backgroundColor: isDark ? "#0c0c16" : "#ffffff",
           }}
         />
       )}
@@ -2213,26 +2293,39 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   );
 }
 
-// ==================== EventCard 스타일 (렌더마다 객체 재생성 방지) ====================
+// ==================== EventCard 스타일 (모던 글래스 카드) ====================
 const ecStyles = StyleSheet.create({
-  container: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16, padding: 16 },
-  title: { fontWeight: '700', color: '#ffffff', flex: 1, marginBottom: 6 },
-  subRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  locRow: { flexDirection: 'row' },
-  tag: { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  tagText: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' },
-  moreTag: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  container: { borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  containerDefaultMargin: { marginBottom: 12 },
+  inner: { padding: 16, backgroundColor: 'rgba(255,255,255,0.10)' },
+  innerCompact: { padding: 14 },
+  // compact 조합 캐시 (렌더마다 배열 생성 방지)
+  innerCompactCombined: { padding: 14, backgroundColor: 'rgba(255,255,255,0.10)' },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  timeBadge: { backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  timeBadgeText: { fontSize: 12, fontWeight: '700', color: '#ffffff', letterSpacing: 0.3 },
+  arrowCircle: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
+  arrowText: { fontSize: 14, color: '#ffffff', fontWeight: '600' },
+  title: { fontSize: 16, fontWeight: '700', color: '#ffffff', flex: 1, marginBottom: 8, lineHeight: 22 },
+  titleCompact: { fontSize: 15, fontWeight: '700', color: '#ffffff', flex: 1, marginBottom: 8, lineHeight: 22 },
+  subRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  subRowCompact: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  locRow: { flexDirection: 'row', marginBottom: 8 },
+  locRowCompact: { flexDirection: 'row', marginBottom: 6 },
+  tag: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  tagIcon: { fontSize: 10 },
+  tagText: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.8)' },
+  moreTag: { backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   moreTagText: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' },
-  time: { fontSize: 13, fontWeight: '600', color: '#e0e7ff' },
-  detailBtn: { marginTop: 10, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 10, alignSelf: 'flex-start' },
-  detailBtnCompact: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
-  detailBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  detailBtn: { marginTop: 12, paddingVertical: 9, paddingHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 12, alignSelf: 'flex-start', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  detailBtnCompact: { paddingVertical: 7, paddingHorizontal: 12, borderRadius: 10 },
+  detailBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
   detailBtnTextCompact: { fontSize: 12, fontWeight: '600' },
 });
 
 // ==================== PanelSearchInput 스타일 ====================
 const psiStyles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.2)', borderRadius: 10, paddingHorizontal: 12, marginBottom: 8 },
+  container: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.12)', borderRadius: 14, paddingHorizontal: 14, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   input: { flex: 1, paddingVertical: Platform.OS === 'ios' ? 10 : 8, fontSize: 14, color: '#ffffff' },
   clearBtn: { fontSize: 14, color: 'rgba(255,255,255,0.6)' },
 });
@@ -2270,55 +2363,55 @@ const gdStyles = StyleSheet.create({
 });
 
 const panelStyles = StyleSheet.create({
-  bmCard: { backgroundColor: 'rgba(255, 255, 255, 0.15)', borderRadius: 16, padding: 16, marginBottom: 12 },
+  bmCard: { backgroundColor: 'rgba(255, 255, 255, 0.10)', borderRadius: 18, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   bmRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
   bmDateText: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.6)', marginBottom: 4 },
   bmTitle: { fontSize: 15, fontWeight: '700', color: '#ffffff' },
   bmHeart: { fontSize: 18 },
   bmBtnRow: { flexDirection: 'row', gap: 8 },
-  bmBtn: { paddingVertical: 6, paddingHorizontal: 12, backgroundColor: 'rgba(255, 255, 255, 0.2)', borderRadius: 8 },
-  bmBtnActive: { paddingVertical: 6, paddingHorizontal: 12, backgroundColor: 'rgba(255, 255, 255, 0.3)', borderRadius: 8 },
-  bmBtnInactive: { paddingVertical: 6, paddingHorizontal: 12, backgroundColor: 'rgba(255, 255, 255, 0.1)', borderRadius: 8 },
+  bmBtn: { paddingVertical: 7, paddingHorizontal: 14, backgroundColor: 'rgba(255, 255, 255, 0.12)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  bmBtnActive: { paddingVertical: 7, paddingHorizontal: 14, backgroundColor: 'rgba(255, 255, 255, 0.22)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  bmBtnInactive: { paddingVertical: 7, paddingHorizontal: 14, backgroundColor: 'rgba(255, 255, 255, 0.06)', borderRadius: 10 },
   bmBtnText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   // 날짜 버블
-  dateBubble: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
-  dateLine: { flex: 1, width: 2, marginTop: 6, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 1 },
+  dateBubble: { width: 46, height: 46, borderRadius: 23, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: 'rgba(255,255,255,0.15)' },
+  dateLine: { flex: 1, width: 2, marginTop: 6, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 1 },
   dateCountLabel: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.5)' },
-  moreBtn: { paddingVertical: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' },
+  moreBtn: { paddingVertical: 10, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   moreBtnText: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.7)' },
   foldBtn: { paddingVertical: 8, alignItems: 'center', marginTop: 4 },
   foldBtnText: { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.5)' },
-  loadMoreDatesBtn: { paddingVertical: 14, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', marginTop: 16, marginBottom: 8 },
-  loadMoreDatesBtnText: { fontSize: 14, fontWeight: '700', color: 'rgba(255,255,255,0.8)' },
-  emptyText: { color: '#e0e7ff', fontSize: 14, fontStyle: 'italic', marginBottom: 16 },
+  loadMoreDatesBtn: { paddingVertical: 14, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', marginTop: 16, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  loadMoreDatesBtnText: { fontSize: 14, fontWeight: '700', color: 'rgba(255,255,255,0.8)', letterSpacing: 0.2 },
+  emptyText: { color: '#d0d0e8', fontSize: 14, fontStyle: 'italic', marginBottom: 16 },
   loadingWrap: { alignItems: 'center', paddingVertical: 30 },
   loadingSubtext: { color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 8 },
   emptyBmWrap: { alignItems: 'center', paddingVertical: 30 },
-  emptyBmIcon: { color: '#e0e7ff', fontSize: 32, marginBottom: 12 },
-  emptyBmText: { color: '#e0e7ff', fontSize: 14 },
+  emptyBmIcon: { color: '#d0d0e8', fontSize: 32, marginBottom: 12 },
+  emptyBmText: { color: '#d0d0e8', fontSize: 14 },
   emptyBmSub: { color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 4 },
   // 탭
-  tabActive: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.3)' },
-  tabInactive: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.1)' },
+  tabActive: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.22)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  tabInactive: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)' },
   tabBookmarks: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   tabText: { fontSize: 13, fontWeight: '700', color: '#ffffff' },
   tabBadge: { backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 },
   tabBadgeText: { fontSize: 10, fontWeight: '800', color: '#ffffff' },
-  chipActive: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, backgroundColor: 'rgba(167,139,250,0.5)' },
-  chipInactive: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
-  chipTextActive: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
-  chipTextInactive: { fontSize: 12, fontWeight: '500', color: 'rgba(255,255,255,0.6)' },
+  chipActive: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.22)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  chipInactive: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  chipTextActive: { fontSize: 12, fontWeight: '700', color: '#ffffff', letterSpacing: 0.2 },
+  chipTextInactive: { fontSize: 12, fontWeight: '500', color: 'rgba(255,255,255,0.55)' },
   chipScrollView: { marginTop: 8 },
   chipScrollContent: { gap: 6 },
   // 패널 헤더
   panelHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   panelHeaderLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  panelTitle: { fontSize: 18, fontWeight: '800', color: '#ffffff', letterSpacing: 1 },
-  panelBadge: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  panelTitle: { fontSize: 18, fontWeight: '800', color: '#ffffff', letterSpacing: 0.5 },
+  panelBadge: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   panelBadgeText: { fontSize: 12, fontWeight: '800', color: '#ffffff' },
   panelBackLink: { marginTop: 2, paddingVertical: 6, paddingHorizontal: 8, marginLeft: -8, borderRadius: 8 },
   panelBackText: { fontSize: 13, fontWeight: '600', color: 'rgba(255, 255, 255, 0.8)' },
-  panelCloseBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255, 255, 255, 0.2)', justifyContent: 'center', alignItems: 'center' },
+  panelCloseBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255, 255, 255, 0.12)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   panelCloseText: { color: '#ffffff', fontSize: 20, fontWeight: '700' },
   hintRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 2 },
   hintChar: { fontSize: 12, color: '#ffffff', fontWeight: '500' },
@@ -2385,10 +2478,12 @@ const styles = StyleSheet.create({
   },
   // 이벤트 카드 스타일
   eventCard: {
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
-    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.10)",
+    borderRadius: 18,
     padding: 16,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   eventTitle: {
     fontSize: 16,
@@ -2399,7 +2494,7 @@ const styles = StyleSheet.create({
   eventTime: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#e0e7ff",
+    color: "#d0d0e8",
   },
   eventLocation: {
     fontSize: 13,
@@ -2408,14 +2503,16 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   linkButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
-    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    borderRadius: 12,
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   linkButtonText: {
     color: "#ffffff",

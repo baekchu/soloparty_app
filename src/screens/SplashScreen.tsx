@@ -11,7 +11,7 @@ export default function SplashScreen({}: SplashScreenProps) {
   return (
     <View style={[
       styles.container,
-      { backgroundColor: isDark ? '#0f172a' : '#ffffff' }
+      { backgroundColor: isDark ? '#0c0c16' : '#ffffff' }
     ]}>
       {/* 로고/아이콘 영역 */}
       <View style={styles.logoContainer}>
@@ -31,13 +31,13 @@ export default function SplashScreen({}: SplashScreenProps) {
         </View>
         <Text style={[
           styles.appName,
-          { color: isDark ? '#f8fafc' : '#0f172a' }
+          { color: isDark ? '#eaeaf2' : '#0f172a' }
         ]}>
           Solo Party
         </Text>
         <Text style={[
           styles.tagline,
-          { color: isDark ? '#94a3b8' : '#64748b' }
+          { color: isDark ? '#8888a0' : '#64748b' }
         ]}>
           특별한 만남을 위한 일정
         </Text>
@@ -51,7 +51,7 @@ export default function SplashScreen({}: SplashScreenProps) {
         />
         <Text style={[
           styles.loadingText,
-          { color: isDark ? '#94a3b8' : '#64748b' }
+          { color: isDark ? '#8888a0' : '#64748b' }
         ]}>
           일정을 불러오는 중...
         </Text>

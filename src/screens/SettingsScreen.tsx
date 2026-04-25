@@ -125,7 +125,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         showsVerticalScrollIndicator={false}
       >
         {/* 다크모드 설정 */}
-        <View style={[settingsStyles.section, { backgroundColor: colors.card }]}>
+        <View style={[settingsStyles.section, { backgroundColor: colors.card }, isDark && { borderWidth: 1, borderColor: colors.border }]}>
           <View style={settingsStyles.settingRow}>
             <View>
               <Text style={[settingsStyles.sectionTitle, { color: colors.text, marginBottom: 4 }]}>
@@ -140,12 +140,14 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
               onValueChange={toggleTheme}
               trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
               thumbColor={isDark ? '#ec4899' : '#f3f4f6'}
+              accessibilityLabel="다크 모드 전환"
+              accessibilityRole="switch"
             />
           </View>
         </View>
 
         {/* 알림 설정 */}
-        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
+        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }, isDark && { borderWidth: 1, borderColor: colors.border }]}>
           <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
             알림 설정
           </Text>
@@ -165,6 +167,8 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
               onValueChange={handleNotificationToggle}
               trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
               thumbColor={notificationSettings.enabled ? '#ec4899' : '#f3f4f6'}
+              accessibilityLabel="알림 받기"
+              accessibilityRole="switch"
             />
           </View>
 
@@ -188,6 +192,8 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                   onValueChange={toggleNewEventAlerts}
                   trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
                   thumbColor={notificationSettings.newEventAlerts ? '#ec4899' : '#f3f4f6'}
+                  accessibilityLabel="새 일정 알림"
+                  accessibilityRole="switch"
                 />
               </View>
 
@@ -206,6 +212,8 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                   onValueChange={toggleEventReminders}
                   trackColor={{ false: colors.trackFalse, true: '#a78bfa' }}
                   thumbColor={notificationSettings.eventReminders ? '#ec4899' : '#f3f4f6'}
+                  accessibilityLabel="일정 리마인더"
+                  accessibilityRole="switch"
                 />
               </View>
             </>
@@ -213,10 +221,13 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         </View>
 
         {/* 위치 설정 */}
-        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
+        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }, isDark && { borderWidth: 1, borderColor: colors.border }]}>
           <TouchableOpacity 
             onPress={navigateToLocationPicker}
             style={settingsStyles.settingRow}
+            accessibilityLabel="위치 설정"
+            accessibilityRole="button"
+            accessibilityHint="지도에서 기본 위치를 선택합니다"
           >
             <View style={settingsStyles.flex1}>
               <Text style={[settingsStyles.sectionTitle, { color: colors.text, marginBottom: 4 }]}>
@@ -231,26 +242,26 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         </View>
 
         {/* 약관 및 법적정보 */}
-        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }]}>
+        <View style={[settingsStyles.sectionHorizontal, { backgroundColor: colors.card }, isDark && { borderWidth: 1, borderColor: colors.border }]}>
           <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
             약관 및 법적정보
           </Text>
 
-          <TouchableOpacity onPress={navigateToTerms} style={settingsStyles.menuItem}>
+          <TouchableOpacity onPress={navigateToTerms} style={settingsStyles.menuItem} accessibilityLabel="이용약관" accessibilityRole="link">
             <Text style={[settingsStyles.menuText, { color: colors.text }]}>이용약관</Text>
             <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
 
           <View style={[settingsStyles.divider, { backgroundColor: colors.border }]} />
 
-          <TouchableOpacity onPress={navigateToPrivacy} style={settingsStyles.menuItem}>
+          <TouchableOpacity onPress={navigateToPrivacy} style={settingsStyles.menuItem} accessibilityLabel="개인정보처리방침" accessibilityRole="link">
             <Text style={[settingsStyles.menuText, { color: colors.text }]}>개인정보처리방침</Text>
             <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
 
           <View style={[settingsStyles.divider, { backgroundColor: colors.border }]} />
 
-          <TouchableOpacity onPress={navigateToCopyright} style={settingsStyles.menuItem}>
+          <TouchableOpacity onPress={navigateToCopyright} style={settingsStyles.menuItem} accessibilityLabel="저작권 정보" accessibilityRole="link">
             <Text style={[settingsStyles.menuText, { color: colors.text }]}>저작권 정보</Text>
             <Text style={[settingsStyles.menuArrow, { color: colors.subtext }]}>›</Text>
           </TouchableOpacity>
@@ -275,7 +286,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         </View> */}
 
         {/* 앱 정보 */}
-        <View style={[settingsStyles.section, { backgroundColor: colors.card }]}>
+        <View style={[settingsStyles.section, { backgroundColor: colors.card }, isDark && { borderWidth: 1, borderColor: colors.border }]}>
           <Text style={[settingsStyles.sectionTitle, { color: colors.text }]}>
             앱 정보
           </Text>

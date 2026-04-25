@@ -219,7 +219,7 @@ const PointsModal = memo(({
           onPress={(e) => e.stopPropagation()}
           style={[
             styles.container,
-            { backgroundColor: isDark ? '#1e293b' : '#ffffff' }
+            { backgroundColor: isDark ? '#141422' : '#ffffff' }
           ]}
         >
           {/* 닫기 버튼 */}
@@ -228,7 +228,7 @@ const PointsModal = memo(({
             style={styles.closeButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Text style={[styles.closeText, { color: isDark ? '#94a3b8' : '#64748b' }]}>×</Text>
+            <Text style={[styles.closeText, { color: isDark ? '#8888a0' : '#64748b' }]}>×</Text>
           </TouchableOpacity>
 
           <ScrollView 
@@ -243,7 +243,7 @@ const PointsModal = memo(({
               ]}>
                 <Text style={styles.pointBadgeText}>P</Text>
               </View>
-              <Text style={[styles.title, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+              <Text style={[styles.title, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                 포인트
               </Text>
             </View>
@@ -251,15 +251,15 @@ const PointsModal = memo(({
             {/* 잔액 카드 */}
             <View style={[
               styles.balanceCard,
-              { backgroundColor: isDark ? '#334155' : '#f8f9fa' }
+              { backgroundColor: isDark ? '#1e1e32' : '#f8f9fa' }
             ]}>
-              <Text style={[styles.balanceLabel, { color: isDark ? '#cbd5e1' : '#64748b' }]}>
+              <Text style={[styles.balanceLabel, { color: isDark ? '#a0a0b8' : '#64748b' }]}>
                 보유 포인트
               </Text>
-              <Text style={[styles.balanceAmount, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+              <Text style={[styles.balanceAmount, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                 {points.toLocaleString()}P
               </Text>
-              <Text style={[styles.balanceDesc, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
+              <Text style={[styles.balanceDesc, { color: isDark ? '#8888a0' : '#94a3b8' }]}>
                 50,000P = 파티 무료 참여
               </Text>
             </View>
@@ -275,7 +275,7 @@ const PointsModal = memo(({
                   { 
                     backgroundColor: points >= 50000 
                       ? (isDark ? '#a78bfa' : '#ec4899')
-                      : (isDark ? '#475569' : '#cbd5e1'),
+                      : (isDark ? '#2a2a44' : '#cbd5e1'),
                   }
                 ]}
               >
@@ -294,16 +294,16 @@ const PointsModal = memo(({
                 style={[
                   styles.secondaryButton,
                   { 
-                    backgroundColor: isDark ? '#334155' : '#f1f5f9',
-                    borderColor: isDark ? '#475569' : '#e2e8f0',
+                    backgroundColor: isDark ? '#1e1e32' : '#f1f5f9',
+                    borderColor: isDark ? '#2a2a44' : '#e2e8f0',
                     opacity: canShare ? 1 : 0.4,
                   }
                 ]}
               >
-                <Text style={[styles.secondaryButtonText, { color: isDark ? '#e2e8f0' : '#475569' }]}>
+                <Text style={[styles.secondaryButtonText, { color: isDark ? '#c0c0d0' : '#475569' }]}>
                   📤 앱 공유하기
                 </Text>
-                <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
+                <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#8888a0' : '#94a3b8' }]}>
                   {canShare
                     ? `+${SHARE_REWARD_POINTS}P · 남은 횟수: ${remainingShares}/${MAX_DAILY_SHARES}회`
                     : `오늘 공유 완료 (${dailyShareCount}/${MAX_DAILY_SHARES})`
@@ -319,18 +319,18 @@ const PointsModal = memo(({
                 style={[
                   styles.secondaryButton,
                   { 
-                    backgroundColor: isDark ? '#1e293b' : '#f8f9fa',
-                    borderColor: isDark ? '#334155' : '#e5e7eb',
+                    backgroundColor: isDark ? '#141422' : '#f8f9fa',
+                    borderColor: isDark ? '#1e1e32' : '#e5e7eb',
                     opacity: canWatchAd && !isProcessing ? 1 : 0.4,
                   }
                 ]}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.secondaryButtonText, { color: isDark ? '#e2e8f0' : '#475569' }]}>
+                    <Text style={[styles.secondaryButtonText, { color: isDark ? '#c0c0d0' : '#475569' }]}>
                       📺 광고 보고 포인트 받기
                     </Text>
-                    <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
+                    <Text style={[styles.secondaryButtonSubtext, { color: isDark ? '#8888a0' : '#94a3b8' }]}>
                       {canWatchAd 
                         ? `+50P · 남은 횟수: ${remainingAds}/${maxDailyAds}회` 
                         : `6시간 후 다시 시청 가능 (${dailyAdCount}/${maxDailyAds})`
@@ -346,20 +346,20 @@ const PointsModal = memo(({
 
             {/* 포인트 적립 내역 */}
             <View style={styles.historySection}>
-              <Text style={[styles.historyTitle, { color: isDark ? '#cbd5e1' : '#64748b' }]}>
+              <Text style={[styles.historyTitle, { color: isDark ? '#a0a0b8' : '#64748b' }]}>
                 최근 내역
               </Text>
               {history.length > 0 ? (
                 history.slice(0, 5).map((item) => (
                   <View key={item.id} style={[
                     styles.historyItem,
-                    { backgroundColor: isDark ? '#334155' : '#f8f9fa' }
+                    { backgroundColor: isDark ? '#1e1e32' : '#f8f9fa' }
                   ]}>
                     <View>
-                      <Text style={[styles.historyReason, { color: isDark ? '#f8fafc' : '#0f172a' }]}>
+                      <Text style={[styles.historyReason, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
                         {item.reason}
                       </Text>
-                      <Text style={[styles.historyDate, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
+                      <Text style={[styles.historyDate, { color: isDark ? '#8888a0' : '#94a3b8' }]}>
                         {new Date(item.timestamp).toLocaleDateString('ko-KR')}
                       </Text>
                     </View>
@@ -371,9 +371,9 @@ const PointsModal = memo(({
               ) : (
                 <View style={[
                   styles.historyItem,
-                  { backgroundColor: isDark ? '#334155' : '#f8f9fa' }
+                  { backgroundColor: isDark ? '#1e1e32' : '#f8f9fa' }
                 ]}>
-                  <Text style={[styles.historyReason, { color: isDark ? '#94a3b8' : '#94a3b8' }]}>
+                  <Text style={[styles.historyReason, { color: isDark ? '#8888a0' : '#94a3b8' }]}>
                     아직 내역이 없습니다
                   </Text>
                 </View>

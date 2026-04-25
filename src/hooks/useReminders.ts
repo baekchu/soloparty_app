@@ -56,10 +56,10 @@ function ensureNotificationHandler() {
   }
 }
 
-async function ensureAndroidChannel(): Promise<void> {
+async function ensureAndroidChannel(): Promise<boolean> {
   if (_channelReady || Platform.OS !== 'android' || isExpoGo) {
     _channelReady = true;
-    return;
+    return true;
   }
   try {
     await Notifications.setNotificationChannelAsync('event-reminders', {
@@ -70,8 +70,9 @@ async function ensureAndroidChannel(): Promise<void> {
       sound: 'default',
     });
     _channelReady = true;
+    return true;
   } catch {
-    // 채널 설정 실패 무시
+    return false;
   }
 }
 
@@ -467,7 +468,7 @@ export default function useReminders() {
           body: `${event.title}${event.time ? `\n⏰ ${event.time}` : ''}${event.location ? `\n📍 ${event.location}` : ''}`,
           data: { eventId, date, type: 'event_reminder' },
           sound: true,
-          ...(Platform.OS === 'android' ? { channelId: 'event-reminders' } : {}),
+          ...(Platform.OS === 'android' && _channelReady ? { channelId: 'event-reminders' } : {}),
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.DATE,
