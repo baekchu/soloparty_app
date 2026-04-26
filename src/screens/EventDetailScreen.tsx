@@ -66,28 +66,26 @@ const EMPTY_REVIEWS: any[] = []; // 빈 리뷰 배열 불변 참조
 
 // 정원 표시 컴포넌트 (memo로 최적화)
 const CapacityBar = memo(({ 
-  label, 
+  label,
+  icon,
   capacity, 
   color, 
   isDark 
 }: { 
-  label: string; 
+  label: string;
+  icon: string;
   capacity: number; 
   color: string;
   isDark: boolean;
 }) => (
-  <View style={styles.attendanceItem}>
-    <View style={styles.attendanceHeader}>
-      <Text style={[styles.attendanceLabel, { color: isDark ? '#c0c0d0' : '#374151' }]}>
-        {label}
-      </Text>
-      <Text style={[styles.attendanceCount, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
-        {capacity}명
-      </Text>
-    </View>
-    <View style={[styles.progressBarBg, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]}>
-      <View style={[styles.progressBarFill, { width: '100%', backgroundColor: color }]} />
-    </View>
+  <View style={[styles.attendanceItem, { flexDirection: 'row', alignItems: 'center' }]}>
+    <Text style={{ fontSize: 20, marginRight: 10 }}>{icon}</Text>
+    <Text style={[styles.attendanceLabel, { color: isDark ? '#c0c0d0' : '#374151', flex: 1 }]}>
+      {label}
+    </Text>
+    <Text style={[styles.attendanceCount, { color: color, fontWeight: '700' }]}>
+      {capacity}명
+    </Text>
   </View>
 ));
 
@@ -96,12 +94,14 @@ const InfoCard = memo(({
   title, 
   content, 
   isDark,
-  onPress 
+  onPress,
+  numberOfLines: numLines = 2,
 }: { 
   title: string; 
   content: string | undefined; 
   isDark: boolean;
   onPress?: () => void;
+  numberOfLines?: number;
 }) => {
   if (!content) return null;
   
@@ -119,7 +119,7 @@ const InfoCard = memo(({
         </Text>
         <Text 
           style={[styles.infoText, { color: isDark ? '#eaeaf2' : '#0f172a' }, onPress && styles.linkText]}
-          numberOfLines={2}
+          numberOfLines={numLines}
         >
           {content}
         </Text>
@@ -408,28 +408,17 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       Alert.alert('알림', '참가 신청 링크가 없습니다.\n주최자에게 문의해주세요.');
       return;
     }
-    Alert.alert('참가 신청', '참가 신청 페이지로 이동합니다.', [
-      { text: '취소', style: 'cancel' },
-      { text: '이동', onPress: handleOpenLink },
-    ]);
+    handleOpenLink();
   }, [safeLink, handleOpenLink]);
 
-  // 찜 토글 핸들러 (useCallback으로 최적화 + 해제 시 확인 + 토스트/햅틱)
-  const handleToggleBookmark = useCallback(() => {
+  // 찜 토글 핸들러 (Alert 없이 즉시 처리 + 토스트/햅틱)
+  const handleToggleBookmark = useCallback(async () => {
+    await toggleBookmark(event, date);
+    hapticLight();
     if (bookmarked) {
-      Alert.alert('찜 해제', '이 파티의 찜을 해제할까요?', [
-        { text: '취소', style: 'cancel' },
-        { text: '해제', style: 'destructive', onPress: async () => {
-          await toggleBookmark(event, date);
-          hapticLight();
-          showToast({ message: '찜 목록에서 제거했어요', type: 'info', icon: '💔' });
-        }},
-      ]);
+      showToast({ message: '찜 목록에서 제거했어요', type: 'info', icon: '💔' });
     } else {
-      toggleBookmark(event, date).then(() => {
-        hapticLight();
-        showToast({ message: '찜 목록에 추가했어요', type: 'success', icon: '❤️' });
-      });
+      showToast({ message: '찜 목록에 추가했어요', type: 'success', icon: '❤️' });
     }
   }, [event, date, bookmarked, toggleBookmark, showToast]);
 
@@ -604,7 +593,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
       <View style={[styles.header, { backgroundColor: headerColors.headerBg, paddingTop: insets.top + 10, borderBottomColor: headerColors.headerBorder }]}>
         {/* 타이틀 - absolute로 정중앙 배치 */}
         <Text style={[styles.headerTitle, { color: headerColors.titleColor }]} numberOfLines={1}>
-          파티 상세
+          {sanitizeText(event.title, 20)}
         </Text>
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
           <Text style={[styles.backIcon, { color: headerColors.titleColor }]}>‹</Text>
@@ -770,10 +759,10 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           </View>
           
           {capacityInfo.hasMaleData && (
-            <CapacityBar label="남자" capacity={capacityInfo.male} color="#3b82f6" isDark={isDark} />
+            <CapacityBar label="남성" icon="👨" capacity={capacityInfo.male} color="#3b82f6" isDark={isDark} />
           )}
           {capacityInfo.hasFemaleData && (
-            <CapacityBar label="여자" capacity={capacityInfo.female} color="#ec4899" isDark={isDark} />
+            <CapacityBar label="여성" icon="👩" capacity={capacityInfo.female} color="#ec4899" isDark={isDark} />
           )}
           {!capacityInfo.hasAnyData && (
             <Text style={[styles.noDataText, { color: isDark ? '#8888a0' : '#64748b' }]}>
@@ -819,6 +808,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             title="주소" 
             content={sanitized.address} 
             isDark={isDark}
+            numberOfLines={4}
             onPress={event.address ? handleOpenMap : undefined}
           />
           <InfoCard 

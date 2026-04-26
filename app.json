@@ -42,9 +42,9 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
       ],
-      "enableProguardInReleaseBuilds": false,
-      "enableShrinkResourcesInReleaseBuilds": false,
-      "navigationBarColor": "#ffffff",
+      "enableProguardInReleaseBuilds": true,
+      "enableShrinkResourcesInReleaseBuilds": true,
+      "navigationBarColor": "#0c0c16",
       "intentFilters": [
         {
           "action": "VIEW",

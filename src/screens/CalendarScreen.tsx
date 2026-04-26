@@ -93,7 +93,189 @@ const INITIAL_MONTHS_RANGE = 2; // 초기 로드 월 범위 (앞뒤 2개월 → 
 // 연령 필터 정규식 (루프 밖에서 한 번만 컴파일)
 const AGE_RANGE_REGEX = /\d+/g;
 
+// 로테이션 오프셋: 앱 세션당 한 번만 계산 (useMemo 내부 Date 생성 완전 제거)
+const _DAY_OF_YEAR = (() => {
+  const now = new Date();
+  return Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000);
+})();
 
+// 패널 날짜 그룹 관련 상수 (컴포넌트 외부로 이동 — 렌더마다 선언/GC 제거)
+const INITIAL_VISIBLE_DATES = 5;
+const LOAD_MORE_DATES = 5;
+const MAX_COLLAPSED_EVENTS = 3;
+
+// 유효 퀵필터 Set (useEffect 내 배열 → 모듈 레벨 Set으로: O(n) includes → O(1) has)
+const VALID_QUICK_FILTERS = new Set(['all', 'weekend', 'age20s', 'age30s', 'thisWeek', 'small', 'large']);
+
+// 무한 스크롤 최대 로드 월 수 (컴포넌트 내 인라인 → 모듈 레벨: 렌더마다 재선언/GC 제거)
+const MAX_VISIBLE_MONTHS = 24;
+
+// 새 이벤트 감지용 Set 빌더 (checkForNewEvents 호출 시 재빌드 방지 — 5분 폴링마다 재사용)
+function buildEventSetForRef(events: EventsByDate): Set<string> {
+  const set = new Set<string>();
+  for (const [date, eventList] of Object.entries(events)) {
+    for (const event of eventList) {
+      set.add(`${date}:${event.id}`);
+    }
+  }
+  return set;
+}
+
+// 패널 빠른 필터 칩 배열 (모듈 레벨 — 렌더마다 배열 생성/GC 방지)
+const CHIP_LIST_DATE = [
+  { key: 'all' as const, label: '전체' },
+  { key: 'age20s' as const, label: '20대' },
+  { key: 'age30s' as const, label: '30대' },
+  { key: 'small' as const, label: '소규모' },
+  { key: 'large' as const, label: '대규모' },
+] as const;
+const CHIP_LIST_ALL = [
+  { key: 'all' as const, label: '전체' },
+  { key: 'thisWeek' as const, label: '이번 주' },
+  { key: 'weekend' as const, label: '주말' },
+  { key: 'age20s' as const, label: '20대' },
+  { key: 'age30s' as const, label: '30대' },
+] as const;
+
+
+
+// ==================== 달력 월 래퍼 (React.memo — 부모 리렌더 시 MonthCalendar 재렌더 방지) ====================
+// onLayout 클로저가 visibleMonths.map() 내부에서 매 렌더마다 재생성되는 문제 해결
+// monthData 참조 · events · isDark 등이 실제로 바뀌지 않으면 View+MonthCalendar 전체 스킵
+interface MonthCalendarWrapperProps {
+  monthData: { year: number; month: number };
+  events: EventsByDate;
+  isDark: boolean;
+  selectedLocation?: string | null;
+  selectedRegion?: string | null;
+  onDatePress: (date: string) => void;
+  onMonthLayout: (key: string, height: number) => void;
+}
+const MonthCalendarWrapper = React.memo(function MonthCalendarWrapper({
+  monthData, events, isDark, selectedLocation, selectedRegion, onDatePress, onMonthLayout,
+}: MonthCalendarWrapperProps) {
+  const handleLayout = React.useCallback((e: any) => {
+    onMonthLayout(`${monthData.year}-${monthData.month}`, e.nativeEvent.layout.height);
+  }, [onMonthLayout, monthData.year, monthData.month]);
+  return (
+    <View onLayout={handleLayout}>
+      <MonthCalendar
+        year={monthData.year}
+        month={monthData.month}
+        events={events}
+        isDark={isDark}
+        selectedLocation={selectedLocation}
+        selectedRegion={selectedRegion}
+        onDatePress={onDatePress}
+      />
+    </View>
+  );
+});
+
+// ==================== 찜 카드 (React.memo — 아이템별 재렌더 방지) ====================
+interface BookmarkCardProps {
+  event: any;
+  date: string;
+  dateLabel: string;
+  reminderSet: boolean;
+  onNavigate: (event: any, date: string) => void;
+  onToggleBookmark: (event: any, date: string) => void;
+  onScheduleReminder: (event: any, date: string) => Promise<{ success: boolean; message: string }>;
+  onCancelReminder: (eventId: string | undefined, date: string) => Promise<boolean>;
+}
+const BookmarkCard = React.memo(function BookmarkCard({
+  event, date, dateLabel, reminderSet,
+  onNavigate, onToggleBookmark, onScheduleReminder, onCancelReminder,
+}: BookmarkCardProps) {
+  const { showToast } = useToast();
+  const handlePress = React.useCallback(() => onNavigate(event, date), [onNavigate, event, date]);
+  const handleToggle = React.useCallback(() => {
+    onToggleBookmark(event, date);
+    hapticLight();
+    showToast({ message: '찜 목록에서 제거했어요', type: 'success', icon: '❤️' });
+  }, [onToggleBookmark, event, date, showToast]);
+  const handleReminder = React.useCallback(async () => {
+    if (!event.id) return;
+    if (reminderSet) {
+      await onCancelReminder(event.id, date);
+      hapticLight();
+      showToast({ message: '알림이 해제되었어요', type: 'info', icon: '🔕' });
+    } else {
+      const result = await onScheduleReminder(event, date);
+      if (result.success) {
+        hapticSuccess();
+        showToast({ message: '알림이 설정되었어요', type: 'success', icon: '🔔' });
+      } else {
+        showToast({ message: result.message, type: 'error' });
+      }
+    }
+  }, [event, date, reminderSet, onCancelReminder, onScheduleReminder, showToast]);
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      style={panelStyles.bmCard}
+      onPress={handlePress}
+    >
+      <View style={panelStyles.bmRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={panelStyles.bmDateText}>
+            {dateLabel} · {event.time || '시간 미정'}
+          </Text>
+          <Text style={panelStyles.bmTitle}>
+            {event.title}
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={handleToggle}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="찜하기"
+          accessibilityRole="button"
+        >
+          <Text style={[panelStyles.bmHeart, { color: reminderSet ? '#ffffff' : 'rgba(255,255,255,0.6)' }]}>♥</Text>
+        </TouchableOpacity>
+      </View>
+      {event.subEvents && event.subEvents.length > 1 ? (
+        <View style={ecStyles.subRow}>
+          {event.subEvents.slice(0, 3).map((sub: any, si: number) => (
+            <View key={si} style={ecStyles.tag}>
+              <Text style={ecStyles.tagText} numberOfLines={1}>
+                {sub.location || sub.venue || `지점${si + 1}`}
+              </Text>
+            </View>
+          ))}
+          {event.subEvents.length > 3 && (
+            <View style={ecStyles.moreTag}>
+              <Text style={ecStyles.moreTagText}>+{event.subEvents.length - 3}</Text>
+            </View>
+          )}
+        </View>
+      ) : event.location ? (
+        <View style={ecStyles.locRow}>
+          <View style={ecStyles.tag}>
+            <Text style={ecStyles.tagText} numberOfLines={1}>
+              {event.location}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+      <View style={panelStyles.bmBtnRow}>
+        <View style={panelStyles.bmBtn}>
+          <Text style={panelStyles.bmBtnText}>
+            자세히 보기
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={handleReminder}
+          style={reminderSet ? panelStyles.bmBtnActive : panelStyles.bmBtnInactive}
+        >
+          <Text style={panelStyles.bmBtnText}>
+            {reminderSet ? '🔔 알림 취소' : '🔔 알림'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 // ==================== 이벤트 카드 (메모이제이션 — 데이터 변경 시에만 재렌더) ====================
 interface EventCardProps {
@@ -312,10 +494,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const [panelTab, setPanelTab] = useState<'all' | 'bookmarks'>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'weekend' | 'age20s' | 'age30s' | 'thisWeek' | 'small' | 'large'>('all');
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
-  const INITIAL_VISIBLE_DATES = 5;
-  const LOAD_MORE_DATES = 5;
   const [visibleDateGroups, setVisibleDateGroups] = useState(INITIAL_VISIBLE_DATES);
-  const MAX_COLLAPSED_EVENTS = 3; // 접힌 상태에서 보여줄 최대 이벤트 수
 
   // panelTab 복원 (앱 재시작 시 마지막 탭 유지)
   useEffect(() => {
@@ -324,8 +503,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       safeGetItem(QUICK_FILTER_KEY),
     ]).then(([savedTab, savedFilter]) => {
       if (savedTab === 'bookmarks') setPanelTab('bookmarks');
-      const validFilters = ['all', 'weekend', 'age20s', 'age30s', 'thisWeek', 'small', 'large'];
-      if (savedFilter && validFilters.includes(savedFilter)) {
+      // VALID_QUICK_FILTERS Set.has() O(1) — 매 렌더 배열 생성 제거
+      if (savedFilter && VALID_QUICK_FILTERS.has(savedFilter)) {
         setQuickFilter(savedFilter as typeof quickFilter);
       }
     }).catch(() => {});
@@ -372,6 +551,47 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     }
     return map;
   }, [bookmarks]);
+
+  // 찜 탭: quickFilter 적용 (quickFilter/bookmarks 변경 시 재계산)
+  const filteredBookmarks = useMemo(() => {
+    if (quickFilter === 'all') return bookmarks;
+    // thisWeek 범위: 루프 밖에서 한 번만 계산 (Date 객체 생성 bookmarks.length회 → 1회)
+    let weekStart = 0, weekEnd = 0;
+    if (quickFilter === 'thisWeek') {
+      const now = new Date(); now.setHours(0, 0, 0, 0); weekStart = now.getTime();
+      const end = new Date(now); end.setDate(end.getDate() + (7 - now.getDay())); end.setHours(23, 59, 59, 999);
+      weekEnd = end.getTime();
+    }
+    return bookmarks.filter(({ event, date }) => {
+      const p = date.split('-');
+      if (p.length !== 3) return false;
+      const dt = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+      if (quickFilter === 'weekend') { const dow = dt.getDay(); return dow === 0 || dow === 5 || dow === 6; }
+      if (quickFilter === 'thisWeek') { const t = dt.getTime(); return t >= weekStart && t <= weekEnd; }
+      if (quickFilter === 'age20s') {
+        if (!event.ageRange) return false;
+        AGE_RANGE_REGEX.lastIndex = 0;
+        const nums = event.ageRange.match(AGE_RANGE_REGEX); if (!nums) return false;
+        const mn = parseInt(nums[0], 10), mx = nums[1] ? parseInt(nums[1], 10) : mn;
+        return mn >= 20 && mx < 40;
+      }
+      if (quickFilter === 'age30s') {
+        if (!event.ageRange) return false;
+        AGE_RANGE_REGEX.lastIndex = 0;
+        const nums = event.ageRange.match(AGE_RANGE_REGEX); if (!nums) return false;
+        const mx = nums[1] ? parseInt(nums[1], 10) : parseInt(nums[0], 10);
+        return mx >= 30;
+      }
+      if (quickFilter === 'small') { const t = (event.maleCapacity || 0) + (event.femaleCapacity || 0); return t > 0 && t <= 20; }
+      if (quickFilter === 'large') { const t = (event.maleCapacity || 0) + (event.femaleCapacity || 0); return t > 20; }
+      return true;
+    });
+  }, [bookmarks, quickFilter]);
+
+  // 선택된 날짜의 일(day) 번호 메모화 — JSX 렌더마다 new Date() 생성 방지
+  const selectedDay = useMemo(() =>
+    selectedDate ? new Date(selectedDate + 'T00:00:00').getDate() : null,
+  [selectedDate]);
 
   // ==================== Dimensions (메모이제이션) ====================
   const [dimensions, setDimensions] = useState(() => ({
@@ -441,6 +661,10 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   const scrollViewRef = useRef<ScrollView>(null);
   const monthHeightsRef = useRef<Record<string, number>>({});
+  // visibleMonths Set: 스크롤 핸들러의 O(n) some() → O(1) has() (스크롤 이벤트마다 실행)
+  const visibleMonthsSetRef = useRef(new Set<string>());
+  // visibleMonths 인덱스 Map: 월 자동 스크롤의 findIndex O(n) → O(1) 조회
+  const visibleMonthsIndexMapRef = useRef(new Map<string, number>());
 
   // 패널 내부 스크롤 상태 추적 (사용자 편의성 개선)
   const panelScrollRef = useRef<ScrollView>(null);
@@ -450,9 +674,18 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUserScrollingRef = useRef(false);
   const previousEventsRef = useRef<EventsByDate>({});
+  // 이전 이벤트 Set 캐시: checkForNewEvents 5분 폴링 시 oldEventSet 재빌드 방지 (O(n) → O(1))
+  const previousEventSetRef = useRef<Set<string>>(new Set());
   const isMountedRef = useRef(true); // 마운트 상태 추적 (메모리 누수 방지)
   const isFocusedRef = useRef(true); // 포커스 상태 추적 (마운트와 분리)
   const lastMonthUpdateRef = useRef(0); // 월 변경 throttle
+  // onScroll 안정화용 mutable refs (매 렌더마다 클로저 재생성 방지 — 스크롤 이벤트 30~60회/초)
+  const visibleMonthsRef = useRef(visibleMonths);
+  visibleMonthsRef.current = visibleMonths;
+  const currentMonthRef = useRef(currentMonth);
+  currentMonthRef.current = currentMonth;
+  const currentYearRef = useRef(currentYear);
+  currentYearRef.current = currentYear;
 
   // ==================== 광고 시스템 (네이티브 빌드 후 활성화) ====================
   // const { showAd: showRewardedAd, loaded: rewardedAdLoaded } = useRewardedAd();
@@ -785,9 +1018,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // ==================== 월 변경 시 자동 스크롤 ====================
   useEffect(() => {
     if (visibleMonths.length > 0 && !isUserScrollingRef.current) {
-      const targetIndex = visibleMonths.findIndex(
-        (m) => m.month === currentMonth && m.year === currentYear
-      );
+      // O(1) Map 조회 (기존 findIndex O(n) 제거)
+      const targetIndex = visibleMonthsIndexMapRef.current.get(`${currentYear}-${currentMonth}`) ?? -1;
 
       if (targetIndex !== -1) {
         let totalHeight = 0;
@@ -797,9 +1029,33 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           totalHeight += height;
         }
 
-        // 월 헤더 높이를 빼서 월 헤더가 요일 헤더 바로 아래에 오도록 조정
-        const monthHeaderHeight = -56;
-        const adjustedHeight = Math.max(0, totalHeight - monthHeaderHeight);
+        // 기본 오프셋: 56px → 월 제목 행을 상단 위로 숨겨 날짜 그리드부터 표시
+        let scrollOffset = 56;
+
+        // 3주차 이후 보정: 오늘이 15일 이후이면 14일 전 날짜의 행이 화면 상단에 오도록 추가 오프셋 적용
+        // 예) 4월 19일 → targetDay=5 → rowIndex=1 → 5일 행이 상단
+        //     4월 26일 → targetDay=12 → rowIndex=2 → 12일 행이 상단
+        // 다른 달도 동일하게 적용됨 (currentYear/currentMonth 기반 계산)
+        const today = new Date();
+        if (today.getFullYear() === currentYear && today.getMonth() + 1 === currentMonth) {
+          const todayDay = today.getDate();
+          if (todayDay > 14) {
+            const targetDay = todayDay - 14; // 최솟값이 1 이상 보장 (todayDay > 14이므로)
+            const firstDayWeekday = new Date(currentYear, currentMonth - 1, 1).getDay(); // 0=일
+            const rowIndex = Math.floor((firstDayWeekday + targetDay - 1) / 7);
+            // MonthCalendar와 동일한 셀 높이 추정
+            const isSmallScreen = screenHeight < 700;
+            const isMediumScreen = screenHeight >= 700 && screenHeight < 850;
+            const estimatedCellHeight = isSmallScreen
+              ? Math.max(screenHeight * 0.10, 82)
+              : isMediumScreen
+              ? Math.max(screenHeight * 0.10, 84)
+              : Math.max(screenHeight * 0.115, 100);
+            scrollOffset += rowIndex * estimatedCellHeight;
+          }
+        }
+
+        const adjustedHeight = Math.max(0, totalHeight + scrollOffset);
 
         scrollViewRef.current?.scrollTo({
           y: adjustedHeight,
@@ -808,6 +1064,19 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       }
     }
   }, [currentMonth, currentYear]);
+
+  // visibleMonths 변경 시 Set/IndexMap ref 동기화 (스크롤 핸들러 O(n) some() 제거, 월 자동 스크롤 findIndex O(n) 제거)
+  useEffect(() => {
+    const s = new Set<string>();
+    const idxMap = new Map<string, number>();
+    visibleMonths.forEach((m, i) => {
+      const key = `${m.year}-${m.month}`;
+      s.add(key);
+      idxMap.set(key, i);
+    });
+    visibleMonthsSetRef.current = s;
+    visibleMonthsIndexMapRef.current = idxMap;
+  }, [visibleMonths]);
 
   const visibleMonthTabs = useMemo(() => {
     const isLargeScreen = screenWidth >= 600;
@@ -837,13 +1106,98 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     setCurrentYear(newYear);
   }, [visibleMonthTabs, currentMonth, currentYear]);
 
-  // ==================== 1단계: events 변경 시에만 정렬 (O(n log n) — 비용 큰 부분) ====================
+  // 스크롤 핸들러 useCallback 안정화 (모든 값 ref로 접근 → deps=[] → 스크롤 이벤트마다 클로저 재생성 제거)
+  const handleScrollBeginDrag = useCallback(() => {
+    isUserScrollingRef.current = true;
+  }, []);
+
+  const handleMomentumScrollEnd = useCallback(() => {
+    setTimeout(() => { isUserScrollingRef.current = false; }, 100);
+  }, []);
+
+  // 메인 달력 스크롤 핸들러: 월 감지 + 무한 스크롤 (초당 30~60회 실행 → 안정적 함수 필수)
+  // 모든 state는 ref로 읽음 → useCallback deps [] → 렌더 사이클과 무관하게 동일 함수 참조 유지
+  const handleCalendarScroll = useCallback((e: any) => {
+    const scrollY = e.nativeEvent.contentOffset.y;
+    const contentHeight = e.nativeEvent.contentSize.height;
+    const layoutHeight = e.nativeEvent.layoutMeasurement.height;
+    const months = visibleMonthsRef.current;
+
+    // 사용자 스크롤 시: 현재 보이는 월 업데이트 (100ms throttle)
+    if (isUserScrollingRef.current) {
+      const now = Date.now();
+      if (now - lastMonthUpdateRef.current < 100) return;
+
+      let accumulatedHeight = 0;
+      let targetMonthIndex = 0;
+      for (let i = 0; i < months.length; i++) {
+        if (!months[i]) continue;
+        const key = `${months[i].year}-${months[i].month}`;
+        const height = monthHeightsRef.current[key] || screenHeightRef.current * 0.7;
+        if (accumulatedHeight + height / 2 > scrollY) { targetMonthIndex = i; break; }
+        accumulatedHeight += height;
+      }
+
+      if (months[targetMonthIndex]) {
+        const newMonth = months[targetMonthIndex].month;
+        const newYear = months[targetMonthIndex].year;
+        if (newMonth !== currentMonthRef.current || newYear !== currentYearRef.current) {
+          setCurrentMonth(newMonth);
+          setCurrentYear(newYear);
+          lastMonthUpdateRef.current = now;
+        }
+      }
+    }
+
+    // 하단 무한 스크롤 (O(1) Set 조회)
+    if (scrollY + layoutHeight >= contentHeight - 500) {
+      const lastMonth = months.length > 0 ? months[months.length - 1] : null;
+      if (lastMonth) {
+        let nextMonth = lastMonth.month + 1;
+        let nextYear = lastMonth.year;
+        if (nextMonth > 12) { nextMonth = 1; nextYear++; }
+        setVisibleMonths((prev) => {
+          if (prev.length >= MAX_VISIBLE_MONTHS) return prev;
+          const key = `${nextYear}-${nextMonth}`;
+          if (visibleMonthsSetRef.current.has(key)) return prev;
+          return [...prev, { year: nextYear, month: nextMonth }];
+        });
+      }
+    }
+
+    // 상단 무한 스크롤 + 스크롤 위치 보정 (O(1) Set 조회)
+    if (scrollY <= 500) {
+      const firstMonth = months.length > 0 ? months[0] : null;
+      if (firstMonth) {
+        let prevMonth = firstMonth.month - 1;
+        let prevYear = firstMonth.year;
+        if (prevMonth < 1) { prevMonth = 12; prevYear--; }
+        setVisibleMonths((prev) => {
+          if (prev.length >= MAX_VISIBLE_MONTHS) return prev;
+          const key = `${prevYear}-${prevMonth}`;
+          if (visibleMonthsSetRef.current.has(key)) return prev;
+          const newMonths = [{ year: prevYear, month: prevMonth }, ...prev];
+          requestAnimationFrame(() => {
+            const addedHeight = monthHeightsRef.current[`${prevYear}-${prevMonth}`] || screenHeightRef.current * 0.7;
+            scrollViewRef.current?.scrollTo({ y: scrollY + addedHeight, animated: false });
+          });
+          return newMonths;
+        });
+      }
+    }
+  }, [setCurrentMonth, setCurrentYear, setVisibleMonths]);
+
+  // 월 onLayout 핸들러: monthHeightsRef 업데이트 (MonthCalendarWrapper에 전달 — stable)
+  const handleMonthLayout = useCallback((key: string, height: number) => {
+    monthHeightsRef.current[key] = height;
+  }, []);
   const sortedBaseEvents = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayTime = today.getTime();
 
-    const result: Array<{ date: string; event: any; _ts: number; _dow: number }> = [];
+    // _sl: 검색 인덱스 (소문자 한 번만 변환 — upcomingEvents filter 시 toLowerCase 반복 제거)
+    const result: Array<{ date: string; event: any; _ts: number; _dow: number; _sl: string }> = [];
     for (const [date, eventList] of Object.entries(events)) {
       const p = date.split('-');
       if (p.length !== 3) continue;
@@ -852,7 +1206,11 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       if (ts < todayTime) continue;
       const dow = d.getDay();
       for (const event of eventList) {
-        result.push({ date, event, _ts: ts, _dow: dow });
+        // 검색 대상 필드를 합쳐 소문자 1회 변환 (검색 시 toLowerCase 호출 완전 제거)
+        const sl = [event.title, event.location, event.region, event.description, event.venue]
+          .filter(Boolean).join('|').toLowerCase()
+          + (event.tags?.length ? '|' + (event.tags as string[]).join('|').toLowerCase() : '');
+        result.push({ date, event, _ts: ts, _dow: dow, _sl: sl });
       }
     }
     result.sort((a, b) => {
@@ -862,6 +1220,18 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     return result;
   }, [events]);
 
+  // sortedBaseEvents 날짜 → _sl Map (선택 날짜 분기에서 _sl 재사용 — toLowerCase 6회 → 0회)
+  // selectedDate 변경 시에만 재계산 (events 구조 변경 시 sortedBaseEvents 연동)
+  const sortedBaseEventsSlMap = useMemo(() => {
+    const map = new Map<string, Map<string, string>>(); // date → (eventId → _sl)
+    for (const item of sortedBaseEvents) {
+      let dateMap = map.get(item.date);
+      if (!dateMap) { dateMap = new Map(); map.set(item.date, dateMap); }
+      dateMap.set(item.event.id ?? item.event.title, item._sl);
+    }
+    return map;
+  }, [sortedBaseEvents]);
+
   // ==================== 2단계: 필터/검색 변경 시 가벼운 filter만 (정렬 재실행 없음) ====================
   const upcomingEvents = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
@@ -870,20 +1240,20 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     if (selectedDate) {
       if (!events[selectedDate]) return [];
       const result: Array<{ date: string; event: any }> = [];
+      // _sl Map 조회: O(1) 날짜 룩업 후 O(1) 이벤트 룩업 (미래 날짜 전용)
+      const slMapForDate = sortedBaseEventsSlMap.get(selectedDate);
       for (const event of events[selectedDate]) {
         if (selectedRegion && event.region !== selectedRegion) continue;
         if (selectedLocation && event.location !== selectedLocation) continue;
         
         // 검색어가 있을 때만 텍스트 검색
         if (q) {
-          const matchesSearch = 
-            event.title?.toLowerCase().includes(q) ||
-            event.location?.toLowerCase().includes(q) ||
-            event.region?.toLowerCase().includes(q) ||
-            event.description?.toLowerCase().includes(q) ||
-            event.venue?.toLowerCase().includes(q) ||
-            (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)));
-          if (!matchesSearch) continue;
+          // sortedBaseEventsSlMap에 있으면(_sl 재사용) 없으면 과거 날짜 등 fallback
+          const sl = slMapForDate?.get(event.id ?? event.title)
+            ?? [event.title, event.location, event.region, event.description, event.venue]
+                .filter(Boolean).join('|').toLowerCase()
+                + (event.tags?.length ? '|' + (event.tags as string[]).join('|').toLowerCase() : '');
+          if (!sl.includes(q)) continue;
         }
         
         result.push({ date: selectedDate, event });
@@ -917,7 +1287,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         if (quickFilter === 'weekend') {
           if (item._dow !== 0 && item._dow !== 5 && item._dow !== 6) continue;
         } else if (quickFilter === 'thisWeek') {
-          if (item._ts > weekEndTime) continue;
+          // sortedBaseEvents는 날짜 오름차순 정렬 → 이번 주 마지막 날 초과 시 이후 모두 제외 (break O(k))
+          if (item._ts > weekEndTime) break;
         } else if (quickFilter === 'age20s') {
           if (!event.ageRange) continue;
           AGE_RANGE_REGEX.lastIndex = 0;
@@ -942,23 +1313,16 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         }
       }
 
-      // 검색 (검색어가 있을 때만 텍스트 검색 수행 — 조기 탈출로 연산 50% 감소)
+      // 검색 (_sl 사전 인덱스로 단일 includes — toLowerCase 반복 완전 제거)
       if (q) {
-        const matchesSearch = 
-          event.title?.toLowerCase().includes(q) ||
-          event.location?.toLowerCase().includes(q) ||
-          event.region?.toLowerCase().includes(q) ||
-          event.description?.toLowerCase().includes(q) ||
-          event.venue?.toLowerCase().includes(q) ||
-          (event.tags && event.tags.some((t: string) => t.toLowerCase().includes(q)));
-        if (!matchesSearch) continue;
+        if (!item._sl.includes(q)) continue;
       }
 
       result.push({ date: item.date, event });
     }
 
     return result;
-  }, [sortedBaseEvents, events, selectedDate, selectedRegion, selectedLocation, debouncedSearch, quickFilter]);
+  }, [sortedBaseEvents, sortedBaseEventsSlMap, events, selectedDate, selectedRegion, selectedLocation, debouncedSearch, quickFilter]);
 
   // ==================== 추천 파티 (프로모션 광고 + 일반) ====================
   // 날짜별 그룹화 + 하루마다 순서 로테이션 (상단 노출 이벤트가 매일 바뀜)
@@ -969,13 +1333,11 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       if (!grouped[item.date]) grouped[item.date] = [];
       grouped[item.date].push(item);
     }
-    // 오늘 날짜 기반 로테이션 오프셋 (하루마다 변경)
-    const now = new Date();
-    const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000);
+    // 오늘 날짜 기반 로테이션 오프셋 (하루마다 변경 — 모듈 레벨 상수 재사용)
     for (const date of Object.keys(grouped)) {
       const arr = grouped[date];
       if (arr.length <= 3) continue; // 3개 이하면 로테이션 불필요
-      const offset = dayOfYear % arr.length;
+      const offset = _DAY_OF_YEAR % arr.length;
       if (offset > 0) {
         grouped[date] = arr.slice(offset).concat(arr.slice(0, offset));
       }
@@ -1158,8 +1520,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
     return selectedDateElements;
   }, [upcomingEvents.length, selectedDate, groupedDateElements, visibleDateGroups, selectedDateElements, handleLoadMoreDates]);
 
-  // visibleMonths 중복 제거 + 최대 개수 제한 (정기 클린업)
-  const MAX_VISIBLE_MONTHS = 24;
+  // visibleMonths 중복 제거 + 최대 개수 제한 (정기 클린업, MAX_VISIBLE_MONTHS는 모듈 레벨 상수 사용)
   React.useEffect(() => {
     setVisibleMonths((prev) => {
       let cleaned = deduplicateMonths(prev);
@@ -1186,21 +1547,17 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 
   // 새 일정 감지 함수
   const checkForNewEvents = useCallback(
-    (oldEvents: EventsByDate, newEvents: EventsByDate) => {
-      // 초기 로드 시에는 알림 보내지 않음
-      if (Object.keys(oldEvents).length === 0) return;
+    (_oldEvents: EventsByDate, newEvents: EventsByDate) => {
+      // 초기 로드 시에는 알림 보내지 않음 (previousEventSetRef가 빈 Set인 경우)
+      if (previousEventSetRef.current.size === 0) return;
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayTime = today.getTime();
 
-      // old 데이터 전체를 한 번에 Set으로 구성 (id만 사용 — title 포함 시 거짓 양성)
-      const oldEventSet = new Set<string>();
-      for (const [date, eventList] of Object.entries(oldEvents)) {
-        for (const event of eventList) {
-          oldEventSet.add(`${date}:${event.id}`);
-        }
-      }
+      // previousEventSetRef.current 재사용 (매 호출 Set 재빌드 O(n) → O(1) 참조)
+      // updatePreviousEventsRef() 가 previousEventsRef 업데이트 시 항상 동기화함
+      const oldEventSet = previousEventSetRef.current;
 
       for (const [date, eventList] of Object.entries(newEvents)) {
         const p = date.split('-');
@@ -1257,8 +1614,9 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         return;
       }
 
-      // 초기 로드 시 이전 데이터 저장
+      // 초기 로드 시 이전 데이터 저장 (previousEventSetRef 동시 업데이트 — checkForNewEvents 재빌드 방지)
       previousEventsRef.current = loadedEvents;
+      previousEventSetRef.current = buildEventSetForRef(loadedEvents);
       lastEventsRef.current = loadedEvents;
 
       if (isMountedRef.current) {
@@ -1287,6 +1645,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       checkForNewEvents(previousEventsRef.current, freshData);
       setEvents(freshData);
       previousEventsRef.current = freshData;
+      previousEventSetRef.current = buildEventSetForRef(freshData);
       lastEventsRef.current = freshData;
     });
     return unsubscribe;
@@ -1336,6 +1695,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               checkForNewEvents(previousEventsRef.current, latestEvents);
               setEvents(latestEvents);
               previousEventsRef.current = latestEvents;
+              previousEventSetRef.current = buildEventSetForRef(latestEvents);
             }
           } catch (error) {
             // 실패 시 조용히 무시
@@ -1820,136 +2180,21 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         showsVerticalScrollIndicator={false}
         scrollEnabled={!isPanelExpanded}
         scrollEventThrottle={Platform.OS === 'android' ? 32 : 16}
-        onScrollBeginDrag={() => {
-          // 사용자가 직접 스크롤 시작
-          isUserScrollingRef.current = true;
-        }}
-        onMomentumScrollEnd={() => {
-          // 스크롤 애니메이션 종료 후 플래그 리셋
-          setTimeout(() => {
-            isUserScrollingRef.current = false;
-          }, 100);
-        }}
-        onScroll={(e) => {
-          const scrollY = e.nativeEvent.contentOffset.y;
-          const contentHeight = e.nativeEvent.contentSize.height;
-          const layoutHeight = e.nativeEvent.layoutMeasurement.height;
-
-          // 사용자가 직접 스크롤할 때만 월 업데이트 (throttle 적용)
-          if (isUserScrollingRef.current) {
-            const now = Date.now();
-            if (now - lastMonthUpdateRef.current < 100) return; // 100ms throttle
-
-            // 즉시 월 계산 및 업데이트
-            let accumulatedHeight = 0;
-            let targetMonthIndex = 0;
-
-            for (let i = 0; i < visibleMonths.length; i++) {
-              if (!visibleMonths[i]) continue;
-              const key = `${visibleMonths[i].year}-${visibleMonths[i].month}`;
-              const height = monthHeightsRef.current[key] || screenHeight * 0.7;
-
-              if (accumulatedHeight + height / 2 > scrollY) {
-                targetMonthIndex = i;
-                break;
-              }
-              accumulatedHeight += height;
-            }
-
-            if (visibleMonths[targetMonthIndex]) {
-              const newMonth = visibleMonths[targetMonthIndex].month;
-              const newYear = visibleMonths[targetMonthIndex].year;
-
-              if (newMonth !== currentMonth || newYear !== currentYear) {
-                setCurrentMonth(newMonth);
-                setCurrentYear(newYear);
-                lastMonthUpdateRef.current = now;
-              }
-            }
-          }
-
-          // 무한 스크롤 (중복 방지 강화)
-          if (scrollY + layoutHeight >= contentHeight - 500) {
-            const lastMonth =
-              visibleMonths.length > 0
-                ? visibleMonths[visibleMonths.length - 1]
-                : null;
-            if (lastMonth) {
-              let nextMonth = lastMonth.month + 1;
-              let nextYear = lastMonth.year;
-              if (nextMonth > 12) {
-                nextMonth = 1;
-                nextYear++;
-              }
-
-              setVisibleMonths((prev) => {
-                if (prev.length >= MAX_VISIBLE_MONTHS) return prev;
-                const key = `${nextYear}-${nextMonth}`;
-                const exists = prev.some((m) => `${m.year}-${m.month}` === key);
-                if (exists) return prev;
-                return [...prev, { year: nextYear, month: nextMonth }];
-              });
-            }
-          }
-
-          if (scrollY <= 500) {
-            const firstMonth =
-              visibleMonths.length > 0 ? visibleMonths[0] : null;
-            if (firstMonth) {
-              let prevMonth = firstMonth.month - 1;
-              let prevYear = firstMonth.year;
-              if (prevMonth < 1) {
-                prevMonth = 12;
-                prevYear--;
-              }
-
-              setVisibleMonths((prev) => {
-                if (prev.length >= MAX_VISIBLE_MONTHS) return prev;
-                const key = `${prevYear}-${prevMonth}`;
-                const exists = prev.some((m) => `${m.year}-${m.month}` === key);
-                if (exists) return prev;
-
-                const newMonths = [
-                  { year: prevYear, month: prevMonth },
-                  ...prev,
-                ];
-
-                // 스크롤 위치 보정
-                requestAnimationFrame(() => {
-                  const heightKey = `${prevYear}-${prevMonth}`;
-                  const addedHeight =
-                    monthHeightsRef.current[heightKey] || screenHeight * 0.7;
-                  scrollViewRef.current?.scrollTo({
-                    y: scrollY + addedHeight,
-                    animated: false,
-                  });
-                });
-
-                return newMonths;
-              });
-            }
-          }
-        }}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        onScroll={handleCalendarScroll}
       >
         {visibleMonths.map((monthData) => (
-          <View
+          <MonthCalendarWrapper
             key={`${monthData.year}-${monthData.month}`}
-            onLayout={(event) => {
-              const { height } = event.nativeEvent.layout;
-              const key = `${monthData.year}-${monthData.month}`;
-              monthHeightsRef.current[key] = height;
-            }}
-          >
-            <MonthCalendar
-              year={monthData.year}
-              month={monthData.month}
-              events={events}
-              isDark={isDark}
-              selectedLocation={selectedLocation}
-              selectedRegion={selectedRegion}
-              onDatePress={handleDatePress}
-            />
-          </View>
+            monthData={monthData}
+            events={events}
+            isDark={isDark}
+            selectedLocation={selectedLocation}
+            selectedRegion={selectedRegion}
+            onDatePress={handleDatePress}
+            onMonthLayout={handleMonthLayout}
+          />
         ))}
       </ScrollView>
 
@@ -1970,9 +2215,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
         <View style={panelStyles.panelHeaderRow}>
           <View style={panelStyles.panelHeaderLeft}>
             <Text style={panelStyles.panelTitle}>
-              {selectedDate
-                ? `${new Date(selectedDate + 'T00:00:00').getDate()}일 일정`
-                : "일정"}
+              {selectedDay !== null ? `${selectedDay}일 일정` : "일정"}
             </Text>
             {/* 일정 개수 뱃지 */}
             {panelTab === 'all' && upcomingEvents.length > 0 && (
@@ -2047,24 +2290,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
               </TouchableOpacity>
             </View>
             {/* 빠른 필터 칩 */}
-            {panelTab === 'all' && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={panelStyles.chipScrollView} contentContainerStyle={panelStyles.chipScrollContent}>
-                {(selectedDate
-                  ? [
-                      { key: 'all' as const, label: '전체' },
-                      { key: 'age20s' as const, label: '20대' },
-                      { key: 'age30s' as const, label: '30대' },
-                      { key: 'small' as const, label: '소규모' },
-                      { key: 'large' as const, label: '대규모' },
-                    ]
-                  : [
-                      { key: 'all' as const, label: '전체' },
-                      { key: 'thisWeek' as const, label: '이번 주' },
-                      { key: 'weekend' as const, label: '주말' },
-                      { key: 'age20s' as const, label: '20대' },
-                      { key: 'age30s' as const, label: '30대' },
-                    ]
-                ).map(chip => (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={panelStyles.chipScrollView} contentContainerStyle={panelStyles.chipScrollContent}>
+              {(selectedDate ? CHIP_LIST_DATE : CHIP_LIST_ALL).map(chip => (
                   <TouchableOpacity
                     key={chip.key}
                     activeOpacity={0.7}
@@ -2076,8 +2303,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                     </Text>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
-            )}
+            </ScrollView>
           </View>
         )}
 
@@ -2088,7 +2314,8 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             style={rnStyles.flex1}
             nestedScrollEnabled={true}
             bounces={false}
-            scrollEventThrottle={16}
+            scrollEventThrottle={32}
+            removeClippedSubviews={true}
             contentContainerStyle={rnStyles.panelScrollContent}
             onScroll={(e) => {
               const scrollY = e.nativeEvent.contentOffset.y;
@@ -2124,104 +2351,40 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
                   파티 상세에서 ♥ 버튼을 눌러보세요
                 </Text>
               </View>
+            ) : filteredBookmarks.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingTop: 40 }}>
+                <Text style={panelStyles.emptyText}>해당 조건의 찜 목록이 없어요</Text>
+              </View>
             ) : (
-              bookmarks.map((bookmark) => {
+              filteredBookmarks.map((bookmark) => {
                 const { event, date } = bookmark;
                 const dateLabel = bookmarkDateLabels.get(date) ?? date;
                 const reminderSet = hasReminder(event.id, date);
                 return (
-                  <TouchableOpacity
-                    activeOpacity={0.7}
+                  <BookmarkCard
                     key={`bm-${event.id}-${date}`}
-                    style={panelStyles.bmCard}
-                    onPress={() => navigation.navigate('EventDetail', { event, date })}
-                  >
-                    <View style={panelStyles.bmRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={panelStyles.bmDateText}>
-                          {dateLabel} · {event.time || '시간 미정'}
-                        </Text>
-                        <Text style={panelStyles.bmTitle}>
-                          {event.title}
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => {
-                          toggleBookmark(event, date);
-                          hapticLight();
-                          showToast({ message: bookmarks.some((b: any) => b.eventId === event.id && b.date === date) ? '찜 목록에서 제거했어요' : '찜 목록에 추가했어요', type: 'success', icon: '❤️' });
-                        }}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="찜하기"
-                        accessibilityRole="button"
-                      >
-                        <Text style={[panelStyles.bmHeart, { color: reminderSet ? '#ffffff' : 'rgba(255,255,255,0.6)' }]}>♥</Text>
-                      </TouchableOpacity>
-                    </View>
-                    {event.subEvents && event.subEvents.length > 1 ? (
-                      <View style={ecStyles.subRow}>
-                        {event.subEvents.slice(0, 3).map((sub: any, si: number) => (
-                          <View key={si} style={ecStyles.tag}>
-                            <Text style={ecStyles.tagText} numberOfLines={1}>
-                              {sub.location || sub.venue || `지점${si + 1}`}
-                            </Text>
-                          </View>
-                        ))}
-                        {event.subEvents.length > 3 && (
-                          <View style={ecStyles.moreTag}>
-                            <Text style={ecStyles.moreTagText}>+{event.subEvents.length - 3}</Text>
-                          </View>
-                        )}
-                      </View>
-                    ) : event.location ? (
-                      <View style={ecStyles.locRow}>
-                        <View style={ecStyles.tag}>
-                          <Text style={ecStyles.tagText} numberOfLines={1}>
-                            {event.location}
-                          </Text>
-                        </View>
-                      </View>
-                    ) : null}
-                    <View style={panelStyles.bmBtnRow}>
-                      <View style={panelStyles.bmBtn}>
-                        <Text style={panelStyles.bmBtnText}>
-                          자세히 보기
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={async () => {
-                          if (!event.id) return;
-                          if (reminderSet) {
-                            await cancelReminder(event.id, date);
-                            hapticLight();
-                            showToast({ message: '알림이 해제되었어요', type: 'info', icon: '🔕' });
-                          } else {
-                            const result = await scheduleReminder(event, date);
-                            if (result.success) {
-                              hapticSuccess();
-                              showToast({ message: '알림이 설정되었어요', type: 'success', icon: '🔔' });
-                            } else {
-                              showToast({ message: result.message, type: 'error' });
-                            }
-                          }
-                        }}
-                        style={reminderSet ? panelStyles.bmBtnActive : panelStyles.bmBtnInactive}
-                      >
-                        <Text style={panelStyles.bmBtnText}>
-                          {reminderSet ? '🔔 알림 취소' : '🔔 알림'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </TouchableOpacity>
+                    event={event}
+                    date={date}
+                    dateLabel={dateLabel}
+                    reminderSet={reminderSet}
+                    onNavigate={handleNavigateToEventDetail}
+                    onToggleBookmark={toggleBookmark}
+                    onScheduleReminder={scheduleReminder}
+                    onCancelReminder={cancelReminder}
+                  />
                 );
               })
             )
           ) : (
           /* ===== 전체 일정 탭 ===== */
           upcomingEvents.length === 0 ? (
-            <View>
+            <View style={{ alignItems: 'center', paddingTop: 40 }}>
               <Text style={panelStyles.emptyText}>
-                예정된 일정이 없습니다
+                {debouncedSearch
+                  ? `'${debouncedSearch}' 검색 결과가 없어요`
+                  : quickFilter !== 'all'
+                  ? '해당 조건의 일정이 없어요'
+                  : '예정된 일정이 없습니다'}
               </Text>
             </View>
           ) : panelAllEventsContent

@@ -426,7 +426,8 @@ const sanitizeEvent = (event: Event): Event => {
 
 // AsyncStorage 초기화는 asyncStorageManager에서 처리
 
-const loadFromCache = async (): Promise<EventsByDate | null> => {
+// allowStale=true: 만료된 캐시도 반환 (stale-while-revalidate 초기 렌더용)
+const loadFromCache = async (allowStale: boolean = false): Promise<EventsByDate | null> => {
   // 캐시 비활성화 시 바로 반환
   if (CACHE_DURATION <= 0) return null;
   
@@ -447,13 +448,15 @@ const loadFromCache = async (): Promise<EventsByDate | null> => {
     if (isNaN(timestampNum) || timestampNum <= 0) return null;
     
     const age = Date.now() - timestampNum;
-    // 음수나 만료된 캐시 거부 — 하지만 만료 캐시도 ETag 복원 후 반환 안 함
-    // (SWR 패턴에서 만료 캐시는 loadStaleCache에서 처리)
-    if (age < 0 || age >= CACHE_DURATION) {
+    const isExpired = age < 0 || age >= CACHE_DURATION;
+    
+    if (isExpired) {
       secureLog.info('⌛ 캐시 만료');
-      // 캐시 만료 시 ETag도 무효화 → 다음 fetch에서 304 대신 200 전체 데이터 수신
+      // 캐시 만료 시 ETag 무효화 → 다음 fetch에서 200 전체 데이터 수신
       _lastETag = null;
-      return null;
+      if (!allowStale) return null;
+      // allowStale: 만료 캐시도 반환 (즉시 화면 표시 후 백그라운드 갱신)
+      secureLog.info('⏸ 만료 캐시 반환 (백그라운드 갱신 예정)');
     }
     
     const events = safeJSONParse<EventsByDate>(cached, {});
@@ -487,6 +490,10 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
       return;
     }
     
+    // JSON.stringify는 동기 블로킹 (큰 데이터셋 시 수십ms) → setImmediate로 다음 틱에 실행
+    // 네트워크 응답 직후 UI 업데이트를 막지 않도록 메인 큐 뒤로 양보
+    await new Promise<void>(resolve => setImmediate(resolve));
+
     const jsonString = JSON.stringify(events);
     
     if (jsonString.length > 1024 * 1024) {
@@ -511,14 +518,19 @@ const saveToCache = async (events: EventsByDate): Promise<void> => {
 let _pendingLoadPromise: Promise<EventsByDate> | null = null;
 
 // SWR 백그라운드 재검증: 캐시 반환 후 네트워크에서 최신 데이터 확인
+// 동시 호출 방지 플래그 (_pendingLoadPromise는 forceRefresh=true 경우 체크 안 됨)
+let _isRevalidating = false;
 const _revalidateInBackground = (): void => {
+  if (_isRevalidating) return; // 이미 백그라운드 갱신 진행 중 → 중복 fetch 방지
+  _isRevalidating = true;
   loadEvents(true).then((freshData) => {
     if (freshData && Object.keys(freshData).length > 0) {
       _swrListeners.forEach(listener => {
         try { listener(freshData); } catch {}
       });
     }
-  }).catch(() => { /* 백그라운드 실패는 무시: 이미 캐시 반환됨 */ });
+  }).catch(() => { /* 백그라운드 실패는 무시: 이미 캐시 반환됨 */ })
+    .finally(() => { _isRevalidating = false; });
 };
 
 // SWR 백그라운드 재검증 리스너 (CalendarScreen 등에서 구독)
@@ -538,9 +550,9 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     }
   }
 
-  // 2순위: AsyncStorage 디스크 캐시
+  // 2순위: AsyncStorage 디스크 캐시 (신선한 것)
   if (!forceRefresh) {
-    const cached = await loadFromCache();
+    const cached = await loadFromCache(false);
     if (cached) {
       secureLog.info('✅ 디스크 캐시 사용');
       _memCache = cached;
@@ -561,6 +573,19 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
     return _pendingLoadPromise;
   }
 
+  // 2.5순위: 만료 캐시 즉시 반환 + 백그라운드 갱신 (stale-while-revalidate 강화)
+  // 콜드 스타트 후 30분 경과 시 네트워크 대기 없이 즉시 화면 표시
+  if (!forceRefresh) {
+    const stale = await loadFromCache(true);
+    if (stale) {
+      secureLog.info('⏸ 만료 캐시 즉시 반환 (백그라운드 갱신 시작)');
+      _memCache = stale;
+      _memCacheTime = 0; // 즉시 만료 처리: 다음 loadEvents에서 네트워크 재요청
+      _revalidateInBackground(); // _pendingLoadPromise 세팅 → 중복 fetch 방지
+      return stale;
+    }
+  }
+
   const doLoad = async (): Promise<EventsByDate> => {
   try {
     secureLog.info('🔄 데이터 로딩...');
@@ -575,7 +600,7 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
         _memCacheTime = Date.now();
         return _memCache;
       }
-      const cached = await loadFromCache();
+      const cached = await loadFromCache(true); // allowStale: 304는 서버가 미변경 확인, 만료 캐시도 유효
       if (cached) {
         _memCache = cached;
         _memCacheTime = Date.now();
@@ -689,29 +714,14 @@ export const loadEvents = async (forceRefresh: boolean = false): Promise<EventsB
       return _memCache;
     }
     
-    // 2. 유효한 디스크 캐시 시도
-    const cached = await loadFromCache();
-    if (cached) {
-      _memCache = cached;
+    // 2. 디스크 캐시 복구 (만료 캐시 포함 — 빈 화면보다 나음)
+    const stale = await loadFromCache(true);
+    if (stale) {
+      _memCache = stale;
       _memCacheTime = Date.now();
-      secureLog.info('✅ 디스크 캐시 복구');
-      return cached;
+      secureLog.info('✅ 캐시 복구 (만료 포함)');
+      return stale;
     }
-    
-    // 3. 만료된 캐시라도 반환 (빈 화면보다 나음)
-    try {
-      const results = await safeMultiGet([CACHE_KEY]);
-      const rawCached = results[0]?.[1];
-      if (rawCached) {
-        const staleEvents = safeJSONParse<EventsByDate>(rawCached, {});
-        if (validateEvents(staleEvents) && Object.keys(staleEvents).length > 0) {
-          _memCache = staleEvents;
-          _memCacheTime = Date.now();
-          secureLog.warn('⚠️ 만료된 캐시 사용 (네트워크 오류 대비)');
-          return staleEvents;
-        }
-      }
-    } catch { /* 무시 */ }
     
     secureLog.warn('❌ 빈 데이터 반환');
     return {};

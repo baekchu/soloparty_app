@@ -41,6 +41,7 @@
   "private": true,
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "babel-plugin-transform-remove-console": "^6.9.4",
     "expo-constants": "^18.0.13",
     "typescript": "^5.9.3"
   }
