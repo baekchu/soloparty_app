@@ -20,6 +20,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { getContainerStyle, getResponsivePadding, getResponsiveFontSize } from '../utils/responsive';
+import { sanitizeText } from '../utils/sanitize';
 
 // ==================== 캘린더 테마 상수 (렌더마다 재생성 방지) ====================
 const CALENDAR_THEME_BASE = {
@@ -88,22 +89,29 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
     }
     setFieldErrors({});
 
-    // URL 유효성 검증
+    // URL 유효성 검증 (위험 프로토콜 명시적 차단 — defence-in-depth)
     const trimmedLink = link.trim();
-    if (trimmedLink && !/^https?:\/\/.+/i.test(trimmedLink)) {
-      Alert.alert('알림', '링크는 http:// 또는 https://로 시작해야 합니다.');
-      isSavingRef.current = false;
-      return;
+    if (trimmedLink) {
+      if (/^(javascript|data|vbscript|file|ftp):/i.test(trimmedLink)) {
+        Alert.alert('알림', '허용되지 않는 링크 형식입니다.');
+        isSavingRef.current = false;
+        return;
+      }
+      if (!/^https?:\/\/.+/i.test(trimmedLink)) {
+        Alert.alert('알림', '링크는 http:// 또는 https://로 시작해야 합니다.');
+        isSavingRef.current = false;
+        return;
+      }
     }
 
     setIsSaving(true);
     try {
       const newEvent = {
         id: Crypto.randomUUID(),
-        title: title.trim(),
-        time: time.trim(),
-        location: location.trim(),
-        description: description.trim(),
+        title: sanitizeText(title.trim(), 100),
+        time: sanitizeText(time.trim(), 20),
+        location: sanitizeText(location.trim(), 100),
+        description: sanitizeText(description.trim(), 500),
         link: trimmedLink || undefined,
         coordinates: coordinates || undefined,
       };
@@ -133,19 +141,42 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
     [selectedDate]: { selected: true, selectedColor: '#10b981' },
   }), [selectedDate]);
 
-  const bgColor = isDark ? '#0c0c16' : '#ffffff';
-  const cardBg = isDark ? '#141422' : '#f9fafb';
-  const inputBg = isDark ? '#1e1e32' : '#ffffff';
-  const labelColor = isDark ? '#a0a0b8' : '#374151';
-  const textColor = isDark ? '#eaeaf2' : '#111827';
-  const placeholderColor = isDark ? '#5c5c74' : '#9ca3af';
-  const borderColor = isDark ? '#1e1e32' : '#e5e7eb';
+  // 테마 색상 7개를 isDark 변경 시에만 재계산 (매 렌더 인라인 계산 제거)
+  const { bgColor, cardBg, inputBg, labelColor, textColor, placeholderColor, borderColor } = useMemo(() => ({
+    bgColor: isDark ? '#0c0c16' : '#ffffff',
+    cardBg: isDark ? '#141422' : '#f9fafb',
+    inputBg: isDark ? '#1e1e32' : '#ffffff',
+    labelColor: isDark ? '#a0a0b8' : '#374151',
+    textColor: isDark ? '#eaeaf2' : '#111827',
+    placeholderColor: isDark ? '#5c5c74' : '#9ca3af',
+    borderColor: isDark ? '#1e1e32' : '#e5e7eb',
+  }), [isDark]);
+
+  // 안정적인 이벤트 핸들러 (인라인 화살표 제거)
+  const handleGoBack = useCallback(() => navigation.goBack(), [navigation]);
+
+  const handleDayPress = useCallback((day: DateData) => {
+    setSelectedDate(day.dateString);
+    setFieldErrors(prev => ({ ...prev, date: undefined }));
+  }, []);
+
+  const handleTitleChange = useCallback((t: string) => {
+    setTitle(t);
+    setFieldErrors(prev => ({ ...prev, title: undefined }));
+  }, []);
+
+  // JSX 내 IIFE 날짜 포맷 추출 (selectedDate 변경 시에만 재계산)
+  const formattedSelectedDate = useMemo(() => {
+    if (!selectedDate) return '';
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+  }, [selectedDate]);
 
   return (
     <View style={[aStyles.root, { backgroundColor: bgColor, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
       {/* 헤더 */}
       <View style={[aStyles.header, { borderBottomColor: borderColor }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={aStyles.headerBtn}>
+        <TouchableOpacity onPress={handleGoBack} style={aStyles.headerBtn}>
           <Text style={[aStyles.closeText, { color: isDark ? '#ffffff' : '#111827' }]}>✕</Text>
         </TouchableOpacity>
         <Text style={[aStyles.headerTitle, { color: isDark ? '#ffffff' : '#111827', fontSize: getResponsiveFontSize(20) }]}>
@@ -176,16 +207,13 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
             <Calendar
               theme={calendarTheme}
               markedDates={markedDates}
-              onDayPress={(day: DateData) => { setSelectedDate(day.dateString); setFieldErrors(prev => ({ ...prev, date: undefined })); }}
+              onDayPress={handleDayPress}
               enableSwipeMonths={true}
             />
             {selectedDate && (
               <View style={[aStyles.selectedDateBadge, { backgroundColor: isDark ? 'rgba(6, 95, 70, 0.2)' : '#d1fae5' }]}>
                 <Text style={[aStyles.selectedDateText, { color: isDark ? '#34d399' : '#059669' }]}>
-                  ✅ {(() => {
-                  const [y, m, d] = selectedDate.split('-').map(Number);
-                  return new Date(y, m - 1, d).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
-                })()}
+                  ✅ {formattedSelectedDate}
                 </Text>
               </View>
             )}
@@ -201,7 +229,7 @@ export default function AddEventScreen({ navigation }: AddEventScreenProps) {
             <TextInput
               style={[aStyles.input, { backgroundColor: inputBg, color: textColor }, fieldErrors.title && aStyles.inputError]}
               value={title}
-              onChangeText={(t) => { setTitle(t); setFieldErrors(prev => ({ ...prev, title: undefined })); }}
+              onChangeText={handleTitleChange}
               placeholder="예: 크리스마스 파티"
               placeholderTextColor={placeholderColor}
               maxLength={100}

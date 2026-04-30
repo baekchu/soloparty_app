@@ -462,10 +462,18 @@ export default function useReminders() {
 
       await ensureAndroidChannel();
 
+      // 보안: 알림 내용 RTL/LTR 방향 제어 문자 및 제로폭 문자 제거
+      const sanitizeNotifText = (t: string | undefined, max: number) =>
+        String(t || '')
+          .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u200B-\u200D\uFEFF]/g, '')
+          .slice(0, max);
+      const safeTitle = sanitizeNotifText(event.title, 100);
+      const safeLocation = sanitizeNotifText(event.location, 100);
+
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
           title: '🎉 파티가 곧 시작돼요!',
-          body: `${event.title}${event.time ? `\n⏰ ${event.time}` : ''}${event.location ? `\n📍 ${event.location}` : ''}`,
+          body: `${safeTitle}${event.time ? `\n⏰ ${event.time}` : ''}${safeLocation ? `\n📍 ${safeLocation}` : ''}`,
           data: { eventId, date, type: 'event_reminder' },
           sound: true,
           ...(Platform.OS === 'android' && _channelReady ? { channelId: 'event-reminders' } : {}),

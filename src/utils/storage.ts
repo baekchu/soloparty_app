@@ -10,14 +10,14 @@ const GIST_RAW_URL = env.GIST_RAW_URL;
 const CACHE_KEY = '@events_cache';
 const CACHE_TIMESTAMP_KEY = '@events_cache_timestamp';
 const CACHE_ETAG_KEY = '@events_cache_etag';
-const CACHE_DURATION = 1800000; // 30분 디스크 캐시 (15→30분: 동시접속 시 서버 부하 50% 감소)
-const FETCH_TIMEOUT = 8000;       // 기본 타임아웃
-const FETCH_TIMEOUT_RETRY = 12000; // 재시도 시 타임아웃 (적응형)
+const CACHE_DURATION = 3600000; // 60분 디스크 캐시 (30→60분: 동접자 증가 시 Gist 요청 빈도 절반 감소)
+const FETCH_TIMEOUT = 10000;      // 기본 타임아웃 (CDN 지연 여유 확보)
+const FETCH_TIMEOUT_RETRY = 15000; // 재시도 타임아웃
 
 // 인메모리 캐시: 앱 세션 동안 AsyncStorage 접근을 최소화
 let _memCache: EventsByDate | null = null;
 let _memCacheTime = 0;
-const MEM_CACHE_DURATION = 900000; // 15분 메모리 캐시 (10→15분: SWR 백그라운드 재검증으로 커버)
+const MEM_CACHE_DURATION = 1800000; // 30분 메모리 캐시 (15→30분: 동접 시 SWR 트리거 절반 감소)
 const MAX_JSON_SIZE = 5 * 1024 * 1024; // 5MB 최대 JSON 크기 (DoS 방지)
 
 // ETag 기반 조건부 요청 (304 Not Modified → 네트워크 전송량 제로)
@@ -25,7 +25,7 @@ let _lastETag: string | null = null;
 
 // Exponential Backoff: 연속 실패 시 서버 부하 방지 (동시 접속자 가용성)
 let _consecutiveFailures = 0;
-const MAX_BACKOFF_MS = 60000; // 최대 1분
+const MAX_BACKOFF_MS = 120000; // 최대 2분 (대규모 동접 시 GitHub 레이트리밋 회피)
 const getBackoffDelay = (): number => {
   if (_consecutiveFailures === 0) return 0;
   return Math.min(1000 * Math.pow(2, _consecutiveFailures - 1), MAX_BACKOFF_MS);
@@ -61,7 +61,7 @@ const isDataUnchanged = (newData: EventsByDate, existing: EventsByDate): boolean
  * - 크기 제한으로 DoS 공격 방지
  * - 에러 처리로 앱 크래시 방지
  */
-const safeJSONParse = <T>(text: string, fallback: T): T => {
+export const safeJSONParse = <T>(text: string, fallback: T): T => {
   try {
     if (!text || typeof text !== 'string') return fallback;
     if (text.length > MAX_JSON_SIZE) {
@@ -72,7 +72,29 @@ const safeJSONParse = <T>(text: string, fallback: T): T => {
     // 빈 문자열이나 공백만 있는 경우
     if (text.trim().length === 0) return fallback;
     
-    return JSON.parse(text) as T;
+    const parsed = JSON.parse(text) as T;
+
+    // 프로토타입 오염 방지: __proto__/constructor/prototype 키를 재귀적으로 검사
+    // 최상위 객체뿐 아니라 중첩 이벤트 배열의 각 객체도 검사 (Gist 데이터 구조 대응)
+    const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+    const hasDangerousKey = (obj: unknown, depth: number = 0): boolean => {
+      // 무한 재귀 방지 (최대 4단계: EventsByDate → 날짜배열 → 이벤트객체 → subEvents → 이벤트)
+      if (depth > 4 || obj === null || typeof obj !== 'object') return false;
+      const keys = Object.keys(obj as object);
+      for (const k of keys) {
+        if (DANGEROUS_KEYS.has(k)) return true;
+        if (hasDangerousKey((obj as Record<string, unknown>)[k], depth + 1)) return true;
+      }
+      return false;
+    };
+    if (parsed !== null && typeof parsed === 'object') {
+      if (hasDangerousKey(parsed)) {
+        secureLog.warn('⚠️ 프로토타입 오염 시도 감지 — 데이터 거부');
+        return fallback;
+      }
+    }
+
+    return parsed;
   } catch (error) {
     secureLog.warn('⚠️ JSON 파싱 실패');
     return fallback;
@@ -357,14 +379,17 @@ const sanitizeEvent = (event: Event): Event => {
     if (!str) return undefined;
     return str
       .trim()
-      .replace(/[<>]/g, '')
+      .replace(/[<>]/g, '')                                          // HTML 태그 문자 제거
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')                        // 제로폭 문자 제거 (스푸핑 방지)
+      .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g, '')    // RTL/LTR 방향 제어 문자 제거 (텍스트 스푸핑 방지)
       .substring(0, maxLen);
   };
 
   const cleanUrl = (url: string | undefined): string | undefined => {
     if (!url) return undefined;
     const trimmed = url.trim();
-    return /^(https?:|mailto:)/.test(trimmed) ? trimmed.substring(0, 500) : undefined;
+    // https?://만 허용 (mailto:, javascript:, data:, file: 등 모두 차단)
+    return /^https?:\/\/.+/i.test(trimmed) ? trimmed.substring(0, 500) : undefined;
   };
   
   const cleanNumber = (num: unknown): number | undefined => {
@@ -376,7 +401,11 @@ const sanitizeEvent = (event: Event): Event => {
     if (!Array.isArray(tags)) return undefined;
     return tags
       .filter((t): t is string => typeof t === 'string')
-      .map(t => t.trim().replace(/[<>]/g, '').substring(0, 30))
+      .map(t => t.trim()
+        .replace(/[<>]/g, '')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g, '')
+        .substring(0, 30))
       .filter(t => t.length > 0)
       .slice(0, 10);
   };
@@ -520,17 +549,28 @@ let _pendingLoadPromise: Promise<EventsByDate> | null = null;
 // SWR 백그라운드 재검증: 캐시 반환 후 네트워크에서 최신 데이터 확인
 // 동시 호출 방지 플래그 (_pendingLoadPromise는 forceRefresh=true 경우 체크 안 됨)
 let _isRevalidating = false;
+let _jitterTimer: ReturnType<typeof setTimeout> | null = null;
+// Thundering Herd 방지: 백그라운드 재검증 요청을 0~10초 사이 무작위 분산
+// → 동시 접속자 수 × (요청 수 / 10초) 로 GitHub Gist 부하를 선형 분산
+const REVALIDATE_JITTER_MS = 10000;
 const _revalidateInBackground = (): void => {
-  if (_isRevalidating) return; // 이미 백그라운드 갱신 진행 중 → 중복 fetch 방지
-  _isRevalidating = true;
-  loadEvents(true).then((freshData) => {
-    if (freshData && Object.keys(freshData).length > 0) {
-      _swrListeners.forEach(listener => {
-        try { listener(freshData); } catch {}
-      });
-    }
-  }).catch(() => { /* 백그라운드 실패는 무시: 이미 캐시 반환됨 */ })
-    .finally(() => { _isRevalidating = false; });
+  if (_isRevalidating) return;
+  if (_jitterTimer) return; // 이미 예약됨 → 중복 예약 방지
+  // 백그라운드 갱신이므로 즉시 실행 대신 랜덤 딜레이 후 실행 (서버 부하 분산)
+  const jitter = Math.floor(Math.random() * REVALIDATE_JITTER_MS);
+  _jitterTimer = setTimeout(() => {
+    _jitterTimer = null;
+    if (_isRevalidating) return;
+    _isRevalidating = true;
+    loadEvents(true).then((freshData) => {
+      if (freshData && Object.keys(freshData).length > 0) {
+        _swrListeners.forEach(listener => {
+          try { listener(freshData); } catch {}
+        });
+      }
+    }).catch(() => { /* 백그라운드 실패는 무시: 이미 캐시 반환됨 */ })
+      .finally(() => { _isRevalidating = false; });
+  }, jitter);
 };
 
 // SWR 백그라운드 재검증 리스너 (CalendarScreen 등에서 구독)

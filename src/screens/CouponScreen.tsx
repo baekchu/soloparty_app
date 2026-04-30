@@ -33,7 +33,7 @@ import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePoints } from '../hooks/usePoints';
-import { useCoupons, Coupon } from '../hooks/useCoupons';
+import { useCoupons, Coupon, CouponHistory } from '../hooks/useCoupons';
 import { useRewardedAd } from '../services/AdService';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -46,6 +46,112 @@ const SECTION_PADDING = 20;
 interface CouponScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Coupon'>;
 }
+
+// ==================== 메모이즈된 쿠폰 아이템 (resetTimeDisplay/verifyCode 변경 시 불필요한 재렌더링 방지) ====================
+interface CouponItemProps {
+  coupon: Coupon;
+  daysLeft: number;
+  isExpired: boolean;
+  isExpiringSoon: boolean;
+  formattedExpiry: string;
+  isDark: boolean;
+  onSelect: (coupon: Coupon) => void;
+  onCopyCode: (code: string) => void;
+}
+
+const CouponItem = React.memo(({ coupon, daysLeft, isExpired, isExpiringSoon, formattedExpiry, isDark, onSelect, onCopyCode }: CouponItemProps) => {
+  const handlePress = useCallback(() => {
+    if (!isExpired) onSelect(coupon);
+  }, [isExpired, onSelect, coupon]);
+
+  const handleCopyCode = useCallback(() => {
+    onCopyCode(coupon.secretCode);
+  }, [onCopyCode, coupon.secretCode]);
+
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      disabled={isExpired}
+      style={[
+        styles.couponItem,
+        {
+          backgroundColor: isExpired
+            ? (isDark ? '#141422' : '#f1f5f9')
+            : (isDark ? '#0c0c16' : '#ffffff'),
+          borderColor: isExpired
+            ? (isDark ? '#32324c' : '#d1d5db')
+            : isExpiringSoon
+              ? '#f59e0b'
+              : (isDark ? '#1e1e32' : '#e5e7eb'),
+          opacity: isExpired ? 0.6 : 1,
+        }
+      ]}
+    >
+      <View style={styles.couponLeft}>
+        <Text style={styles.couponIcon}>{isExpired ? '🚫' : '🎟️'}</Text>
+      </View>
+      <View style={styles.couponContent}>
+        <View style={styles.couponNameRow}>
+          <Text style={[
+            styles.couponName,
+            { color: isDark ? '#eaeaf2' : '#0f172a' },
+            isExpired && { textDecorationLine: 'line-through' },
+          ]}>
+            {coupon.name}
+          </Text>
+          {isExpired && (
+            <View style={styles.expiredBadge}>
+              <Text style={styles.expiredBadgeText}>만료됨</Text>
+            </View>
+          )}
+        </View>
+        <TouchableOpacity onPress={handleCopyCode} activeOpacity={0.7}>
+          <Text style={[styles.couponCode, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
+            🔑 {coupon.secretCode}
+          </Text>
+        </TouchableOpacity>
+        <Text style={[styles.couponExpiry, { color: isExpired ? '#ef4444' : isExpiringSoon ? '#f59e0b' : (isDark ? '#8888a0' : '#64748b') }]}>
+          {isExpired ? '❌ 만료됨' : isExpiringSoon ? `⚠️ ${daysLeft}일 후 만료` : `만료: ${formattedExpiry}`}
+        </Text>
+      </View>
+      <View style={styles.couponRight}>
+        <Text style={[styles.couponArrow, { color: isDark ? '#8888a0' : '#64748b' }]}>›</Text>
+      </View>
+    </TouchableOpacity>
+  );
+});
+CouponItem.displayName = 'CouponItem';
+
+// ==================== 메모이즈된 히스토리 아이템 ====================
+interface HistoryItemProps {
+  id: string;
+  action: CouponHistory['action'];
+  couponName: string;
+  formattedDate: string;
+  isDark: boolean;
+}
+
+const HistoryItem = React.memo(({ action, couponName, formattedDate, isDark }: HistoryItemProps) => (
+  <View style={styles.historyItem}>
+    <View style={styles.historyLeft}>
+      <Text style={styles.historyIcon}>
+        {action === 'exchange' ? '🔄' : action === 'use' ? '✅' : '⏰'}
+      </Text>
+      <View>
+        <Text style={[styles.historyText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
+          {action === 'exchange' ? '쿠폰 교환' : action === 'use' ? '쿠폰 사용' : '쿠폰 만료'}
+        </Text>
+        <Text style={[styles.historySubText, { color: isDark ? '#8888a0' : '#64748b' }]}>
+          {couponName}
+        </Text>
+      </View>
+    </View>
+    <Text style={[styles.historyDate, { color: isDark ? '#5c5c74' : '#9ca3af' }]}>
+      {formattedDate}
+    </Text>
+  </View>
+));
+HistoryItem.displayName = 'HistoryItem';
 
 export default function CouponScreen({ navigation }: CouponScreenProps) {
   const { isDark } = useTheme();
@@ -307,6 +413,28 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
     return Math.max(0, days); // 음수 방지 (만료된 쿠폰)
   }, []);
 
+  // 쿠폰 표시 데이터 사전 계산 (getDaysLeft/formatDate 렌더마다 중복 호출 제거)
+  const couponDisplayItems = useMemo(() =>
+    availableCoupons.map(coupon => {
+      const daysLeft = getDaysLeft(coupon.expiresAt);
+      return {
+        coupon,
+        daysLeft,
+        isExpired: daysLeft <= 0,
+        isExpiringSoon: daysLeft > 0 && daysLeft <= 7,
+        formattedExpiry: formatDate(coupon.expiresAt),
+      };
+    }),
+    [availableCoupons, getDaysLeft, formatDate]);
+
+  // 히스토리 표시 데이터 사전 계산
+  const historyDisplayItems = useMemo(() =>
+    history.slice(0, 5).map(item => ({
+      ...item,
+      formattedDate: formatDate(item.timestamp),
+    })),
+    [history, formatDate]);
+
   // 진행률 계산
   const progressPercent = useMemo(() => {
     return Math.min((balance / POINTS_PER_COUPON) * 100, 100);
@@ -560,64 +688,19 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
               </Text>
             </View>
           ) : (
-            availableCoupons.map((coupon) => {
-              const daysLeft = getDaysLeft(coupon.expiresAt);
-              const isExpired = daysLeft <= 0;
-              const isExpiringSoon = daysLeft > 0 && daysLeft <= 7;
-              
-              return (
-                <TouchableOpacity
-                  key={coupon.id}
-                  onPress={() => !isExpired && handleSelectCoupon(coupon)}
-                  disabled={isExpired}
-                  style={[
-                    styles.couponItem,
-                    { 
-                      backgroundColor: isExpired
-                        ? (isDark ? '#141422' : '#f1f5f9')
-                        : (isDark ? '#0c0c16' : '#ffffff'),
-                      borderColor: isExpired
-                        ? (isDark ? '#32324c' : '#d1d5db')
-                        : isExpiringSoon 
-                          ? '#f59e0b' 
-                          : (isDark ? '#1e1e32' : '#e5e7eb'),
-                      opacity: isExpired ? 0.6 : 1,
-                    }
-                  ]}
-                >
-                  <View style={styles.couponLeft}>
-                    <Text style={styles.couponIcon}>{isExpired ? '🚫' : '🎟️'}</Text>
-                  </View>
-                  <View style={styles.couponContent}>
-                    <View style={styles.couponNameRow}>
-                      <Text style={[
-                        styles.couponName,
-                        { color: isDark ? '#eaeaf2' : '#0f172a' },
-                        isExpired && { textDecorationLine: 'line-through' },
-                      ]}>
-                        {coupon.name}
-                      </Text>
-                      {isExpired && (
-                        <View style={styles.expiredBadge}>
-                          <Text style={styles.expiredBadgeText}>만료됨</Text>
-                        </View>
-                      )}
-                    </View>
-                    <TouchableOpacity onPress={() => handleCopyCode(coupon.secretCode)} activeOpacity={0.7}>
-                      <Text style={[styles.couponCode, { color: isDark ? '#a78bfa' : '#8b5cf6' }]}>
-                        🔑 {coupon.secretCode}
-                      </Text>
-                    </TouchableOpacity>
-                    <Text style={[styles.couponExpiry, { color: isExpired ? '#ef4444' : isExpiringSoon ? '#f59e0b' : (isDark ? '#8888a0' : '#64748b') }]}>
-                      {isExpired ? '❌ 만료됨' : isExpiringSoon ? `⚠️ ${daysLeft}일 후 만료` : `만료: ${formatDate(coupon.expiresAt)}`}
-                    </Text>
-                  </View>
-                  <View style={styles.couponRight}>
-                    <Text style={[styles.couponArrow, { color: isDark ? '#8888a0' : '#64748b' }]}>›</Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })
+            couponDisplayItems.map(({ coupon, daysLeft, isExpired, isExpiringSoon, formattedExpiry }) => (
+              <CouponItem
+                key={coupon.id}
+                coupon={coupon}
+                daysLeft={daysLeft}
+                isExpired={isExpired}
+                isExpiringSoon={isExpiringSoon}
+                formattedExpiry={formattedExpiry}
+                isDark={isDark}
+                onSelect={handleSelectCoupon}
+                onCopyCode={handleCopyCode}
+              />
+            ))
           )}
         </View>
 
@@ -636,25 +719,15 @@ export default function CouponScreen({ navigation }: CouponScreenProps) {
               </Text>
             </View>
           ) : (
-            history.slice(0, 5).map((item) => (
-              <View key={item.id} style={styles.historyItem}>
-                <View style={styles.historyLeft}>
-                  <Text style={styles.historyIcon}>
-                    {item.action === 'exchange' ? '🔄' : item.action === 'use' ? '✅' : '⏰'}
-                  </Text>
-                  <View>
-                    <Text style={[styles.historyText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
-                      {item.action === 'exchange' ? '쿠폰 교환' : item.action === 'use' ? '쿠폰 사용' : '쿠폰 만료'}
-                    </Text>
-                    <Text style={[styles.historySubText, { color: isDark ? '#8888a0' : '#64748b' }]}>
-                      {item.couponName}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={[styles.historyDate, { color: isDark ? '#5c5c74' : '#9ca3af' }]}>
-                  {formatDate(item.timestamp)}
-                </Text>
-              </View>
+            historyDisplayItems.map((item) => (
+              <HistoryItem
+                key={item.id}
+                id={item.id}
+                action={item.action}
+                couponName={item.couponName}
+                formattedDate={item.formattedDate}
+                isDark={isDark}
+              />
             ))
           )}
         </View>

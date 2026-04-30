@@ -17,6 +17,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import * as Location from 'expo-location';
 import { AppState, AppStateStatus } from 'react-native';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
+import { safeJSONParse } from '../utils/storage';
 import { Event } from '../types';
 
 // ==================== 상수 ====================
@@ -194,7 +195,7 @@ async function _loadFromStorage(): Promise<void> {
     // 예약 로드
     if (storedReservations && storedReservations.length < 200000) {
       try {
-        const parsed = JSON.parse(storedReservations);
+        const parsed = safeJSONParse<unknown[] | null>(storedReservations, null);
         if (Array.isArray(parsed)) {
           const cutoff = Date.now() - 30 * 86400000;
           _reservations = parsed.filter(
@@ -215,7 +216,7 @@ async function _loadFromStorage(): Promise<void> {
 
     if (rawCheckIns && rawCheckIns.length < 200000) {
       try {
-        const parsed = JSON.parse(rawCheckIns);
+        const parsed = safeJSONParse<unknown[] | null>(rawCheckIns, null);
         if (Array.isArray(parsed)) {
           const cutoff = Date.now() - 30 * 86400000;
           _checkIns = parsed.filter(
@@ -234,7 +235,7 @@ async function _loadFromStorage(): Promise<void> {
 
     if (storedReviews && storedReviews.length < 500000) {
       try {
-        const parsed = JSON.parse(storedReviews);
+        const parsed = safeJSONParse<unknown[] | null>(storedReviews, null);
         if (Array.isArray(parsed)) {
           _reviews = parsed.filter(
             (r: any) =>
@@ -247,7 +248,7 @@ async function _loadFromStorage(): Promise<void> {
         }
       } catch { /* 파싱 실패 */ }
     }
-  } catch { /* 전체 로드 실패 */ }
+  } catch { /* 스토리지 로드 실패 */ }
   _loaded = true;
   _loading = false;
   _setupAppStateListener();
@@ -615,11 +616,12 @@ export default function useReviews() {
       if (!Number.isFinite(safeRating) || safeRating < 1 || safeRating > 5 || !Number.isInteger(safeRating)) {
         return { success: false, message: '별점은 1~5 사이 정수여야 합니다.' };
       }
-      // XSS/인젝션 방지: HTML 태그 + 제어문자 + 제로폭 문자 제거
+      // XSS/인젝션 방지: HTML 태그 + 제어문자 + 제로폭 문자 + RTL/LTR 방향 제어 문자 제거
       const trimmedComment = comment
         .replace(/<[^>]*>/g, '')           // HTML 태그 제거
         .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '') // 제어 문자 제거
         .replace(/[\u200B-\u200D\uFEFF]/g, '')  // 제로폭 문자 제거
+        .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g, '') // RTL/LTR 방향 제어 문자 제거
         .trim()
         .slice(0, 100);
       if (trimmedComment.length === 0) {

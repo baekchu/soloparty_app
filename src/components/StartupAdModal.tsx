@@ -44,8 +44,8 @@ const STORAGE_KEYS = {
 } as const;
 
 const CONFIG = {
-  CACHE_DURATION: 30 * 60 * 1000, // 30분
-  FETCH_TIMEOUT: 5000, // 5초
+  CACHE_DURATION: 60 * 60 * 1000, // 60분 (대규모 동접 시 Gist 요청 감소)
+  FETCH_TIMEOUT: 10000, // 10초
   MODAL_DELAY: 300, // 모달 표시 딜레이
   MODAL_WIDTH: Math.min(Dimensions.get('window').width * 0.72, 260),
 } as const;
@@ -85,10 +85,20 @@ const isValidConfig = (data: unknown): data is AdConfig => {
     && (d.imageUrl === '' || (d.imageUrl as string).startsWith('https://'));
 };
 
+// 프로토타입 오염 방지: __proto__, constructor, prototype 키를 포함한 객체 거부
+const _DANGEROUS_JSON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const _hasDangerousKey = (obj: unknown, depth = 0): boolean => {
+  if (depth > 3 || !obj || typeof obj !== 'object') return false;
+  return Object.keys(obj as object).some(
+    k => _DANGEROUS_JSON_KEYS.has(k) || _hasDangerousKey((obj as Record<string, unknown>)[k], depth + 1)
+  );
+};
 const safeJsonParse = <T,>(json: string | null, fallback: T): T => {
   if (!json) return fallback;
   try {
-    return JSON.parse(json) as T;
+    const result = JSON.parse(json) as T;
+    if (_hasDangerousKey(result)) return fallback;
+    return result;
   } catch {
     return fallback;
   }
@@ -144,6 +154,7 @@ class AdConfigLoader {
       try {
         const res = await fetch(GIST_RAW_URL, { 
           signal: controller.signal,
+          redirect: 'error', // 예기치 않은 리다이렉트 차단
           headers: { 'Cache-Control': 'no-cache' },
         });
         clearTimeout(timeoutId);
@@ -297,9 +308,12 @@ export const StartupAdModal = memo<StartupAdModalProps>(({ isDark, onClose }) =>
   // 광고 클릭
   const handlePress = useCallback(() => {
     if (!config?.linkUrl) return;
-    // https/http만 허용 (intent://, javascript:, file:// 등 차단)
-    if (!/^https?:\/\//i.test(config.linkUrl)) return;
-    Linking.openURL(config.linkUrl).catch(() => {});
+    const url = config.linkUrl.trim();
+    // 위험 프로토콜 명시적 차단 (defence-in-depth)
+    if (/^(javascript|data|vbscript|file|ftp|intent):/i.test(url)) return;
+    // https만 허용 (http 제외 — MITM 방지)
+    if (!/^https:\/\//i.test(url)) return;
+    Linking.openURL(url).catch(() => {});
   }, [config?.linkUrl]);
 
   // 이미지 에러

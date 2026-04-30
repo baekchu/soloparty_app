@@ -218,19 +218,38 @@ class PointsAutoSyncService {
 
       if (!backupStr) return null;
 
+      // 보안: 크기 제한 (DoS 방지)
+      if (backupStr.length > 50000) {
+        secureLog.warn('⚠️ 백업 데이터 크기 초과 — 복원 거부');
+        return null;
+      }
+
       const backup: AutoBackupData = JSON.parse(backupStr);
-      
+
+      // 보안: 프로토타입 오염 방지
+      if (typeof backup !== 'object' || backup === null || Array.isArray(backup)) return null;
+      if (Object.prototype.hasOwnProperty.call(backup, '__proto__') ||
+          Object.prototype.hasOwnProperty.call(backup, 'constructor') ||
+          Object.prototype.hasOwnProperty.call(backup, 'prototype')) {
+        secureLog.warn('⚠️ 백업 데이터 프로토타입 오염 시도 감지');
+        return null;
+      }
+
       // 유효성 검증
       if (backup.balance == null || backup.balance < 0) return null;
       if (backup.balance > 1000000) return null; // MAX_POINTS 제한
 
       // 마이그레이션 상태 기록
       const currentDeviceId = await PointsSecurityService.getDeviceId();
-      if (backup.sourceDeviceId && backup.sourceDeviceId !== currentDeviceId) {
+      // 보안: sourceDeviceId 타입/길이 검증 (키 인젝션 방지)
+      const safeSourceId = typeof backup.sourceDeviceId === 'string' &&
+        backup.sourceDeviceId.length > 0 && backup.sourceDeviceId.length < 200
+        ? backup.sourceDeviceId : undefined;
+      if (safeSourceId && safeSourceId !== currentDeviceId) {
         await this.saveMigrationStatus({
           completed: true,
           migratedAt: Date.now(),
-          fromDeviceId: backup.sourceDeviceId,
+          fromDeviceId: safeSourceId,
           toDeviceId: currentDeviceId,
           migratedBalance: backup.balance,
         });
@@ -394,7 +413,11 @@ class PointsAutoSyncService {
   static async getMigrationStatus(): Promise<MigrationStatus | null> {
     try {
       const str = await safeGetItem(SYNC_CONFIG.MIGRATION_STATUS_KEY);
-      return str ? JSON.parse(str) : null;
+      if (!str) return null;
+      if (str.length > 10000) return null;
+      const parsed = JSON.parse(str);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+      return parsed as MigrationStatus;
     } catch {
       return null;
     }

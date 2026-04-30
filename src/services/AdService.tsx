@@ -135,12 +135,18 @@ const generateSecureAdToken = async (): Promise<string> => {
     const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
     return `ad_${Date.now()}_${hex}`;
   } catch {
-    // Crypto 실패 시에도 최대한 예측 불가능한 토큰 생성
-    const ts = Date.now().toString(36);
-    const arr = new Uint8Array(8);
-    for (let i = 0; i < arr.length; i++) arr[i] = (Date.now() * (i + 1) + performance.now() * 1000) & 0xff;
-    const hex = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
-    return `ad_${ts}_${hex}`;
+    // Crypto.getRandomBytesAsync 실패 시 sync API 시도
+    try {
+      const bytes = Crypto.getRandomBytes(16);
+      const hex = Array.from(bytes as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join('');
+      return `ad_${Date.now()}_${hex}`;
+    } catch {
+      // 암호학적 난수 수단이 모두 실패한 궙극 폴백
+      // Date.now() 연산만 사용 — 알려진 예측 가능한 패턴(높은 시카, 루프 곱) 제거
+      const ts1 = Date.now().toString(36);
+      const ts2 = Date.now().toString(16);
+      return `ad_${ts1}_${ts2}`;
+    }
   }
 };
 

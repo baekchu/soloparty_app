@@ -3,10 +3,13 @@
  * 외부 Gist 데이터의 XSS, CSS Injection 방지
  */
 
-/** 텍스트 살균: 제로 폭 문자 제거 + 길이 제한 */
+/** 텍스트 살균: 제로 폭 문자 + 유니코드 방향 제어 문자 제거 + 길이 제한 */
 export const sanitizeText = (text: string | undefined, maxLen = 500): string => {
   if (!text) return '';
-  return String(text).replace(/[\u200B-\u200D\uFEFF]/g, '').slice(0, maxLen);
+  return String(text)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '') // 제로 폭 문자 제거
+    .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g, '') // 유니코드 방향 제어 문자 제거 (RTL/LTR override 텍스트 스푸핑 방지)
+    .slice(0, maxLen);
 };
 
 /** 색상 값 검증: #hex 또는 rgb/rgba만 허용 */

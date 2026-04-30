@@ -368,10 +368,10 @@ export default function EventListScreen({ navigation }: EventListScreenProps) {
             index,
           })}
           removeClippedSubviews={Platform.OS === 'android'}
-          maxToRenderPerBatch={10}
-          windowSize={10}
-          initialNumToRender={12}
-          updateCellsBatchingPeriod={50}
+          maxToRenderPerBatch={6}
+          windowSize={7}
+          initialNumToRender={10}
+          updateCellsBatchingPeriod={80}
           scrollEventThrottle={16}
           refreshControl={
             <RefreshControl

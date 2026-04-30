@@ -7,7 +7,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog } from '../utils/secureStorage';
-import { env } from '../config/env';
+import { loadEvents } from '../utils/storage'; // storage 캐시 재사용 — 별도 Gist fetch 제거
 
 interface LocationPickerScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'LocationPicker'>;
@@ -20,9 +20,13 @@ interface LocationPickerScreenProps {
 
 // ==================== 상수 정의 ====================
 const LOCATION_STATS_KEY = '@location_stats';
-const EVENTS_GIST_URL = env.GIST_RAW_URL;
-const FETCH_TIMEOUT = 10000; // 10초 타임아웃
+// EVENTS_GIST_URL 제거: loadEvents() 운용 시 storage.ts 캐시 슬롯 공유 — 별도 Gist fetch 불필요
 const MAX_LOCATIONS = 100; // 최대 장소 수 제한
+
+// 모듈 레벨 위치 캐시 — 화면을 여닫닫할 때마다 데이터를 다시 추출하지 않도록 (어떤 데이터 로드도 수태)
+let _cachedLocations: LocationData[] | null = null;
+let _cachedRegions: string[] = [];
+let _cachedEventsRef: object | null = null; // 입력 EventsByDate 참조 비교
 
 // 기본 인기 장소 목록
 const DEFAULT_LOCATIONS: LocationData[] = [
@@ -71,6 +75,70 @@ const normalizeDisplayName = (text: string | undefined): string => {
   return firstWord || text;
 };
 
+// ==================== 지역 필터 칩 (React.memo — 선택 변경 시 해당 칩만 재렌더) ====================
+interface RegionFilterChipProps {
+  region: string;
+  isSelected: boolean;
+  isDark: boolean;
+  onPress: (region: string) => void;
+}
+const RegionFilterChip = React.memo(function RegionFilterChip({ region, isSelected, isDark, onPress }: RegionFilterChipProps) {
+  const handlePress = React.useCallback(() => onPress(region), [onPress, region]);
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      style={[lpStyles.filterChip, {
+        backgroundColor: isSelected
+          ? (isDark ? '#a78bfa' : '#ec4899')
+          : (isDark ? '#1e1e32' : '#f1f5f9'),
+      }]}
+    >
+      <Text style={[lpStyles.filterChipText, {
+        color: isSelected ? '#ffffff' : (isDark ? '#8888a0' : '#64748b'),
+      }]}>
+        {region}
+      </Text>
+    </TouchableOpacity>
+  );
+});
+
+// ==================== 장소 아이템 (React.memo — 선택 변경 시 2개 아이템만 재렌더) ====================
+interface LocationItemProps {
+  location: LocationData;
+  isSelected: boolean;
+  isDark: boolean;
+  onPress: (location: LocationData) => void;
+}
+const LocationItem = React.memo(function LocationItem({ location, isSelected, isDark, onPress }: LocationItemProps) {
+  const handlePress = React.useCallback(() => onPress(location), [onPress, location]);
+  return (
+    <TouchableOpacity
+      key={`${location.name}_${location.region}`}
+      onPress={handlePress}
+      style={[lpStyles.locItem, {
+        backgroundColor: isSelected
+          ? (isDark ? 'rgba(167, 139, 250, 0.15)' : 'rgba(236, 72, 153, 0.08)')
+          : (isDark ? '#141422' : '#f9fafb'),
+        borderWidth: isSelected ? 2 : 1,
+        borderColor: isSelected
+          ? (isDark ? '#a78bfa' : '#ec4899')
+          : (isDark ? '#1e1e32' : '#e5e7eb'),
+      }]}
+    >
+      <View style={lpStyles.locRow}>
+        <View style={lpStyles.flex1}>
+          <Text style={[lpStyles.locName, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
+            {normalizeDisplayName(location.region)} {normalizeDisplayName(location.name)}
+          </Text>
+        </View>
+        {isSelected && (
+          <Text style={lpStyles.checkMark}>✓</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 export default function LocationPickerScreen({ navigation, route }: LocationPickerScreenProps) {
   const { theme } = useTheme();
   const { setSelectedLocation: setContextLocation, setSelectedRegion: setContextRegion } = useRegion();
@@ -108,13 +176,9 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
     return () => subscription?.remove();
   }, []);
 
-  // 장소 데이터 로드 (언마운트 시 abort)
-  const unmountControllerRef = useRef<AbortController | null>(null);
+  // 장소 데이터 로드 (언마운트 감지용 isMountedRef 재사용)
   useEffect(() => {
     loadLocationsFromGist();
-    return () => {
-      unmountControllerRef.current?.abort();
-    };
   }, []);
 
   // 필터링된 장소 목록 (메모이제이션)
@@ -143,69 +207,52 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
 
   // ==================== 데이터 로드 함수 ====================
   const loadLocationsFromGist = useCallback(async () => {
-    const controller = new AbortController();
-    unmountControllerRef.current = controller;
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-    
     if (isMountedRef.current) {
       setIsLoadingLocations(true);
       setLoadError(false);
     }
 
     try {
-      const response = await fetch(`${EVENTS_GIST_URL}?t=${Date.now()}`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        await loadLocalStats();
-        if (isMountedRef.current) { setLoadError(true); setIsLoadingLocations(false); }
+      // storage.ts loadEvents() 재사용 — 이미 로드된 캐시(60분 메모리/ETag) 활용
+      // ?t=Date.now() 스타일 직접 fetch 제거 → 동접 시 Gist 요청수 절반 감소
+      const eventsData = await loadEvents(false);
+
+      // 같은 EventsByDate 참조면 재추출 스킵 (loadEvents memCache 히트)
+      if (eventsData === _cachedEventsRef && _cachedLocations) {
+        const statsJson = await safeGetItem(LOCATION_STATS_KEY);
+        let locationStats: Record<string, number> = {};
+        if (statsJson && statsJson.length < 100000) {
+          try {
+            const p = JSON.parse(statsJson);
+            if (p && typeof p === 'object' && !Array.isArray(p)) {
+              for (const [k, v] of Object.entries(p)) {
+                if (typeof k === 'string' && k.length < 200 && typeof v === 'number' && v >= 0)
+                  locationStats[k] = v;
+              }
+            }
+          } catch {}
+        }
+        const merged = _cachedLocations.map(loc => ({
+          ...loc,
+          count: (loc.count || 0) + (locationStats[loc.name] || 0),
+        })).sort((a, b) => b.count - a.count);
+        if (isMountedRef.current) {
+          setAvailableRegions(_cachedRegions);
+          setAllLocations(merged);
+          setIsLoadingLocations(false);
+        }
         return;
       }
-      
-      const text = await response.text();
-      
-      // 보안: 응답 크기 제한 (5MB)
-      if (text.length > 5 * 1024 * 1024) {
-        secureLog.warn('⚠️ 응답 크기 초과');
-        await loadLocalStats();
-        return;
-      }
-      
-      // JSON 파싱 (제어 문자 제거) - 안전한 파싱
-      let data;
-      try {
-        const cleanText = text
-          .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
-          .replace(/[\n\r\t]/g, ' ')
-          .replace(/\s+/g, ' ');
-        data = JSON.parse(cleanText);
-      } catch (parseError) {
-        secureLog.warn('⚠️ JSON 파싱 실패');
-        await loadLocalStats();
-        return;
-      }
-      
-      // 보안: 데이터 타입 검증
-      if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        secureLog.warn('⚠️ 유효하지 않은 데이터 형식');
-        await loadLocalStats();
-        return;
-      }
-      
-      // 장소 추출 (보안: 문자열 길이 제한)
+
+      // EventsByDate → 장소 Map 추출
       const locationMap = new Map<string, LocationData>();
-      
-      Object.values(data).forEach((events: any) => {
+
+      Object.values(eventsData).forEach((events) => {
         if (!Array.isArray(events)) return;
-        
-        events.forEach((event: any) => {
+        events.forEach((event) => {
           if (!event?.location || typeof event.location !== 'string') return;
-          
-          const locationName = event.location.trim().substring(0, 100); // 최대 100자 (원본 유지)
-          const region = event.region?.trim().substring(0, 50) || '기타'; // 원본 지역명 유지
-          
+          const locationName = event.location.trim().substring(0, 100);
+          const region = (event.region?.trim() ?? '').substring(0, 50) || '기타';
           if (locationMap.has(locationName)) {
             const existing = locationMap.get(locationName)!;
             existing.count++;
@@ -215,7 +262,6 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
               existing.latitude = isNaN(lat) ? 37.5665 : lat;
               existing.longitude = isNaN(lng) ? 126.9780 : lng;
             }
-            // 태그 병합
             if (Array.isArray(event.tags)) {
               const existingTags = existing.tags || [];
               const newTags = event.tags.filter((t: string) => typeof t === 'string' && !existingTags.includes(t));
@@ -235,39 +281,41 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           }
         });
       });
-        
-      // Map을 배열로 변환
-      const locationsFromGist = Array.from(locationMap.values());
-      
-      // 지역 목록 추출 및 정규화 (중복 제거)
-      const normalizedRegions = locationsFromGist.map(loc => normalizeDisplayName(loc.region));
+
+      const locationsFromEvents = Array.from(locationMap.values());
+      const normalizedRegions = locationsFromEvents.map(loc => normalizeDisplayName(loc.region));
       const regions = [...new Set(normalizedRegions)].filter(r => r);
-      
-      // 로컬 통계 불러오기
+
+      // 모듈 캐시 갱신 (EventsByDate 참조 함께 저장)
+      _cachedLocations = locationsFromEvents;
+      _cachedRegions = regions.sort();
+      _cachedEventsRef = eventsData;
+
+      // 로컬 통계 병대사
       const statsJson = await safeGetItem(LOCATION_STATS_KEY);
       let locationStats: Record<string, number> = {};
-      
-      if (statsJson) {
+      if (statsJson && statsJson.length < 100000) {
         try {
-          locationStats = JSON.parse(statsJson);
+          const parsed = JSON.parse(statsJson);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            for (const [key, value] of Object.entries(parsed)) {
+              if (typeof key === 'string' && key.length < 200 && typeof value === 'number' && value >= 0)
+                locationStats[key] = value;
+            }
+          }
         } catch {}
       }
-      
-      // 통계 합산 및 정렬
-      const mergedLocations = locationsFromGist
-        .map(loc => ({
-          ...loc,
-          count: (loc.count || 0) + (locationStats[loc.name] || 0),
-        }))
+
+      const mergedLocations = locationsFromEvents
+        .map(loc => ({ ...loc, count: (loc.count || 0) + (locationStats[loc.name] || 0) }))
         .sort((a, b) => b.count - a.count);
-      
+
       if (isMountedRef.current) {
-        setAvailableRegions(regions.sort());
+        setAvailableRegions(_cachedRegions);
         setAllLocations(mergedLocations);
         setIsLoadingLocations(false);
       }
-    } catch (error) {
-      clearTimeout(timeoutId);
+    } catch {
       await loadLocalStats();
       if (isMountedRef.current) {
         setLoadError(true);
@@ -357,6 +405,14 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
   }, []);
 
   // ==================== 이벤트 핸들러 ====================
+  const handleGoBack = useCallback(() => navigation.goBack(), [navigation]);
+
+  const handleClearRegionFilter = useCallback(() => setSelectedRegionFilter(null), []);
+
+  const handleRegionFilterPress = useCallback((region: string) => {
+    setSelectedRegionFilter(region);
+  }, []);
+
   const handleSelectLocation = useCallback((location: LocationData) => {
     setSelectedLocation(location);
   }, []);
@@ -409,7 +465,7 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
         backgroundColor: isDark ? '#141422' : '#ffffff',
         borderBottomColor: isDark ? '#1e1e32' : '#e5e7eb',
       }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={lpStyles.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
+        <TouchableOpacity onPress={handleGoBack} style={lpStyles.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
           <Text style={[lpStyles.headerBtnText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>‹</Text>
         </TouchableOpacity>
         <Text style={[lpStyles.headerTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
@@ -443,36 +499,20 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
           showsHorizontalScrollIndicator={false}
           style={lpStyles.filterRow}
         >
-          <TouchableOpacity
-            onPress={() => setSelectedRegionFilter(null)}
-            style={[lpStyles.filterChip, {
-              backgroundColor: selectedRegionFilter === null 
-                ? (isDark ? '#a78bfa' : '#ec4899') 
-                : (isDark ? '#1e1e32' : '#f1f5f9'),
-            }]}
-          >
-            <Text style={[lpStyles.filterChipText, {
-              color: selectedRegionFilter === null ? '#ffffff' : (isDark ? '#8888a0' : '#64748b'),
-            }]}>
-              전체
-            </Text>
-          </TouchableOpacity>
+          <RegionFilterChip
+            region="전체"
+            isSelected={selectedRegionFilter === null}
+            isDark={isDark}
+            onPress={handleClearRegionFilter}
+          />
           {availableRegions.map((region) => (
-            <TouchableOpacity
+            <RegionFilterChip
               key={region}
-              onPress={() => setSelectedRegionFilter(region)}
-              style={[lpStyles.filterChip, {
-                backgroundColor: selectedRegionFilter === region 
-                  ? (isDark ? '#a78bfa' : '#ec4899') 
-                  : (isDark ? '#1e1e32' : '#f1f5f9'),
-              }]}
-            >
-              <Text style={[lpStyles.filterChipText, {
-                color: selectedRegionFilter === region ? '#ffffff' : (isDark ? '#8888a0' : '#64748b'),
-              }]}>
-                {region}
-              </Text>
-            </TouchableOpacity>
+              region={region}
+              isSelected={selectedRegionFilter === region}
+              isDark={isDark}
+              onPress={handleRegionFilterPress}
+            />
           ))}
         </ScrollView>
 
@@ -505,35 +545,15 @@ export default function LocationPickerScreen({ navigation, route }: LocationPick
               </Text>
             </View>
           ) : (
-            filteredLocations.map((location) => {
-            const isSelected = selectedLocation?.name === location.name;
-            return (
-            <TouchableOpacity
+            filteredLocations.map((location) => (
+            <LocationItem
               key={`${location.name}_${location.region}`}
-              onPress={() => handleSelectLocation(location)}
-              style={[lpStyles.locItem, {
-                backgroundColor: isSelected
-                  ? (isDark ? 'rgba(167, 139, 250, 0.15)' : 'rgba(236, 72, 153, 0.08)')
-                  : (isDark ? '#141422' : '#f9fafb'),
-                borderWidth: isSelected ? 2 : 1,
-                borderColor: isSelected
-                  ? (isDark ? '#a78bfa' : '#ec4899')
-                  : (isDark ? '#1e1e32' : '#e5e7eb'),
-              }]}
-            >
-              <View style={lpStyles.locRow}>
-                <View style={lpStyles.flex1}>
-                  <Text style={[lpStyles.locName, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
-                    {normalizeDisplayName(location.region)} {normalizeDisplayName(location.name)}
-                  </Text>
-                </View>
-                {isSelected && (
-                  <Text style={lpStyles.checkMark}>✓</Text>
-                )}
-              </View>
-            </TouchableOpacity>
-            );
-          })
+              location={location}
+              isSelected={selectedLocation?.name === location.name}
+              isDark={isDark}
+              onPress={handleSelectLocation}
+            />
+          ))
           )}
           </>
           )}

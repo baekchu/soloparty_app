@@ -16,8 +16,8 @@ let initPromise: Promise<void> | null = null;
 // 배치 쓰기 큐 (Map으로 동일 키 O(1) 병합)
 let writeQueue = new Map<string, string>();
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
-const WRITE_BATCH_DELAY = 50; // 50ms 내의 쓰기는 배치로 처리
-const MAX_QUEUE_SIZE = 50; // 배치 큐 최대 크기 (메모리 폭탄 방지)
+const WRITE_BATCH_DELAY = 100; // 100ms 배치 주기 (50→100ms: 동접 폭증 시 I/O 트랜잭션 횟수 절반 감소)
+const MAX_QUEUE_SIZE = 100; // 배치 큐 최대 크기 (50→100: 대규모 동접 시 플러시 트리거 여유)
 
 // 앱 백그라운드 진입 시 대기 중인 쓰기 즉시 플러시 (데이터 손실 방지)
 AppState.addEventListener('change', (state: AppStateStatus) => {

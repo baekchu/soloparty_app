@@ -13,16 +13,16 @@ interface SkeletonProps {
   height?: number | string;
   borderRadius?: number;
   style?: any;
+  isDark: boolean;
 }
 
-export const Skeleton: React.FC<SkeletonProps> = ({ 
-  width = '100%', 
-  height = 20, 
+export const Skeleton = React.memo(function Skeleton({
+  width = '100%',
+  height = 20,
   borderRadius = 4,
-  style 
-}) => {
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
+  style,
+  isDark,
+}: SkeletonProps) {
   const animatedValue = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -67,10 +67,10 @@ export const Skeleton: React.FC<SkeletonProps> = ({
       ]}
     />
   );
-};
+});
 
 // 이벤트 카드 스켈레톤
-export const EventCardSkeleton: React.FC = () => {
+export const EventCardSkeleton = React.memo(function EventCardSkeleton() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
 
@@ -78,17 +78,17 @@ export const EventCardSkeleton: React.FC = () => {
     <View style={[styles.eventCardSkeleton, { backgroundColor: isDark ? '#141422' : '#ffffff' }]}>
       <View style={[styles.accent, { backgroundColor: isDark ? '#1e1e32' : '#e5e7eb' }]} />
       <View style={styles.content}>
-        <Skeleton width={100} height={12} style={{ marginBottom: 8 }} />
-        <Skeleton width="80%" height={18} style={{ marginBottom: 8 }} />
+        <Skeleton isDark={isDark} width={100} height={12} style={{ marginBottom: 8 }} />
+        <Skeleton isDark={isDark} width="80%" height={18} style={{ marginBottom: 8 }} />
         <View style={styles.metaRow}>
-          <Skeleton width={80} height={14} borderRadius={12} style={{ marginRight: 8 }} />
-          <Skeleton width={100} height={14} borderRadius={12} />
+          <Skeleton isDark={isDark} width={80} height={14} borderRadius={12} style={{ marginRight: 8 }} />
+          <Skeleton isDark={isDark} width={100} height={14} borderRadius={12} />
         </View>
-        <Skeleton width="100%" height={14} style={{ marginTop: 8 }} />
+        <Skeleton isDark={isDark} width="100%" height={14} style={{ marginTop: 8 }} />
       </View>
     </View>
   );
-};
+});
 
 // 이벤트 리스트 스켈레톤
 export const EventListSkeleton: React.FC<{ count?: number }> = ({ count = 5 }) => {
@@ -102,34 +102,35 @@ export const EventListSkeleton: React.FC<{ count?: number }> = ({ count = 5 }) =
 };
 
 // 캘린더 스켈레톤
-export const CalendarSkeleton: React.FC = () => {
+export const CalendarSkeleton = React.memo(function CalendarSkeleton() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
 
   return (
     <View style={[styles.calendarSkeleton, { backgroundColor: isDark ? '#0c0c16' : '#fce7f3' }]}>
       <View style={styles.calendarHeader}>
-        <Skeleton width={150} height={24} style={{ marginBottom: 16 }} />
+        <Skeleton isDark={isDark} width={150} height={24} style={{ marginBottom: 16 }} />
       </View>
       <View style={styles.calendarGrid}>
         {Array.from({ length: 7 }).map((_, i) => (
-          <Skeleton key={`day-${i}`} width={40} height={16} style={{ marginBottom: 12 }} />
+          <Skeleton isDark={isDark} key={`day-${i}`} width={40} height={16} style={{ marginBottom: 12 }} />
         ))}
       </View>
       <View style={styles.calendarDates}>
         {Array.from({ length: 35 }).map((_, i) => (
-          <Skeleton 
-            key={`date-${i}`} 
-            width={36} 
-            height={36} 
+          <Skeleton
+            isDark={isDark}
+            key={`date-${i}`}
+            width={36}
+            height={36}
             borderRadius={18}
-            style={{ margin: 4 }} 
+            style={{ margin: 4 }}
           />
         ))}
       </View>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   skeleton: {

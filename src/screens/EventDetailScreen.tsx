@@ -216,6 +216,35 @@ const rfStyles = StyleSheet.create({
   starBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
 });
 
+// ==================== 지점 선택 탭 (React.memo — render마다 inline onPress/sanitizeText 재생성 방지) ====================
+interface BranchTabProps {
+  idx: number;
+  label: string;
+  isActive: boolean;
+  accentColor: string;
+  inactiveBg: string;
+  inactiveBorder: string;
+  bodyText: string;
+  onSelect: (idx: number) => void;
+}
+const BranchTab = memo(function BranchTab({ idx, label, isActive, accentColor, inactiveBg, inactiveBorder, bodyText, onSelect }: BranchTabProps) {
+  const handlePress = useCallback(() => onSelect(idx), [onSelect, idx]);
+  return (
+    <TouchableOpacity
+      style={[
+        styles.branchTab,
+        { backgroundColor: isActive ? accentColor : inactiveBg, borderColor: isActive ? accentColor : inactiveBorder },
+      ]}
+      onPress={handlePress}
+      activeOpacity={0.7}
+    >
+      <Text style={[styles.branchTabText, { color: isActive ? '#ffffff' : bodyText }]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+});
+
 export default function EventDetailScreen({ navigation, route }: Props) {
   // route.params 안전 검증 (잘못된 네비게이션 파라미터로 인한 크래시 방지)
   if (!route.params?.event || !route.params?.date) {
@@ -322,6 +351,9 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     if (!event.link || !isValidUrl(event.link)) {
       // http가 없는 경우 https 추가 후 재검증
       if (event.link && !event.link.startsWith('http')) {
+        // 보안: https:// 추가 전 위험 프로토콜을 원본 URL에서 먼저 차단
+        // "javascript:alert(1)" → "https://javascript:alert(1)" 우회 방지
+        if (/^(javascript|data|vbscript|file|ftp):/i.test(event.link.trim())) return null;
         const withHttps = `https://${event.link.trim()}`;
         return isValidUrl(withHttps) ? withHttps : null;
       }
@@ -555,7 +587,15 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     description: event.detailDescription || event.description ? sanitizeText((event.detailDescription || event.description)!) : undefined,
     organizer: event.organizer ? sanitizeText(event.organizer, 50) : undefined,
     contact: event.contact ? sanitizeText(event.contact) : undefined,
-  }), [event.venue, event.location, event.address, event.region, event.detailDescription, event.description, event.organizer, event.contact]);
+    // 추가 필드 — 인라인 호출 제거 (렌더마다 regex 실행 방지)
+    titleShort: sanitizeText(event.title, 20),
+    titleFull: sanitizeText(event.title),
+    time: event.time ? sanitizeText(event.time, 30) : undefined,
+    ageRange: event.ageRange ? sanitizeText(event.ageRange, 20) : undefined,
+    promotionLabel: event.promotionLabel ? sanitizeText(event.promotionLabel, 20) : undefined,
+    tags: event.tags?.slice(0, 5).map((tag: string) => sanitizeText(tag)),
+    link: event.link ? sanitizeText(event.link, 100) : undefined,
+  }), [event.venue, event.location, event.address, event.region, event.detailDescription, event.description, event.organizer, event.contact, event.title, event.time, event.ageRange, event.promotionLabel, event.tags, event.link]);
 
   // 주최자 리뷰 (memoized)
   // 주최자 리뷰 (memoized) — deps 최소화: organizer만 의존
@@ -563,6 +603,15 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     () => event.organizer ? getReviewsByOrganizer(event.organizer) : EMPTY_REVIEWS,
     [event.organizer, getReviewsByOrganizer]
   );
+
+  // 주최자 평점 통계 — organizerReviews.reduce() JSX 3회 중복 호출 제거
+  const organizerStats = useMemo(() => {
+    if (!organizerReviews.length) return null;
+    const total = organizerReviews.reduce((s: number, r: any) => s + r.rating, 0);
+    const avg = total / organizerReviews.length;
+    const percent = (avg / 5) * 100;
+    return { avgText: avg.toFixed(1), percentWidth: `${percent}%` as const, percentText: percent.toFixed(0) };
+  }, [organizerReviews]);
 
   // 주최자 프로필 열기
   const handleOpenHostProfile = useCallback(() => {
@@ -572,6 +621,22 @@ export default function EventDetailScreen({ navigation, route }: Props) {
   const handleCloseHostProfile = useCallback(() => {
     setShowHostProfile(false);
   }, []);
+
+  // 지점 선택 핸들러 (JSX 인라인 화살표 함수 제거 → 재생성 방지)
+  const handleSelectBranch = useCallback((idx: number) => {
+    setSelectedBranchIdx(idx);
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  }, []);
+
+  // 지점 탭 레이블 사전 계산 (render마다 sanitizeText 재호출 방지)
+  const subEventLabels = useMemo(
+    () => routeEvent.subEvents?.map((sub, idx) =>
+      sanitizeText(sub.location || sub.venue || `지점 ${idx + 1}`, 20)
+    ) ?? [],
+    // routeEvent.subEvents 참조가 변경될 때만 재계산
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [routeEvent.subEvents]
+  );
 
   // 헤더 버튼 색상 메모이제이션
   const headerColors = useMemo(() => ({
@@ -587,13 +652,42 @@ export default function EventDetailScreen({ navigation, route }: Props) {
     shareIcon: isDark ? '#eaeaf2' : '#374151',
   }), [isDark, reminderSet, bookmarked]);
 
+  // 진행 단계 색상 사전 계산 (JSX 내 6회 중복 ternary 제거)
+  const progressStepColors = useMemo(() => {
+    const activeColor = isDark ? '#86efac' : '#16a34a';
+    const inactiveColor = isDark ? '#2a2a44' : '#cbd5e1';
+    const step1Done = reserved || checkedIn;
+    return {
+      step1Bg: step1Done ? activeColor : inactiveColor,
+      step1Label: step1Done ? '✓' : '1',
+      line1Bg: step1Done ? activeColor : inactiveColor,
+      step2Bg: checkedIn ? activeColor : inactiveColor,
+      step2Label: checkedIn ? '✓' : '2',
+      line2Bg: reviewExists ? activeColor : inactiveColor,
+      step3Bg: reviewExists ? activeColor : inactiveColor,
+      step3Label: reviewExists ? '✓' : '3',
+    };
+  }, [isDark, reserved, checkedIn, reviewExists]);
+
+  // 후기 작성 폼 열기 핸들러 (JSX 인라인 화살표 함수 제거)
+  const handleShowReviewForm = useCallback(() => {
+    Keyboard.dismiss();
+    setShowReviewForm(true);
+  }, []);
+
+  // 기존 후기 댓글 sanitize (existingReview 변경 시에만 재계산)
+  const sanitizedReviewComment = useMemo(
+    () => existingReview ? sanitizeText(existingReview.comment, 200) : '',
+    [existingReview]
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: headerColors.containerBg }]}>
       {/* 헤더 */}
       <View style={[styles.header, { backgroundColor: headerColors.headerBg, paddingTop: insets.top + 10, borderBottomColor: headerColors.headerBorder }]}>
         {/* 타이틀 - absolute로 정중앙 배치 */}
         <Text style={[styles.headerTitle, { color: headerColors.titleColor }]} numberOfLines={1}>
-          {sanitizeText(event.title, 20)}
+          {sanitized.titleShort}
         </Text>
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="뒤로 가기" accessibilityRole="button">
           <Text style={[styles.backIcon, { color: headerColors.titleColor }]}>‹</Text>
@@ -649,34 +743,19 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               지점 선택
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.branchTabScroll}>
-              {routeEvent.subEvents!.map((sub, idx) => {
-                const isActive = idx === selectedBranchIdx;
-                return (
-                  <TouchableOpacity
-                    key={sub.id || idx}
-                    style={[
-                      styles.branchTab,
-                      { 
-                        backgroundColor: isActive 
-                          ? themeColors.accent
-                          : themeColors.inactiveBg,
-                        borderColor: isActive
-                          ? themeColors.accent
-                          : themeColors.inactiveBorder,
-                      },
-                    ]}
-                    onPress={() => { setSelectedBranchIdx(idx); scrollViewRef.current?.scrollTo({ y: 0, animated: true }); }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[
-                      styles.branchTabText,
-                      { color: isActive ? '#ffffff' : themeColors.bodyText },
-                    ]}>
-                      {sanitizeText(sub.location || sub.venue || `지점 ${idx + 1}`, 20)}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {routeEvent.subEvents!.map((sub, idx) => (
+                <BranchTab
+                  key={sub.id || idx}
+                  idx={idx}
+                  label={subEventLabels[idx] ?? ''}
+                  isActive={idx === selectedBranchIdx}
+                  accentColor={themeColors.accent}
+                  inactiveBg={themeColors.inactiveBg}
+                  inactiveBorder={themeColors.inactiveBorder}
+                  bodyText={themeColors.bodyText}
+                  onSelect={handleSelectBranch}
+                />
+              ))}
             </ScrollView>
           </View>
         )}
@@ -688,13 +767,13 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             <View style={styles.promoBadgeRow}>
               <View style={[styles.promoBadge, { backgroundColor: safePromoColor }]}>
                 <Text style={styles.promoBadgeText}>
-                  {sanitizeText(event.promotionLabel, 20) || 'AD'}
+                  {sanitized.promotionLabel || 'AD'}
                 </Text>
               </View>
               {event.organizer && (
                 <TouchableOpacity onPress={handleOpenHostProfile} activeOpacity={0.6}>
                   <Text style={[styles.promoOrganizer, { color: isDark ? '#a78bfa' : '#ec4899', textDecorationLine: 'underline' }]}>
-                    {sanitizeText(event.organizer, 50)}
+                    {sanitized.organizer}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -702,12 +781,12 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           )}
 
           {/* 태그들 */}
-          {event.tags && event.tags.length > 0 && (
+          {sanitized.tags && sanitized.tags.length > 0 && (
             <View style={styles.tagsContainer}>
-              {event.tags.slice(0, 5).map((tag, index) => (
+              {sanitized.tags.map((tag, index) => (
                 <View key={index} style={[styles.tag, { backgroundColor: themeColors.tagBg }]}>
                   <Text style={[styles.tagText, { color: themeColors.tagText }]}>
-                    #{sanitizeText(tag)}
+                    #{tag}
                   </Text>
                 </View>
               ))}
@@ -716,7 +795,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           
           {/* 제목 */}
           <Text style={[styles.eventTitle, { color: isDark ? '#eaeaf2' : '#0f172a' }]} numberOfLines={2}>
-            {sanitizeText(event.title)}
+            {sanitized.titleFull}
           </Text>
           
           {/* 날짜 & 시간 */}
@@ -731,7 +810,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               <View style={[styles.dateTimeBadge, { backgroundColor: isDark ? '#1e1e32' : '#e0e7ff', borderColor: isDark ? '#2a2a44' : 'transparent' }]}>
                 <Text style={styles.dateTimeIcon}>⏰</Text>
                 <Text style={[styles.dateTimeText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
-                  {sanitizeText(event.time, 30)}
+                  {sanitized.time}
                 </Text>
               </View>
             )}
@@ -784,7 +863,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               <View style={[styles.additionalInfoItem, { backgroundColor: isDark ? '#1e1e32' : '#f1f5f9', borderColor: isDark ? '#2a2a44' : 'transparent' }]}>
                 <Text style={styles.additionalInfoIcon}>🎂</Text>
                 <Text style={[styles.additionalInfoText, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
-                  {sanitizeText(event.ageRange, 20)}세
+                  {sanitized.ageRange}세
                 </Text>
               </View>
             )}
@@ -840,16 +919,16 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               <View style={styles.organizerInfo}>
                 <View style={styles.organizerNameRow}>
                   <Text style={[styles.organizerName, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
-                    {sanitizeText(event.organizer, 50)}
+                    {sanitized.organizer}
                   </Text>
                   <View style={[styles.organizerBadge, { backgroundColor: isDark ? '#241840' : '#fce7f3' }]}>
                     <Text style={[styles.organizerBadgeText, { color: isDark ? '#a78bfa' : '#ec4899' }]}>주최자</Text>
                   </View>
                 </View>
-                {organizerReviews.length > 0 ? (
+                {organizerStats ? (
                   <View style={styles.organizerMeta}>
                     <Text style={[styles.organizerStarText, { color: isDark ? '#fbbf24' : '#f59e0b' }]}>
-                      ★ {(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length).toFixed(1)}
+                      ★ {organizerStats.avgText}
                     </Text>
                     <Text style={[styles.organizerDot, { color: isDark ? '#2a2a44' : '#cbd5e1' }]}>·</Text>
                     <Text style={[styles.organizerSub, { color: isDark ? '#8888a0' : '#64748b' }]}>
@@ -868,21 +947,21 @@ export default function EventDetailScreen({ navigation, route }: Props) {
             </View>
 
             {/* 별점 미니 바 (리뷰 있을 때만) */}
-            {organizerReviews.length > 0 && (
+            {organizerStats && (
               <View style={[styles.organizerRatingBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)' }]}>
                 <View style={styles.organizerRatingBarInner}>
                   <View
                     style={[
                       styles.organizerRatingBarFill,
                       {
-                        width: `${(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length / 5) * 100}%`,
+                        width: organizerStats.percentWidth,
                         backgroundColor: isDark ? '#a78bfa' : '#ec4899',
                       },
                     ]}
                   />
                 </View>
                 <Text style={[styles.organizerRatingLabel, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
-                  {(organizerReviews.reduce((s, r) => s + r.rating, 0) / organizerReviews.length / 5 * 100).toFixed(0)}%
+                  {organizerStats.percentText}%
                 </Text>
               </View>
             )}
@@ -924,7 +1003,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                   상세 정보 & 신청 페이지
                 </Text>
                 <Text style={[styles.linkUrl, { color: isDark ? '#8888a0' : '#64748b' }]} numberOfLines={1}>
-                  {sanitizeText(event.link, 100)}
+                  {sanitized.link}
                 </Text>
               </View>
             </View>
@@ -941,22 +1020,22 @@ export default function EventDetailScreen({ navigation, route }: Props) {
           {/* 3단계 프로그레스: 예약 → 체크인 → 후기 */}
           <View style={styles.progressRow}>
             <View style={styles.progressStep}>
-              <View style={[styles.progressDot, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]}>
-                <Text style={styles.progressDotText}>{reserved || checkedIn ? '✓' : '1'}</Text>
+              <View style={[styles.progressDot, { backgroundColor: progressStepColors.step1Bg }]}>
+                <Text style={styles.progressDotText}>{progressStepColors.step1Label}</Text>
               </View>
               <Text style={[styles.progressLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>예약</Text>
             </View>
-            <View style={[styles.progressLine, { backgroundColor: reserved || checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]} />
+            <View style={[styles.progressLine, { backgroundColor: progressStepColors.line1Bg }]} />
             <View style={styles.progressStep}>
-              <View style={[styles.progressDot, { backgroundColor: checkedIn ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]}>
-                <Text style={styles.progressDotText}>{checkedIn ? '✓' : '2'}</Text>
+              <View style={[styles.progressDot, { backgroundColor: progressStepColors.step2Bg }]}>
+                <Text style={styles.progressDotText}>{progressStepColors.step2Label}</Text>
               </View>
               <Text style={[styles.progressLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>체크인</Text>
             </View>
-            <View style={[styles.progressLine, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]} />
+            <View style={[styles.progressLine, { backgroundColor: progressStepColors.line2Bg }]} />
             <View style={styles.progressStep}>
-              <View style={[styles.progressDot, { backgroundColor: reviewExists ? (isDark ? '#86efac' : '#16a34a') : (isDark ? '#2a2a44' : '#cbd5e1') }]}>
-                <Text style={styles.progressDotText}>{reviewExists ? '✓' : '3'}</Text>
+              <View style={[styles.progressDot, { backgroundColor: progressStepColors.step3Bg }]}>
+                <Text style={styles.progressDotText}>{progressStepColors.step3Label}</Text>
               </View>
               <Text style={[styles.progressLabel, { color: isDark ? '#8888a0' : '#64748b' }]}>후기</Text>
             </View>
@@ -1032,7 +1111,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
               {showWriteReview && (
                 <TouchableOpacity
                   style={[styles.writeReviewBtn, { backgroundColor: isDark ? '#1e1e32' : '#fce7f3' }]}
-                  onPress={() => { Keyboard.dismiss(); setShowReviewForm(true); }}
+                  onPress={handleShowReviewForm}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.writeReviewIcon}>✏️</Text>
@@ -1064,7 +1143,7 @@ export default function EventDetailScreen({ navigation, route }: Props) {
                 ))}
               </View>
               <Text style={[styles.existingReviewComment, { color: isDark ? '#eaeaf2' : '#0f172a' }]}>
-                {sanitizeText(existingReview.comment, 200)}
+                {sanitizedReviewComment}
               </Text>
               <Text style={[styles.existingReviewMeta, { color: isDark ? '#5c5c74' : '#94a3b8' }]}>
                 내가 작성한 후기

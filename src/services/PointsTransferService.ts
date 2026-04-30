@@ -20,6 +20,7 @@ import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { safeGetItem, safeSetItem, safeRemoveItem } from '../utils/asyncStorageManager';
 import { encryptData, decryptData, secureLog } from '../utils/secureStorage';
+import { safeJSONParse } from '../utils/storage';
 import PointsSecurityService, { SecurePointsData, Transaction } from './PointsSecurityService';
 
 // ==================== 상수 ====================
@@ -114,7 +115,7 @@ const isValidCodeFormat = (code: string): boolean => {
 const markCodeAsUsed = async (code: string): Promise<void> => {
   try {
     const raw = await safeGetItem(TRANSFER_KEYS.USED_CODES);
-    const usedCodes: string[] = raw ? JSON.parse(raw) : [];
+    const usedCodes: string[] = raw ? (safeJSONParse<string[] | null>(raw, null) ?? []) : [];
     usedCodes.unshift(code.toUpperCase());
     // 최근 N개만 유지
     await safeSetItem(
@@ -129,7 +130,8 @@ const isCodeUsed = async (code: string): Promise<boolean> => {
   try {
     const raw = await safeGetItem(TRANSFER_KEYS.USED_CODES);
     if (!raw) return false;
-    const usedCodes: string[] = JSON.parse(raw);
+    const usedCodes: string[] = safeJSONParse<string[] | null>(raw, null) ?? [];
+    if (!Array.isArray(usedCodes)) return false;
     return usedCodes.includes(code.toUpperCase());
   } catch {
     return false;
@@ -140,7 +142,7 @@ const isCodeUsed = async (code: string): Promise<boolean> => {
 const saveTransferHistory = async (entry: TransferHistoryEntry): Promise<void> => {
   try {
     const raw = await safeGetItem(TRANSFER_KEYS.TRANSFER_HISTORY);
-    const history: TransferHistoryEntry[] = raw ? JSON.parse(raw) : [];
+    const history: TransferHistoryEntry[] = raw ? (safeJSONParse<TransferHistoryEntry[] | null>(raw, null) ?? []) : [];
     history.unshift(entry);
     await safeSetItem(
       TRANSFER_KEYS.TRANSFER_HISTORY,
@@ -259,7 +261,8 @@ export const PointsTransferService = {
       let backup: TransferBackup;
       try {
         const decrypted = await decryptData(backupRaw);
-        backup = JSON.parse(decrypted);
+        backup = safeJSONParse<TransferBackup | null>(decrypted, null);
+        if (!backup) return { success: false, message: '백업 데이터가 손상되었습니다.' };
       } catch {
         return { success: false, message: '백업 데이터가 손상되었습니다.' };
       }
@@ -284,7 +287,8 @@ export const PointsTransferService = {
 
       try {
         const decryptedData = await decryptData(backup.encryptedData);
-        restoredData = JSON.parse(decryptedData);
+        restoredData = safeJSONParse<typeof restoredData | null>(decryptedData, null);
+        if (!restoredData) return { success: false, message: '포인트 데이터 복원에 실패했습니다.' };
       } catch {
         return { success: false, message: '포인트 데이터 복원에 실패했습니다.' };
       }
@@ -367,7 +371,7 @@ export const PointsTransferService = {
   async getTransferHistory(): Promise<TransferHistoryEntry[]> {
     try {
       const raw = await safeGetItem(TRANSFER_KEYS.TRANSFER_HISTORY);
-      return raw ? JSON.parse(raw) : [];
+      return raw ? (safeJSONParse<TransferHistoryEntry[] | null>(raw, null) ?? []) : [];
     } catch {
       return [];
     }

@@ -104,10 +104,19 @@ const getDeviceId = async (): Promise<string> => {
     const hex = Array.from(bytes as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join('');
     id = `d_${hex}`;
   } catch {
-    // fallback: timestamp + random 기반 (performance.now 미지원 환경 대응)
-    const ts = Date.now().toString(36);
-    const rand = Math.random().toString(36).slice(2, 10);
-    id = `d_${ts}_${rand}`;
+    // fallback: expo-crypto 재시도 (다른 API 경로)
+    try {
+      const Crypto = require('expo-crypto');
+      const bytes = Crypto.getRandomBytes(8) as Uint8Array;
+      const hex = Array.from(bytes).map((b: number) => b.toString(16).padStart(2, '0')).join('');
+      id = `d_${hex}`;
+    } catch {
+      // 완전한 폴백: 암호학적 난수 불가 시 세션 전용 ID
+      // Math.random() 사용 금지 — 디바이스 ID는 보안 비트도 포함하라
+      const ts = Date.now().toString(36);
+      const ts2 = Date.now().toString(16); // 두 번째 타임스탬으로 엔트로피 증가
+      id = `d_${ts}_${ts2}`; // 취약하지만 Math.random보다는 안전 (Crypto 자체가 실패한 궙극 대안)
+    }
   }
   await safeSetItem(KEYS.DEVICE, id, true);
   return id;

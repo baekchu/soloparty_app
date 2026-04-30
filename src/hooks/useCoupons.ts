@@ -16,6 +16,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog, encryptData, decryptData } from '../utils/secureStorage';
+import { safeJSONParse } from '../utils/storage';
 
 // ==================== 상수 정의 ====================
 const STORAGE_KEY = '@coupons_data_v2';
@@ -132,7 +133,7 @@ const loadCouponsData = async (): Promise<CouponsData> => {
       }
       try {
         const decrypted = await decryptData(encrypted);
-        parsed = JSON.parse(decrypted);
+        parsed = safeJSONParse<CouponsData | null>(decrypted, null);
       } catch {
         // 복호화 실패 → 데이터 무효화 (평문 폴백 금지 — 조작 방지)
         secureLog.warn('⚠️ 쿠폰 데이터 복호화 실패 — 초기화');
@@ -145,8 +146,8 @@ const loadCouponsData = async (): Promise<CouponsData> => {
       try {
         const backupStr = await SecureStore.getItemAsync(SECURE_BACKUP_KEY);
         if (backupStr) {
-          parsed = JSON.parse(backupStr);
-          secureLog.info('🔄 쿠폰 SecureStore 백업에서 복구');
+          parsed = safeJSONParse<CouponsData | null>(backupStr, null);
+          if (parsed) secureLog.info('🔄 쿠폰 SecureStore 백업에서 복구');
         }
       } catch { /* 백업 복구 실패 */ }
     }
@@ -285,7 +286,7 @@ export const useCoupons = () => {
     safeGetItem(VERIFY_LOCKOUT_KEY).then(stored => {
       if (stored) {
         try {
-          const parsed = JSON.parse(stored);
+          const parsed = safeJSONParse<{ lockoutUntil?: number; attempts?: number } | null>(stored, null);
           if (parsed.lockoutUntil > Date.now()) {
             verifyAttemptsRef.current = parsed.attempts || 0;
             verifyLockoutUntilRef.current = parsed.lockoutUntil;
@@ -596,7 +597,7 @@ export const useCoupons = () => {
       // 코드 정규화 (대문자, 공백 제거)
       const normalized = code.trim().toUpperCase().replace(/\s+/g, '');
 
-      if (normalized.length < 10) {
+      if (normalized.length < 10 || normalized.length > 20) {
         return { success: false, message: '코드를 정확히 입력해주세요. (XXXX-XXXX-XXXX)' };
       }
 

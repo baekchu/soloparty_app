@@ -12,6 +12,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { secureLog } from '../utils/secureStorage';
+import { safeJSONParse } from '../utils/storage';
 import { Event } from '../types';
 import { parseLocalDate as _parseLocalDate } from '../utils/sanitize';
 
@@ -117,7 +118,7 @@ async function _loadFromStorage(): Promise<void> {
     try {
       const asyncValue = await safeGetItem(BOOKMARKS_KEY);
       if (asyncValue && asyncValue.length < 500000) {
-        const data = JSON.parse(asyncValue);
+        const data = safeJSONParse<BookmarkedEvent[] | null>(asyncValue, null);
         if (Array.isArray(data) && data.length > 0) {
           parsed = data;
         }
@@ -133,7 +134,7 @@ async function _loadFromStorage(): Promise<void> {
     }
     if (secureStored) {
       try {
-        const secureData = JSON.parse(secureStored);
+        const secureData = safeJSONParse<unknown[] | null>(secureStored, null);
         if (Array.isArray(secureData)) {
           // SecureStore는 축소 형태 {eventId, date, title}로 저장됨 → BookmarkedEvent로 변환
           const normalized: BookmarkedEvent[] = secureData
@@ -168,7 +169,7 @@ async function _loadFromStorage(): Promise<void> {
         try {
           const legacyStored = await safeGetItem(legacyKey);
           if (legacyStored && legacyStored.length < 500000) {
-            const legacyData = JSON.parse(legacyStored);
+            const legacyData = safeJSONParse<unknown[] | null>(legacyStored, null);
             if (Array.isArray(legacyData) && legacyData.length > 0) {
               // 레거시 데이터 형식 호환: bookmarkedAt이 없으면 추가
               parsed = legacyData.map((b: any) => ({

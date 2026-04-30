@@ -15,6 +15,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback, useRef } from 'react';
 import { safeGetItem, safeSetItem, safeRemoveItem, safeGetAllKeys } from '../utils/asyncStorageManager';
 import { encryptData, decryptData, secureLog, maskSensitiveData } from '../utils/secureStorage';
+import { safeJSONParse } from '../utils/storage';
 import * as Device from 'expo-device';
 import * as Crypto from 'expo-crypto';
 
@@ -49,6 +50,7 @@ const STORAGE_KEYS = {
   USER_ID_SECURE: 'userId_secure',
   USER_PREFIX: 'user_',
   INVITE_HISTORY: 'invite_history',
+  INVITE_CODE_INDEX: '@invite_code_index_v1', // 초대코드 → userId 인덱스 (O(1) 조회)
 } as const;
 const MAX_INVITE_HISTORY = 500;
 
@@ -157,6 +159,17 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const userData: UserData = { ...userDataWithoutHash, dataHash };
 
         await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`, JSON.stringify(userData));
+
+        // 초대코드 → userId 인덱스에 등록 (registerWithInviteCode O(1) 조회용)
+        try {
+          const indexStr = await safeGetItem(STORAGE_KEYS.INVITE_CODE_INDEX);
+          const codeIndex: Record<string, string> = indexStr
+            ? (safeJSONParse<Record<string, string> | null>(indexStr, null) ?? {})
+            : {};
+          codeIndex[newInviteCode] = storedUserId;
+          await safeSetItem(STORAGE_KEYS.INVITE_CODE_INDEX, JSON.stringify(codeIndex));
+        } catch { /* 인덱스 저장 실패는 무시 — 폴백 탐색으로 처리됨 */ }
+
         if (isMountedRef.current) {
           setInviteCode(newInviteCode);
         }
@@ -165,14 +178,11 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // 기존 사용자 데이터 로드 및 검증
         const userDataStr = await safeGetItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`);
         if (userDataStr) {
-          let userData: UserData;
-          try {
-            userData = JSON.parse(userDataStr);
-          } catch {
-            secureLog.warn('⚠️ 사용자 데이터 JSON 파싱 실패 - 새 사용자로 재생성 필요');
-            // JSON 손상 시 해당 키 삭제 후 다음 실행 시 재생성됨
+          let userData: UserData | null;
+          userData = safeJSONParse<UserData | null>(userDataStr, null);
+          if (!userData) {
+            secureLog.warn('⚠️ 사용자 데이터 파싱 실패(프로토타입 오염 또는 손상) - 재생성 필요');
             await safeRemoveItem(`${STORAGE_KEYS.USER_PREFIX}${storedUserId}`);
-            userData = null as any;
           }
           if (userData) {
             // 데이터 무결성 검증
@@ -219,7 +229,8 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const userDataStr = await safeGetItem(`${STORAGE_KEYS.USER_PREFIX}${userId}`);
       if (userDataStr) {
-        const userData: UserData = JSON.parse(userDataStr);
+        const userData = safeJSONParse<UserData | null>(userDataStr, null);
+        if (!userData) return null;
         
         // 데이터 무결성 검증
         const isValid = await verifyDataIntegrity(userData);
@@ -248,53 +259,83 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return false;
       }
 
-      // 초대 코드로 초대한 사람 찾기
-      const keys = await safeGetAllKeys();
-      const userKeys = keys.filter(key => key.startsWith(STORAGE_KEYS.USER_PREFIX));
-      
-      for (const key of userKeys) {
-        const dataStr = await safeGetItem(key);
-        if (dataStr) {
-          let data: UserData;
-          try {
-            data = JSON.parse(dataStr);
-          } catch {
-            secureLog.warn('⚠️ 사용자 데이터 파싱 실패, 건너뜀:', key);
-            continue; // 손상된 레코드는 건너뜀
-          }
-          if (data.inviteCode === inviterCode && data.userId !== userId) {
-            // 초대한 사람 찾음
-            const myData = await getUserData();
-            if (myData && !myData.invitedBy) {
-              // 내 데이터 업데이트
-              const { dataHash, ...myDataWithoutHash } = myData;
-              const updatedMyData = {
-                ...myDataWithoutHash,
-                invitedBy: data.userId,
-              };
-              const myHash = await generateDataHash(updatedMyData);
-              await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${userId}`, JSON.stringify({ ...updatedMyData, dataHash: myHash }));
-
-              // 초대한 사람 초대 수 증가
-              const { dataHash: inviterHash, ...inviterDataWithoutHash } = data;
-              const updatedInviterData = {
-                ...inviterDataWithoutHash,
-                invitedCount: data.invitedCount + 1,
-              };
-              const inviterNewHash = await generateDataHash(updatedInviterData);
-              await safeSetItem(key, JSON.stringify({ ...updatedInviterData, dataHash: inviterNewHash }));
-
-              // 초대 내역 기록
-              await saveInviteHistory(data.userId, userId, inviterCode);
-
-              secureLog.info('초대 코드 등록 완료:', maskSensitiveData(inviterCode));
-              return true;
-            }
+      // O(1) 조회: 초대코드 → userId 인덱스 맵 우선 시도
+      let inviterUserId: string | null = null;
+      const indexStr = await safeGetItem(STORAGE_KEYS.INVITE_CODE_INDEX);
+      if (indexStr) {
+        const codeIndex = safeJSONParse<Record<string, string> | null>(indexStr, null);
+        if (codeIndex && typeof codeIndex === 'object' && !Array.isArray(codeIndex)) {
+          const indexed = codeIndex[inviterCode];
+          if (typeof indexed === 'string' && indexed.length > 0 && indexed !== userId) {
+            inviterUserId = indexed;
           }
         }
       }
-      
-      secureLog.warn('유효하지 않은 초대 코드:', maskSensitiveData(inviterCode));
+
+      // 인덱스에 없으면 전체 키 순회로 폴백 (레거시/인덱스 누락 대응)
+      if (!inviterUserId) {
+        const keys = await safeGetAllKeys();
+        const userKeys = keys.filter(key => key.startsWith(STORAGE_KEYS.USER_PREFIX));
+        for (const key of userKeys) {
+          const dataStr = await safeGetItem(key);
+          if (!dataStr) continue;
+          const data = safeJSONParse<UserData | null>(dataStr, null);
+          if (!data) continue;
+          if (data.inviteCode === inviterCode && data.userId !== userId) {
+            inviterUserId = data.userId;
+            // 인덱스에 없던 항목을 이 기회에 등록 (자가 복구)
+            try {
+              const newIndex = safeJSONParse<Record<string, string> | null>(indexStr ?? '', null) ?? {};
+              newIndex[inviterCode] = inviterUserId;
+              await safeSetItem(STORAGE_KEYS.INVITE_CODE_INDEX, JSON.stringify(newIndex));
+            } catch { /* 인덱스 복구 실패는 무시 */ }
+            break;
+          }
+        }
+      }
+
+      if (!inviterUserId) {
+        secureLog.warn('유효하지 않은 초대 코드:', maskSensitiveData(inviterCode));
+        return false;
+      }
+
+      // 초대한 사람 데이터 로드
+      const inviterKey = `${STORAGE_KEYS.USER_PREFIX}${inviterUserId}`;
+      const inviterDataStr = await safeGetItem(inviterKey);
+      if (!inviterDataStr) {
+        secureLog.warn('초대한 사람 데이터 없음:', maskSensitiveData(inviterUserId));
+        return false;
+      }
+      const data = safeJSONParse<UserData | null>(inviterDataStr, null);
+      if (!data) return false;
+
+      // 내 데이터 업데이트
+      const myData = await getUserData();
+      if (myData && !myData.invitedBy) {
+        const { dataHash, ...myDataWithoutHash } = myData;
+        const updatedMyData = {
+          ...myDataWithoutHash,
+          invitedBy: inviterUserId,
+        };
+        const myHash = await generateDataHash(updatedMyData);
+        await safeSetItem(`${STORAGE_KEYS.USER_PREFIX}${userId}`, JSON.stringify({ ...updatedMyData, dataHash: myHash }));
+
+        // 초대한 사람 초대 수 증가
+        const { dataHash: inviterHash, ...inviterDataWithoutHash } = data;
+        const updatedInviterData = {
+          ...inviterDataWithoutHash,
+          invitedCount: data.invitedCount + 1,
+        };
+        const inviterNewHash = await generateDataHash(updatedInviterData);
+        await safeSetItem(inviterKey, JSON.stringify({ ...updatedInviterData, dataHash: inviterNewHash }));
+
+        // 초대 내역 기록
+        await saveInviteHistory(inviterUserId, userId, inviterCode);
+
+        secureLog.info('초대 코드 등록 완료:', maskSensitiveData(inviterCode));
+        return true;
+      }
+
       return false;
     } catch (error) {
       secureLog.error('❌ 초대 코드 등록 실패');
@@ -306,7 +347,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const saveInviteHistory = async (inviterId: string, inviteeId: string, inviteCode: string) => {
     try {
       const historyStr = await safeGetItem(STORAGE_KEYS.INVITE_HISTORY);
-      const history = historyStr ? JSON.parse(historyStr) : [];
+      const history: unknown[] = historyStr ? safeJSONParse<unknown[]>(historyStr, []) : [];
       history.unshift({
         inviterId,
         inviteeId,

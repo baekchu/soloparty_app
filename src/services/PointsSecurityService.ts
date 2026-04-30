@@ -190,7 +190,13 @@ export const getDeviceId = async (): Promise<string> => {
 const generateTransactionHash = async (
   tx: Omit<Transaction, 'hash'>
 ): Promise<string> => {
-  const data = `${tx.id}:${tx.type}:${tx.amount}:${tx.balance_after}:${tx.timestamp}:${tx.prev_hash}:${tx.device_id}`;
+  // metadata가 있을 때만 해시에 포함 (기존 metadata 없는 트랜잭션과 하위 호환 유지)
+  // metadata 없는 레거시 트랜잭션: 기존 해시와 동일 → 체인 검증 유지
+  // metadata 있는 신규 트랜잭션: metadata 변조 시 해시 불일치 → 무결성 보호
+  const metaPart = tx.metadata && Object.keys(tx.metadata).length > 0
+    ? `:${JSON.stringify(tx.metadata)}`
+    : '';
+  const data = `${tx.id}:${tx.type}:${tx.amount}:${tx.balance_after}:${tx.timestamp}:${tx.prev_hash}:${tx.device_id}${metaPart}`;
   return await sha256(data);
 };
 

@@ -292,13 +292,16 @@ const EventCard = React.memo(({ event, date, onPress, compact = false, marginBot
     () => [ecStyles.container, marginBottom !== 12 ? { marginBottom } : ecStyles.containerDefaultMargin],
     [marginBottom]
   );
+  // sanitizeText 중복 호출 방지: title/location 렌더당 각 1회만 계산
+  const safeTitle = React.useMemo(() => sanitizeText(event.title, 100), [event.title]);
+  const safeLocation = React.useMemo(() => event.location ? sanitizeText(event.location, 100) : null, [event.location]);
   const innerStyle = compact ? ecStyles.innerCompactCombined : ecStyles.inner;
   const titleStyle = compact ? ecStyles.titleCompact : ecStyles.title;
   const subRowStyle = compact ? ecStyles.subRowCompact : ecStyles.subRow;
   const locRowStyle = compact ? ecStyles.locRowCompact : ecStyles.locRow;
   return (
     <TouchableOpacity activeOpacity={0.7} onPress={handlePress} style={containerStyle}
-      accessibilityLabel={`${sanitizeText(event.title, 100)}, ${event.time || '시간 미정'}`}
+      accessibilityLabel={`${safeTitle}, ${event.time || '시간 미정'}`}
       accessibilityRole="button"
       accessibilityHint="이벤트 상세 보기"
     >
@@ -312,7 +315,7 @@ const EventCard = React.memo(({ event, date, onPress, compact = false, marginBot
           </View>
         </View>
         <Text style={titleStyle} numberOfLines={compact ? 2 : undefined}>
-          {sanitizeText(event.title, 100)}
+          {safeTitle}
         </Text>
         {event.subEvents && event.subEvents.length > 1 ? (
           <View style={subRowStyle}>
@@ -335,7 +338,7 @@ const EventCard = React.memo(({ event, date, onPress, compact = false, marginBot
             <View style={ecStyles.tag}>
               
               <Text style={ecStyles.tagText} numberOfLines={1}>
-                {sanitizeText(event.location, 100)}
+                {safeLocation}
               </Text>
             </View>
           </View>
@@ -764,7 +767,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           setIsInitialized(true);
         }
 
-        // 초기 스크롤 위치 설정 (지연 실행)
+        // 초기 스크롤 위치 설정 (오늘 버튼과 동일한 로직 적용)
         requestAnimationFrame(() => {
           if (!isMountedRef.current) return;
 
@@ -774,7 +777,25 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             totalHeight += monthHeightsRef.current[key] || currentScreenH * 0.7;
           }
 
-          const adjustedHeight = Math.max(0, totalHeight + 56);
+          // 오늘 날짜 기반 추가 오프셋 (오늘 버튼 로직과 동일)
+          let scrollOffset = 56;
+          const now = new Date();
+          const todayDay = now.getDate();
+          if (todayDay > 14) {
+            const targetDay = todayDay - 14;
+            const firstDayWeekday = new Date(initialYear, initialMonth - 1, 1).getDay();
+            const rowIndex = Math.floor((firstDayWeekday + targetDay - 1) / 7);
+            const isSmallScreen = currentScreenH < 700;
+            const isMediumScreen = currentScreenH >= 700 && currentScreenH < 850;
+            const estimatedCellHeight = isSmallScreen
+              ? Math.max(currentScreenH * 0.10, 82)
+              : isMediumScreen
+              ? Math.max(currentScreenH * 0.10, 84)
+              : Math.max(currentScreenH * 0.115, 100);
+            scrollOffset += rowIndex * estimatedCellHeight;
+          }
+
+          const adjustedHeight = Math.max(0, totalHeight + scrollOffset);
           scrollViewRef.current?.scrollTo({
             y: adjustedHeight,
             animated: false,
@@ -1444,6 +1465,14 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   // 더보기 핸들러
   const handleLoadMoreDates = useCallback(() => {
     setVisibleDateGroups(prev => prev + LOAD_MORE_DATES);
+  }, []);
+
+  // 패널 스크롤 핸들러 (useCallback으로 안정화 — 인라인 화살표 대비 렌더마다 재생성 방지)
+  // ref만 업데이트하므로 deps=[] (state/props 미참조)
+  const handlePanelScroll = useCallback((e: any) => {
+    const scrollY = e.nativeEvent.contentOffset.y;
+    panelScrollYRef.current = scrollY;
+    isPanelScrollAtTopRef.current = scrollY <= 0;
   }, []);
 
   // selectedDateElements: \ub0a0\uc9dc \uc120\ud0dd \uc2dc \uc774\ubca4\ud2b8 \ub9ac\uc2a4\ud2a4 \ucee8\ud150\uce20
@@ -2317,11 +2346,7 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
             scrollEventThrottle={32}
             removeClippedSubviews={true}
             contentContainerStyle={rnStyles.panelScrollContent}
-            onScroll={(e) => {
-              const scrollY = e.nativeEvent.contentOffset.y;
-              panelScrollYRef.current = scrollY;
-              isPanelScrollAtTopRef.current = scrollY <= 0;
-            }}
+            onScroll={handlePanelScroll}
           >
           {/* 데이터 로딩 중 표시 */}
           {!isDataReady ? (

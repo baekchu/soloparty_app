@@ -27,6 +27,7 @@ import { safeGetItem, safeSetItem } from '../utils/asyncStorageManager';
 import { isTablet } from '../utils/responsive';
 import { useShareInterstitialAd } from '../services/AdService';
 import AdOverlay from './AdOverlay';
+import { safeJSONParse } from '../utils/storage';
 
 const STORE_LINKS = {
   ios: 'https://apps.apple.com/us/app/%EC%86%94%EB%A1%9C%ED%8C%8C%ED%8B%B0/id6757147307',
@@ -77,7 +78,7 @@ const PointsModal = memo(({
       try {
         const stored = await safeGetItem(SHARE_COUNT_KEY);
         if (stored) {
-          const parsed = JSON.parse(stored);
+          const parsed = safeJSONParse<{ count?: number; date?: string } | null>(stored, null);
           // 타입 검증: 변조된 데이터 방어
           if (typeof parsed.count === 'number' && parsed.count >= 0 &&
               typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) {
